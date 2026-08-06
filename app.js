@@ -303,22 +303,11 @@ function saveCfSettingsAuto() {
   const devDomain = r2DevDomain?.value?.trim() || "";
 
   if (accountId) localStorage.setItem("r2AccountId", accountId);
-  else localStorage.removeItem("r2AccountId");
-
   if (bucket) localStorage.setItem("r2BucketName", bucket);
-  else localStorage.removeItem("r2BucketName");
-
   if (accessKey) localStorage.setItem("r2AccessKeyId", accessKey);
-  else localStorage.removeItem("r2AccessKeyId");
-
   if (secretKey) localStorage.setItem("r2SecretAccessKey", secretKey);
-  else localStorage.removeItem("r2SecretAccessKey");
-
   if (domain) localStorage.setItem("r2PublicDomain", domain);
-  else localStorage.removeItem("r2PublicDomain");
-
   if (devDomain) localStorage.setItem("r2DevDomain", devDomain);
-  else localStorage.removeItem("r2DevDomain");
 
   updateCfStatus();
   render();
