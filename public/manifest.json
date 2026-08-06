@@ -1,11 +1,11 @@
 {
-  "name": "File Publisher",
-  "short_name": "File Publisher",
-  "start_url": ".",
+  "name": "BYORR Converter",
+  "short_name": "BYORR Converter",
+  "start_url": "./",
   "display": "standalone",
   "background_color": "#202227",
   "theme_color": "#202227",
-  "description": "A simple client-side image compression tool.",
+  "description": "Bring Your Own R2 Image Converter & Storage Manager",
   "icons": [
     {
       "src": "icon-192.png",
