@@ -418,8 +418,8 @@ function clearCfSettings() {
   if (cfSettingsAccordion) cfSettingsAccordion.open = true;
 }
 
-// --- 📱 可視光スキャン（QRコード）同期ハンドラ (byoc-publisher 同等) ---
-function shareConnectionQr() {
+// --- 📱 可視光スキャン（QRコード）同期ハンドラ ---
+async function shareConnectionQr() {
   const accountId = (localStorage.getItem("r2AccountId") || r2AccountId?.value || "").trim();
   const bucket    = (localStorage.getItem("r2BucketName") || r2BucketName?.value || "").trim();
   const accessKey = (localStorage.getItem("r2AccessKeyId") || r2AccessKeyId?.value || "").trim();
@@ -430,8 +430,13 @@ function shareConnectionQr() {
   const lang = getAppLanguage();
   const dict = i18nDict[lang] || i18nDict.ja;
 
+  if (!domain && !devDomain) {
+    alert("⚠️ ステップ1の公開URL (直リンクドメイン または Devアドレス) を入力して保存してから画面共有を押してください。");
+    return;
+  }
+
   if (!accountId || !bucket || !accessKey || !secretKey) {
-    alert(dict.missingConfig);
+    alert("⚠️ ステップ2の R2 S3 API 通信鍵を入力して保存してから画面共有を押してください。");
     return;
   }
 
@@ -444,14 +449,29 @@ function shareConnectionQr() {
     dev: devDomain,
   };
 
-  const jsonStr = JSON.stringify(payload);
-  const encoded = btoa(encodeURIComponent(jsonStr));
-  const syncUrl = `${window.location.origin}${window.location.pathname}#sync=${encoded}`;
+  try {
+    const jsonStr = JSON.stringify(payload);
+    const encoded = btoa(encodeURIComponent(jsonStr));
+    const syncUrl = `${window.location.origin}${window.location.pathname}#sync=${encoded}`;
 
-  QRCode.toCanvas(qrCanvas, syncUrl, { width: 260, margin: 2 }, err => {
-    if (err) console.error("QR Code Error:", err);
-    else qrModal.style.display = "flex";
-  });
+    if (qrCanvas) {
+      await QRCode.toCanvas(qrCanvas, syncUrl, {
+        width: 220,
+        margin: 1,
+        color: {
+          dark: "#0f172a",
+          light: "#ffffff",
+        },
+      });
+    }
+
+    if (qrModal) {
+      qrModal.style.display = "grid";
+    }
+  } catch (err) {
+    console.error("QR Code Error:", err);
+    alert(`QRコード生成エラー: ${err.message}`);
+  }
 }
 
 function checkAndApplyHashSync() {
@@ -477,6 +497,9 @@ function checkAndApplyHashSync() {
         if (config.dev) localStorage.setItem("r2DevDomain", config.dev);
 
         window.history.replaceState(null, "", window.location.pathname + window.location.search);
+
+        loadSettings();
+        fetchAndRenderR2Files();
       }
     }
   } catch (e) {
