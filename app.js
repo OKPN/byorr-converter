@@ -1055,21 +1055,21 @@ async function fetchAndRenderR2Files() {
 
       item.innerHTML = `
         <div style="display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0;">
-          <input type="checkbox" class="r2-file-checkbox" data-key="${escapeHtml(file.key)}" style="width: 18px; height: 18px; cursor: pointer;">
+          <input type="checkbox" class="r2-file-checkbox" data-key="${escapeHtml(file.key)}" style="width: 18px; height: 18px; cursor: pointer; flex-shrink: 0;">
           ${thumbLinkHtml}
           <div class="cache-file-info" style="flex: 1; min-width: 0;">
-            <div class="cache-file-name-container" style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+            <div class="cache-file-name-container" style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap; min-width: 0;">
               <span class="cache-file-name" title="${escapeHtml(file.key)}">${escapeHtml(file.key)}</span>
               ${keepBadge}
               <button type="button" class="edit-btn rename-trigger-btn" data-key="${escapeHtml(file.key)}" title="ファイル名を変更">✏️</button>
             </div>
             <div class="cache-file-meta">
-              <span>${formatSize(file.size)}</span>
+              <span>${formatSize(file.size)}</span> · 
               <span>📅 ${new Date(file.uploaded).toLocaleString()}</span>
             </div>
           </div>
         </div>
-        <div class="cache-file-actions" style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+        <div class="cache-file-actions">
           <label class="storage-persist-label" style="display: inline-flex; align-items: center; gap: 4px; cursor: pointer;" title="自動削除対象から保護します">
             <input type="checkbox" class="storage-persist-checkbox" data-key="${escapeHtml(file.key)}" ${isKeep ? "checked" : ""}>
             <span style="font-size: 11px; color: var(--muted);">📌 永続化</span>

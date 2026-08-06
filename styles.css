@@ -447,9 +447,89 @@ progress::-webkit-progress-value {
   color: var(--muted);
 }
 
+.cache-file-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-strong);
+  margin-bottom: 8px;
+}
+
+.cache-file-name {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--text);
+  word-break: break-all;
+  overflow-wrap: anywhere;
+}
+
 .cache-file-actions {
   display: flex;
+  align-items: center;
   gap: 8px;
+}
+
+@media (max-width: 600px) {
+  .cache-file-item {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+
+  .cache-file-actions {
+    width: 100%;
+    border-top: 1px dashed var(--border);
+    padding-top: 8px;
+    margin-top: 2px;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .cache-file-actions .storage-persist-label {
+    width: 100%;
+    margin-bottom: 2px;
+  }
+
+  .cache-file-actions .ghost-button {
+    flex: 1;
+    min-width: 70px;
+    justify-content: center;
+    text-align: center;
+    padding: 6px 8px;
+    font-size: 11px;
+  }
+
+  .r2-files-panel .panel-heading {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+  }
+
+  .r2-files-panel .storage-usage {
+    margin: 0 !important;
+    width: 100%;
+  }
+
+  .storage-info-row {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+  }
+
+  .storage-limit-control {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .storage-limit-control input[type="range"] {
+    flex: 1;
+  }
 }
 
 .storage-usage-container {
