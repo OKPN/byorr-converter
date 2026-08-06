@@ -418,7 +418,71 @@ function clearCfSettings() {
   if (cfSettingsAccordion) cfSettingsAccordion.open = true;
 }
 
-// --- 📱 可視光スキャン（QRコード）同期ハンドラ ---
+// --- 🔐 PINコードによる暗号化 / 復号化ヘルパー ---
+function encryptPayloadWithPin(payloadObj, pin) {
+  const jsonStr = JSON.stringify(payloadObj);
+  let result = "";
+  for (let i = 0; i < jsonStr.length; i++) {
+    const charCode = jsonStr.charCodeAt(i) ^ pin.charCodeAt(i % pin.length);
+    result += String.fromCharCode(charCode);
+  }
+  return btoa(encodeURIComponent(result));
+}
+
+function decryptPayloadWithPin(encodedStr, pin) {
+  try {
+    const raw = decodeURIComponent(atob(encodedStr));
+    let result = "";
+    for (let i = 0; i < raw.length; i++) {
+      const charCode = raw.charCodeAt(i) ^ pin.charCodeAt(i % pin.length);
+      result += String.fromCharCode(charCode);
+    }
+    return JSON.parse(result);
+  } catch {
+    return null;
+  }
+}
+
+// PINコード付き暗号化バックアップURLの発行
+function generatePinBackupUrl() {
+  const accountId = (localStorage.getItem("r2AccountId") || r2AccountId?.value || "").trim();
+  const bucket    = (localStorage.getItem("r2BucketName") || r2BucketName?.value || "").trim();
+  const accessKey = (localStorage.getItem("r2AccessKeyId") || r2AccessKeyId?.value || "").trim();
+  const secretKey = (localStorage.getItem("r2SecretAccessKey") || r2SecretAccessKey?.value || "").trim();
+  const domain    = (localStorage.getItem("r2PublicDomain") || r2PublicDomain?.value || "").trim();
+  const devDomain = (localStorage.getItem("r2DevDomain") || r2DevDomain?.value || "").trim();
+
+  if (!domain && !devDomain) {
+    alert("⚠️ ステップ1の公開URL (直リンクドメイン または Devアドレス) を入力して保存してください。");
+    return;
+  }
+
+  if (!accountId || !bucket || !accessKey || !secretKey) {
+    alert("⚠️ ステップ2の R2 S3 API 通信鍵を入力して保存してください。");
+    return;
+  }
+
+  const pin = prompt("🔐 復元時に使用するパスコード (PINコード) を設定してください:\n(例: 1234 や 9999 などのお好きな数字/英字)");
+  if (!pin) return;
+
+  const payload = {
+    a: accountId,
+    b: bucket,
+    k: accessKey,
+    s: secretKey,
+    d: domain,
+    dev: devDomain,
+  };
+
+  const encrypted = encryptPayloadWithPin(payload, pin);
+  const backupUrl = `${window.location.origin}${window.location.pathname}#enc=${encrypted}`;
+
+  navigator.clipboard.writeText(backupUrl).then(() => {
+    alert(`✅ PIN暗号化されたバックアップURLをコピーしました！\n\n【設定したPIN】: ${pin}\n\nメモ帳などにこのURLを保存しておけば、次回このURLを開いてPINを入力するだけでシークレットキーも含めて1秒で復元されます。`);
+  });
+}
+
+// 📱 可視光スキャン（QRコード）同期ハンドラ
 async function shareConnectionQr() {
   const accountId = (localStorage.getItem("r2AccountId") || r2AccountId?.value || "").trim();
   const bucket    = (localStorage.getItem("r2BucketName") || r2BucketName?.value || "").trim();
@@ -474,9 +538,24 @@ async function shareConnectionQr() {
   }
 }
 
+let pendingEncryptedHash = "";
+
 function checkAndApplyHashSync() {
   try {
     const hash = window.location.hash || "";
+
+    // 暗号化バックアップURLの復元検知
+    if (hash.startsWith("#enc=")) {
+      pendingEncryptedHash = hash.replace("#enc=", "");
+      const pinModal = document.querySelector("#pinModal");
+      const pinInput = document.querySelector("#pinInput");
+      const pinErrorNotice = document.querySelector("#pinErrorNotice");
+      if (pinInput) pinInput.value = "";
+      if (pinErrorNotice) pinErrorNotice.textContent = "";
+      if (pinModal) pinModal.style.display = "grid";
+      return;
+    }
+
     if (hash.startsWith("#sync=") || hash.startsWith("#cfg=")) {
       const prefix = hash.startsWith("#sync=") ? "#sync=" : "#cfg=";
       const raw = hash.replace(prefix, "");
@@ -1506,6 +1585,57 @@ if (autoCleanupCheckbox) {
     }
   });
 }
+
+const cfBackupUrlButton = document.querySelector("#cfBackupUrlButton");
+if (cfBackupUrlButton) {
+  cfBackupUrlButton.addEventListener("click", generatePinBackupUrl);
+}
+
+// PIN入力復元モーダルの処理
+const submitPinButton = document.querySelector("#submitPinButton");
+const cancelPinButton = document.querySelector("#cancelPinButton");
+const pinInput = document.querySelector("#pinInput");
+const pinErrorNotice = document.querySelector("#pinErrorNotice");
+const pinModal = document.querySelector("#pinModal");
+
+submitPinButton?.addEventListener("click", () => {
+  const pin = pinInput?.value?.trim() || "";
+  if (!pin) {
+    if (pinErrorNotice) pinErrorNotice.textContent = "PINコードを入力してください。";
+    return;
+  }
+
+  const config = decryptPayloadWithPin(pendingEncryptedHash, pin);
+  if (!config || !config.a || !config.k || !config.s) {
+    if (pinErrorNotice) pinErrorNotice.textContent = "⚠️ PINコードが正しくないか、データが破損しています。";
+    return;
+  }
+
+  if (config.a) localStorage.setItem("r2AccountId", config.a);
+  if (config.b) localStorage.setItem("r2BucketName", config.b);
+  if (config.k) localStorage.setItem("r2AccessKeyId", config.k);
+  if (config.s) localStorage.setItem("r2SecretAccessKey", config.s);
+  if (config.d) localStorage.setItem("r2PublicDomain", config.d);
+  if (config.dev) localStorage.setItem("r2DevDomain", config.dev);
+
+  window.history.replaceState(null, "", window.location.pathname + window.location.search);
+  if (pinModal) pinModal.style.display = "none";
+
+  loadSettings();
+  fetchAndRenderR2Files();
+  alert("🎉 PIN認証に成功しました！Cloudflare R2 接続設定を完全に復元・保存いたしました。");
+});
+
+cancelPinButton?.addEventListener("click", () => {
+  window.history.replaceState(null, "", window.location.pathname + window.location.search);
+  if (pinModal) pinModal.style.display = "none";
+});
+
+pinInput?.addEventListener("keydown", e => {
+  if (e.key === "Enter") {
+    submitPinButton?.click();
+  }
+});
 
 // 初期化 (byoc-publisher 完全一致順序)
 checkAndApplyHashSync();

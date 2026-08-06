@@ -156,6 +156,7 @@
                   </div>
                   <div style="display: flex; gap: 6px; margin-top: 4px; flex-wrap: wrap;">
                     <button class="primary-button" id="cfSaveButton" type="button" style="flex: 1; min-width: 90px;" data-i18n="btnSave">保存する</button>
+                    <button class="ghost-button" id="cfBackupUrlButton" type="button" title="PINコードで暗号化したバックアップURLをコピー">🔗 PIN付きバックアップURL</button>
                     <button class="ghost-button" id="cfShareQrButton" type="button" title="別端末へ可視光QRスキャン共有" data-i18n="btnShareQr">📱 スマホへ共有</button>
                     <a href="https://dash.cloudflare.com/" target="_blank" rel="noopener noreferrer" class="ghost-button" id="cfDashboardLink" style="display: inline-flex; align-items: center; font-size: 12px; text-decoration: none;">Cloudflare ↗</a>
                     <button class="ghost-button danger-button" id="cfClearButton" type="button" data-i18n="btnClear">クリア</button>
@@ -281,6 +282,24 @@
         </div>
         <div>
           <button class="ghost-button" id="closeQrModalButton" type="button" style="width: 100%;">閉じる</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- PINコード入力モーダル (復元用) -->
+    <div id="pinModal" class="modal-backdrop" style="display: none;">
+      <div class="modal-content" style="max-width: 380px; text-align: center; padding: 24px;">
+        <h3 style="margin-top: 0; font-size: 16px; color: var(--accent);">🔑 暗号化バックアップデータを検出</h3>
+        <p style="font-size: 12px; color: var(--muted); margin-bottom: 16px; line-height: 1.5;">
+          発行時に設定したパスコード (PINコード) を入力してください。
+        </p>
+        <div style="margin-bottom: 16px;">
+          <input type="password" id="pinInput" placeholder="PINコード (例: 1234)" style="width: 100%; height: 42px; text-align: center; font-size: 18px; letter-spacing: 4px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); color: var(--text); outline: none;">
+          <div id="pinErrorNotice" style="font-size: 12px; color: var(--danger); margin-top: 6px; min-height: 16px;"></div>
+        </div>
+        <div style="display: flex; gap: 8px;">
+          <button class="ghost-button" id="cancelPinButton" type="button" style="flex: 1;">キャンセル</button>
+          <button class="primary-button" id="submitPinButton" type="button" style="flex: 2; margin: 0;">復号して保存</button>
         </div>
       </div>
     </div>
