@@ -381,6 +381,10 @@ function loadSettings() {
   storageLimitRange.value = savedLimit;
   updateLimitOutput(savedLimit);
 
+  if (autoCleanupCheckbox) {
+    autoCleanupCheckbox.checked = localStorage.getItem("autoCleanup7Days") === "true";
+  }
+
   loadTemplates();
   applyLanguage(getAppLanguage());
 }
@@ -457,6 +461,7 @@ const progressBar = document.querySelector("#progressBar");
 // R2 ストレージ一覧 DOM
 const reloadR2FilesButton = document.querySelector("#reloadR2FilesButton");
 const deleteSelectedR2FilesButton = document.querySelector("#deleteSelectedR2FilesButton");
+const autoCleanupCheckbox = document.querySelector("#autoCleanupCheckbox");
 const r2FileList = document.querySelector("#r2FileList");
 
 const extensions = {
@@ -857,7 +862,7 @@ async function fetchAndRenderR2Files() {
     const baseUrl = getR2PublicBaseUrl();
     const devUrl = getR2DevBaseUrl();
     const rawObjects = data.Contents || [];
-    const files = rawObjects
+    let files = rawObjects
       .filter(obj => !obj.Key.startsWith(".system/"))
       .map(obj => ({
         key: obj.Key,
@@ -866,6 +871,29 @@ async function fetchAndRenderR2Files() {
         url: baseUrl ? `${baseUrl}/${obj.Key}` : obj.Key,
         devUrl: devUrl ? `${devUrl}/${obj.Key}` : obj.Key,
       }));
+
+    // 🧹 7日以上経過したファイル（📌永続化を除く）の自動削除
+    if (autoCleanupCheckbox && autoCleanupCheckbox.checked) {
+      const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
+      const now = Date.now();
+      const expiredKeys = files
+        .filter(f => !f.key.startsWith("keep/") && (now - new Date(f.uploaded).getTime()) > SEVEN_DAYS_MS)
+        .map(f => f.key);
+
+      if (expiredKeys.length > 0) {
+        try {
+          const deleteCmd = new DeleteObjectsCommand({
+            Bucket: bucket,
+            Delete: { Objects: expiredKeys.map(k => ({ Key: k })) },
+          });
+          await s3.send(deleteCmd);
+          const expiredSet = new Set(expiredKeys);
+          files = files.filter(f => !expiredSet.has(f.key));
+        } catch (cleanErr) {
+          console.error("Auto cleanup error:", cleanErr);
+        }
+      }
+    }
 
     paletteFiles = files.map(f => ({ key: f.key, url: f.url }));
     renderUrlPalette();
@@ -1346,6 +1374,15 @@ if (clearComposerButton && composerTextarea) {
 [r2AccountId, r2BucketName, r2AccessKeyId, r2SecretAccessKey, r2PublicDomain, r2DevDomain].forEach(el => {
   el?.addEventListener("input", saveCfSettingsAuto);
 });
+
+if (autoCleanupCheckbox) {
+  autoCleanupCheckbox.addEventListener("change", () => {
+    localStorage.setItem("autoCleanup7Days", String(autoCleanupCheckbox.checked));
+    if (autoCleanupCheckbox.checked) {
+      fetchAndRenderR2Files();
+    }
+  });
+}
 
 // 初期化
 parseUrlConfigHash();
