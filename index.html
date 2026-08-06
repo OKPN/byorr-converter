@@ -107,22 +107,22 @@
                 <div class="settings-content" style="padding: 14px 0 4px; display: flex; flex-direction: column; gap: 10px;">
                   <label class="field">
                     <span><span data-i18n="r2AccountLabel">Account ID</span> <span style="color: var(--danger);">*</span></span>
-                    <input id="r2AccountId" type="text" placeholder="例: 0123456789abcdef0123456789abcdef" spellcheck="false" autocomplete="off">
-                    <span style="font-size: 11px; color: var(--muted); margin-top: 3px;" data-i18n="r2AccountSub">Cloudflare アカウント ID</span>
+                    <input id="r2AccountId" type="text" placeholder="例: 0123456789abcdef... または S3 API URL" spellcheck="false" autocomplete="new-password">
+                    <span style="font-size: 11px; color: var(--muted); margin-top: 3px;" data-i18n="r2AccountSub">Cloudflare アカウント ID（S3 API URLを貼り付けても自動抽出されます）</span>
                   </label>
                   <label class="field">
                     <span><span data-i18n="r2BucketLabel">R2 バケット名</span> <span style="color: var(--danger);">*</span></span>
-                    <input id="r2BucketName" type="text" placeholder="例: my-bucket" spellcheck="false" autocomplete="off">
+                    <input id="r2BucketName" type="text" placeholder="例: my-bucket" spellcheck="false" autocomplete="new-password">
                     <span style="font-size: 11px; color: var(--muted); margin-top: 3px;" data-i18n="r2BucketSub">対象の Cloudflare R2 バケット名</span>
                   </label>
                   <label class="field">
                     <span><span data-i18n="r2AccessKeyLabel">Access Key ID</span> <span style="color: var(--danger);">*</span></span>
-                    <input id="r2AccessKeyId" type="text" placeholder="例: c8a1928374..." spellcheck="false" autocomplete="off">
+                    <input id="r2AccessKeyId" type="text" placeholder="例: c8a1928374..." spellcheck="false" autocomplete="new-password">
                     <span style="font-size: 11px; color: var(--muted); margin-top: 3px;" data-i18n="r2AccessKeySub">R2 API トークンの Access Key ID</span>
                   </label>
                   <label class="field">
                     <span><span data-i18n="r2SecretKeyLabel">Secret Access Key</span> <span style="color: var(--danger);">*</span></span>
-                    <input id="r2SecretAccessKey" type="password" placeholder="例: 99f87654..." spellcheck="false" autocomplete="off">
+                    <input id="r2SecretAccessKey" type="password" placeholder="例: 99f87654..." spellcheck="false" autocomplete="new-password">
                     <span style="font-size: 11px; color: var(--muted); margin-top: 3px;" data-i18n="r2SecretKeySub">R2 API トークンの Secret Access Key</span>
                   </label>
                   <label class="field">

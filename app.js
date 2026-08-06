@@ -229,9 +229,17 @@ function escapeHtml(str) {
     .replace(/'/g, "&#039;");
 }
 
+function getCleanAccountId() {
+  const raw = r2AccountId?.value?.trim() || "";
+  if (!raw) return "";
+  const match = raw.match(/https?:\/\/([a-f0-9]{32})\.r2\.cloudflarestorage\.com/i);
+  if (match) return match[1];
+  return raw;
+}
+
 // S3 クライアントのオンデマンド取得
 function getS3Client() {
-  const accountId = r2AccountId.value.trim();
+  const accountId = getCleanAccountId();
   const accessKey = r2AccessKeyId.value.trim();
   const secretKey = r2SecretAccessKey.value.trim();
 
@@ -272,7 +280,7 @@ function getR2DevBaseUrl() {
 }
 
 function isR2Configured() {
-  const accountId = r2AccountId.value.trim();
+  const accountId = getCleanAccountId();
   const bucket = r2BucketName.value.trim();
   const accessKey = r2AccessKeyId.value.trim();
   const secretKey = r2SecretAccessKey.value.trim();
@@ -1411,3 +1419,13 @@ if (autoCleanupCheckbox) {
 parseUrlConfigHash();
 loadSettings();
 fetchAndRenderR2Files();
+
+// ブラウザのフォーム初期化・オートコンプリート完了後の二重復元
+setTimeout(() => {
+  loadSettings();
+  fetchAndRenderR2Files();
+}, 200);
+
+setTimeout(() => {
+  loadSettings();
+}, 600);
