@@ -1,0 +1,277 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>BYORR Converter</title>
+    <link rel="manifest" href="/manifest.json">
+    <meta name="theme-color" content="#202227">
+    <link rel="stylesheet" href="./styles.css">
+  </head>
+  <body>
+    <main class="app-shell">
+      <section class="workspace" aria-label="画像圧縮ツール">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow" data-i18n="eyebrow">ブラウザ内のみで画像をセキュアに変換処理!</p>
+            <h1 data-i18n="siteTitle">BYOC Converter</h1>
+          </div>
+          <div class="topbar-actions" style="display: flex; gap: 8px; align-items: center;">
+            <select id="langSelect" style="height: 36px; padding: 0 8px; border-radius: 6px; border: 1px solid var(--border); background: var(--panel-strong); color: var(--text); font-size: 12px; cursor: pointer; outline: none;">
+              <option value="ja">🌐 日本語</option>
+              <option value="en">🌐 English</option>
+            </select>
+          </div>
+        </header>
+
+        <details class="settings-accordion site-about-accordion" style="margin-bottom: 20px;">
+          <summary style="font-size: 13px; font-weight: 600; color: #c7d2fe; cursor: pointer;" data-i18n="whatIsSiteSummary">❓ どのようなサイト？</summary>
+          <div class="settings-content" style="padding: 12px 16px; font-size: 13px; color: var(--text-muted); line-height: 1.6; background: rgba(99, 102, 241, 0.06); border: 1px solid rgba(99, 102, 241, 0.2); border-radius: 8px; margin-top: 8px;" data-i18n="whatIsSiteBody" data-i18n-html="true">
+            外部サーバを一切介さず、お使いのブラウザ内だけで画像をセキュアに変換・軽量化・Exif削除できるローカル専用ツールです。<br>
+            <span style="display: inline-block; margin-top: 6px; font-size: 12px; color: #a5b4fc;">※（おまけ機能）ご自身のCloudflare情報を入力することで（これもブラウザ内のみにセキュア保存）、ファイルのアップロード・共有も可能です。</span>
+          </div>
+        </details>
+
+        <div class="tool-grid">
+          <section class="panel input-panel">
+            <div class="panel-heading">
+              <h2 data-i18n="inputFiles">入力ファイル</h2>
+              <div class="heading-actions" style="display: flex; gap: 8px; align-items: center;">
+                <button class="ghost-button" id="folderSelectButton" type="button" data-i18n="addFolder">フォルダを追加</button>
+                <button class="ghost-button danger-button" id="clearButton" type="button" data-i18n="btnClear">クリア</button>
+                <span id="fileCount">0件</span>
+              </div>
+            </div>
+            <label class="dropzone" id="dropzone">
+              <input id="fileInput" type="file" accept="image/*,audio/*,video/*" multiple>
+              <input id="folderInput" type="file" webkitdirectory directory multiple style="display: none;">
+              <span class="drop-icon">+</span>
+              <strong data-i18n="dropText">画像やフォルダをここにドロップ</strong>
+              <span data-i18n="orClick">またはクリックしてファイルを選択</span>
+            </label>
+            <div class="file-list" id="fileList"></div>
+          </section>
+
+          <aside class="panel settings-panel">
+            <div class="panel-heading">
+              <h2 data-i18n="settings">設定</h2>
+            </div>
+
+            <label class="field">
+              <span data-i18n="outputFormat">出力形式</span>
+              <select id="formatSelect">
+                <option value="image/jpeg">JPEG</option>
+                <option value="image/webp" selected>WebP</option>
+                <option value="image/jxl">JXL</option>
+              </select>
+            </label>
+
+            <label class="field">
+              <span data-i18n="quality">品質</span>
+              <div class="range-row">
+                <input id="qualityRange" type="range" min="1" max="100" value="85">
+                <output id="qualityOutput">85</output>
+              </div>
+            </label>
+
+            <label class="field">
+              <span data-i18n="renameRule">リネーム規則</span>
+              <div class="input-clear-wrapper" style="position: relative; width: 100%;">
+                <input id="renamePattern" type="text" value="{name}" spellcheck="false" style="padding-right: 28px;">
+                <button type="button" id="clearRenamePattern" title="入力をクリア">&times;</button>
+              </div>
+              <div class="pattern-helpers" style="margin-top: 6px; display: flex; gap: 6px; flex-wrap: wrap;">
+                <button type="button" class="tag-button" data-insert="{name}" data-i18n="originalName">元ファイル名</button>
+                <button type="button" class="tag-button" data-insert="{num:2}" data-i18n="seq01">連番 (01)</button>
+                <button type="button" class="tag-button" data-insert="{num:3}" data-i18n="seq001">連番 (001)</button>
+                <button type="button" class="tag-button" data-insert="{randam:6}" data-i18n="random6">ランダム (6文字)</button>
+              </div>
+            </label>
+
+            <div class="action-buttons-group" style="margin-top: 20px;">
+              <button class="primary-button" id="convertDownloadButton" type="button" disabled data-i18n="btnConvertDownload">変換してダウンロード</button>
+              <button class="secondary-button" id="convertButton" type="button" disabled data-i18n="btnConvertOnly">変換だけする</button>
+              <div style="margin-top: 8px; border-top: 1px dashed var(--border); padding-top: 12px; display: flex; flex-direction: column; gap: 8px;">
+                <button class="ghost-button" id="convertUploadButton" type="button" disabled data-i18n="btnConvertUpload">変換してアップロード</button>
+                <button class="ghost-button" id="uploadRenameButton" type="button" disabled data-i18n="btnUploadRename">リネームだけしてアップロード</button>
+                <button class="ghost-button" id="uploadOriginalButton" type="button" disabled data-i18n="btnUploadOriginal">そのままアップロード</button>
+              </div>
+            </div>
+
+            <!-- アップロードボタン群の下に配置した「おまけ設定」領域 -->
+            <div style="margin-top: 18px; padding-top: 14px; border-top: 1px dashed rgba(255, 255, 255, 0.1); display: flex; flex-direction: column; gap: 12px;">
+              <label class="field" style="padding: 0;">
+                <span data-i18n="retentionPeriod">保存期間 (自動消滅タイマー)</span>
+                <select id="tempTtlSelect" style="width: 100%; height: 38px; border: 1px solid var(--border); border-radius: 6px; background: #17191e; color: var(--text); padding: 0 8px; font-size: 14px; outline: none;">
+                  <option value="86400" data-i18n="ttl1d">1日間 (24時間後消滅)</option>
+                  <option value="259200" selected data-i18n="ttl3d">3日間 (72時間後消滅)</option>
+                  <option value="604800" data-i18n="ttl7d">7日間 (168時間後消滅)</option>
+                </select>
+              </label>
+
+              <!-- 安全な Cloudflare R2 接続情報アコーディオン -->
+              <details class="settings-accordion cf-settings-accordion" id="cfSettingsAccordion">
+                <summary data-i18n="cfTitle">☁️ Cloudflare R2 接続設定 (S3 API)</summary>
+                <div class="settings-content" style="padding: 14px 0 4px; display: flex; flex-direction: column; gap: 10px;">
+                  <label class="field">
+                    <span><span data-i18n="r2AccountLabel">Account ID</span> <span style="color: var(--danger);">*</span></span>
+                    <input id="r2AccountId" type="text" placeholder="例: 0123456789abcdef0123456789abcdef" spellcheck="false" autocomplete="off">
+                    <span style="font-size: 11px; color: var(--muted); margin-top: 3px;" data-i18n="r2AccountSub">Cloudflare アカウント ID</span>
+                  </label>
+                  <label class="field">
+                    <span><span data-i18n="r2BucketLabel">R2 バケット名</span> <span style="color: var(--danger);">*</span></span>
+                    <input id="r2BucketName" type="text" placeholder="例: my-bucket" spellcheck="false" autocomplete="off">
+                    <span style="font-size: 11px; color: var(--muted); margin-top: 3px;" data-i18n="r2BucketSub">対象の Cloudflare R2 バケット名</span>
+                  </label>
+                  <label class="field">
+                    <span><span data-i18n="r2AccessKeyLabel">Access Key ID</span> <span style="color: var(--danger);">*</span></span>
+                    <input id="r2AccessKeyId" type="text" placeholder="例: c8a1928374..." spellcheck="false" autocomplete="off">
+                    <span style="font-size: 11px; color: var(--muted); margin-top: 3px;" data-i18n="r2AccessKeySub">R2 API トークンの Access Key ID</span>
+                  </label>
+                  <label class="field">
+                    <span><span data-i18n="r2SecretKeyLabel">Secret Access Key</span> <span style="color: var(--danger);">*</span></span>
+                    <input id="r2SecretAccessKey" type="password" placeholder="例: 99f87654..." spellcheck="false" autocomplete="off">
+                    <span style="font-size: 11px; color: var(--muted); margin-top: 3px;" data-i18n="r2SecretKeySub">R2 API トークンの Secret Access Key</span>
+                  </label>
+                  <label class="field">
+                    <span><span data-i18n="r2DomainLabel">直リンク公開ドメイン URL</span> <span style="color: var(--muted); font-size: 11px;">(任意)</span></span>
+                    <input id="r2PublicDomain" type="url" placeholder="例: https://my-domain.com" spellcheck="false" autocomplete="off">
+                    <span style="font-size: 11px; color: var(--muted); margin-top: 3px;" data-i18n="r2DomainSub">カスタムドメイン（コピーボタンで使用）</span>
+                  </label>
+                  <label class="field">
+                    <span><span data-i18n="r2DevDomainLabel">R2 Dev アドレス (dev URL)</span> <span style="color: var(--muted); font-size: 11px;">(任意)</span></span>
+                    <input id="r2DevDomain" type="url" placeholder="例: https://pub-xxx.r2.dev" spellcheck="false" autocomplete="off">
+                    <span style="font-size: 11px; color: var(--muted); margin-top: 3px;" data-i18n="r2DevDomainSub">R2 パブリック dev アドレス（devコピーで使用）</span>
+                  </label>
+                  <div style="display: flex; gap: 6px; margin-top: 4px; flex-wrap: wrap;">
+                    <button class="primary-button" id="cfSaveButton" type="button" style="flex: 1; min-width: 90px;" data-i18n="btnSave">保存する</button>
+                    <button class="ghost-button" id="cfShareQrButton" type="button" title="別端末へ可視光QRスキャン共有" data-i18n="btnShareQr">📱 スマホへ共有</button>
+                    <a href="https://dash.cloudflare.com/" target="_blank" rel="noopener noreferrer" class="ghost-button" id="cfDashboardLink" style="display: inline-flex; align-items: center; font-size: 12px; text-decoration: none;">Cloudflare ↗</a>
+                    <button class="ghost-button danger-button" id="cfClearButton" type="button" data-i18n="btnClear">クリア</button>
+                  </div>
+                  <div id="cfStatus" style="font-size: 12px; min-height: 16px;"></div>
+                </div>
+              </details>
+
+              <div class="metadata-warning" style="border-color: rgba(99, 102, 241, 0.3); background: rgba(99, 102, 241, 0.08);">
+                <span class="warning-icon" style="color: #818cf8;">ℹ️</span>
+                <p data-i18n="r2Notice" data-i18n-html="true" style="color: #c7d2fe; font-size: 11px; line-height: 1.5; margin: 0;">
+                  ブラウザから Cloudflare R2 ストレージへダイレクトに通信します（バックエンド Worker 不要）。事前に R2 バケットの設定で CORS（Cross-Origin Resource Sharing）を許可してください。
+                </p>
+              </div>
+            </div>
+          </aside>
+        </div>
+
+        <section class="panel output-panel">
+          <div class="panel-heading">
+            <h2 data-i18n="outputFiles">出力ファイル</h2>
+            <span id="statusText" data-i18n="statusWaiting">待機中</span>
+          </div>
+          <div class="progress-container">
+            <progress id="progressBar" value="0" max="100"></progress>
+          </div>
+          <div class="output-actions">
+            <button class="ghost-button" id="uploadAllButton" type="button" disabled data-i18n="btnUploadAll">すべてアップロード</button>
+            <button class="primary-button" id="zipButton" type="button" disabled data-i18n="btnZipDownload">ZIPで一括ダウンロード</button>
+          </div>
+          <div class="result-list" id="resultList"></div>
+        </section>
+
+        <details class="panel settings-accordion" id="postComposerPanel" style="margin: 24px 0;">
+          <summary data-i18n="textComposerHeading">💬 テキスト作成支援</summary>
+          <div class="settings-content" style="padding: 18px; display: flex; flex-direction: column; gap: 12px;">
+            <div class="composer-template-row" style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 12px;">
+              <label for="templateSelect" style="font-size: 12px; color: var(--muted); white-space: nowrap;" data-i18n="templateLabel">定型文:</label>
+              <select id="templateSelect" style="flex: 1; min-width: 120px; height: 36px; border: 1px solid var(--border); border-radius: 6px; background: #17191e; color: var(--text); padding: 0 8px;">
+                <option value="">-- 定型文を選択 --</option>
+              </select>
+              <button class="ghost-button" id="saveTemplateButton" type="button" style="min-height: 36px; padding: 0 12px;" data-i18n="promptSave">定型文を保存</button>
+              <button class="ghost-button danger-button" id="deleteTemplateButton" type="button" style="min-height: 36px; padding: 0 12px; display: none;" data-i18n="promptDelete">削除</button>
+            </div>
+
+            <div class="url-inserter-palette" style="display: flex; flex-direction: column; gap: 6px;">
+              <span style="font-size: 12px; color: var(--muted);" data-i18n="paletteNote">クリックしてURLを本文（カーソル位置）に挿入:</span>
+              <div id="paletteList" style="display: flex; gap: 8px; flex-wrap: wrap; max-height: 120px; overflow-y: auto; padding: 8px; border: 1px solid var(--border); border-radius: 6px; background: #181a1f; min-height: 48px;">
+                <!-- サムネイルチップがJSで挿入される -->
+              </div>
+            </div>
+
+            <div style="display: flex; flex-direction: column; gap: 6px;">
+              <textarea id="composerTextarea" rows="6" placeholder="ここに5chに投稿する文章を書きます。上の画像をクリックしてURLを挿入したり、定型文をロードできます。" data-i18n="composerPlaceholder" style="width: 100%; border: 1px solid var(--border); border-radius: 6px; background: #17191e; color: var(--text); padding: 12px; resize: vertical; font-family: inherit; font-size: 14px; outline: none;"></textarea>
+            </div>
+
+            <div style="display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap;">
+              <button class="ghost-button" id="clearComposerButton" type="button" style="min-height: 40px; flex: 1; min-width: 80px;" data-i18n="btnClear">クリア</button>
+              <button class="primary-button" id="copyComposerTextButton" type="button" style="min-height: 40px; flex: 2; margin: 0; min-width: 120px;" data-i18n="btnPromptCopy">文章をコピーする</button>
+            </div>
+          </div>
+        </details>
+
+        <section class="panel r2-files-panel">
+          <div class="panel-heading">
+            <h2 data-i18n="r2Heading">⚡ Cloudflare R2 ストレージ内のファイル</h2>
+            <div class="storage-usage" id="storageUsage" style="display: flex; flex-direction: column; gap: 4px; flex: 1; margin: 0 16px;">
+              <div class="storage-info-row" style="display: flex; justify-content: space-between; align-items: center; font-size: 13px;">
+                <span id="storageUsageText" style="font-weight: 500;">使用量: 0 MB / 1.0 GB (0%)</span>
+                <div class="storage-limit-control" style="display: flex; align-items: center; gap: 6px;">
+                  <label for="storageLimitRange" style="font-size: 12px; color: var(--muted);" data-i18n="limitLabel">上限:</label>
+                  <input id="storageLimitRange" type="range" min="100" max="1000" step="50" value="1000" style="width: 120px; cursor: pointer;">
+                  <output id="storageLimitOutput" style="font-size: 12px; font-weight: bold; min-width: 48px;">1.0 GB</output>
+                </div>
+              </div>
+              <progress id="storageUsageBar" value="0" max="100" style="width: 100%; height: 8px; border-radius: 4px; overflow: hidden; accent-color: var(--accent);"></progress>
+            </div>
+            <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+              <input type="checkbox" id="selectAllR2Checkbox" title="すべて選択" style="width: 18px; height: 18px; cursor: pointer;">
+              <button class="ghost-button danger-button" id="deleteSelectedR2FilesButton" type="button" style="display: none; min-height: 38px;" data-i18n="btnBatchDelete">選択削除</button>
+              <button class="ghost-button" id="reloadR2FilesButton" type="button" data-i18n="btnReload">更新</button>
+            </div>
+          </div>
+          <div class="result-list" id="r2FileList"></div>
+        </section>
+
+        <footer class="site-footer">
+          <div class="footer-inner">
+            <div class="footer-left">
+              <span class="footer-app-name">BYORR Converter</span>
+              <span class="license-badge">MIT License</span>
+            </div>
+            <div class="footer-center">
+              <a href="https://github.com/OKPN/byorr-converter" target="_blank" rel="noopener noreferrer" class="footer-github-link">
+                <svg viewBox="0 0 16 16" width="15" height="15" fill="currentColor" style="vertical-align: text-bottom; margin-right: 4px;"><path d="M8 0c4.42 0 8 3.58 8 8a8.013 8.013 0 0 1-5.45 7.59c-.4.08-.55-.17-.55-.38 0-.27.01-1.13.01-2.2 0-.75-.25-1.23-.54-1.48 1.78-.2 3.65-.88 3.65-3.95 0-.88-.31-1.59-.82-2.15.08-.2.36-1.02-.08-2.12 0 0-.67-.22-2.2.82-.64-.18-1.32-.27-2-.27-.68 0-1.36.09-2 .27-1.53-1.03-2.2-.82-2.2-.82-.44 1.1-.16 1.92-.08 2.12-.51.56-.82 1.28-.82 2.15 0 3.06 1.86 3.75 3.64 3.95-.23.2-.44.55-.51 1.07-.46.21-1.61.55-2.33-.66-.15-.24-.6-.83-1.23-.82-.67.01-.27.38.01.53.34.19.73.9.82 1.13.16.45.68 1.31 2.69.94 0 .67.01 1.3.01 1.49 0 .21-.15.45-.55.38A7.995 7.995 0 0 1 0 8c0-4.42 3.58-8 8-8Z"></path></svg>
+                BYORR Converter
+              </a>
+              <span class="footer-divider">•</span>
+              <a href="https://github.com/OKPN/byoc-worker" target="_blank" rel="noopener noreferrer" class="footer-github-link">
+                <svg viewBox="0 0 16 16" width="15" height="15" fill="currentColor" style="vertical-align: text-bottom; margin-right: 4px;"><path d="M8 0c4.42 0 8 3.58 8 8a8.013 8.013 0 0 1-5.45 7.59c-.4.08-.55-.17-.55-.38 0-.27.01-1.13.01-2.2 0-.75-.25-1.23-.54-1.48 1.78-.2 3.65-.88 3.65-3.95 0-.88-.31-1.59-.82-2.15.08-.2.36-1.02-.08-2.12 0 0-.67-.22-2.2.82-.64-.18-1.32-.27-2-.27-.68 0-1.36.09-2 .27-1.53-1.03-2.2-.82-2.2-.82-.44 1.1-.16 1.92-.08 2.12-.51.56-.82 1.28-.82 2.15 0 3.06 1.86 3.75 3.64 3.95-.23.2-.44.55-.51 1.07-.46.21-1.61.55-2.33-.66-.15-.24-.6-.83-1.23-.82-.67.01-.27.38.01.53.34.19.73.9.82 1.13.16.45.68 1.31 2.69.94 0 .67.01 1.3.01 1.49 0 .21-.15.45-.55.38A7.995 7.995 0 0 1 0 8c0-4.42 3.58-8 8-8Z"></path></svg>
+                BYOC Worker
+              </a>
+            </div>
+            <div class="footer-right">
+              <span class="signature-text">Created by <strong class="author-name">OKPN</strong></span>
+            </div>
+          </div>
+        </footer>
+      </section>
+    </main>
+
+    <!-- QRコード同期モーダル -->
+    <div id="qrModal" class="modal-backdrop" style="display: none;">
+      <div class="modal-content" style="max-width: 360px; text-align: center; padding: 24px;">
+        <h3 style="margin-top: 0; font-size: 16px; color: var(--text);">📱 スマホ/別端末でスキャン</h3>
+        <p style="font-size: 12px; color: var(--text-muted, #9ea3b0); margin-bottom: 16px; line-height: 1.5;">
+          スマホのカメラで下記QRコードを読み取ると、接続情報（Worker URL / トークン / カスタムドメイン）が安全に直接同期されます。
+        </p>
+        <div id="qrContainer" style="background: #ffffff; padding: 16px; border-radius: 12px; display: inline-block; margin-bottom: 16px; box-shadow: 0 4px 12px rgba(0,0,0,0.3);">
+          <canvas id="qrCanvas" style="display: block; margin: 0 auto;"></canvas>
+        </div>
+        <div>
+          <button class="ghost-button" id="closeQrModalButton" type="button" style="width: 100%;">閉じる</button>
+        </div>
+      </div>
+    </div>
+
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>

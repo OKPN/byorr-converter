@@ -1,0 +1,20 @@
+{
+  "name": "byorr-converter",
+  "version": "1.0.0",
+  "description": "BYORR static frontend for local image conversion and direct Cloudflare R2 S3 storage",
+  "private": false,
+  "type": "module",
+  "scripts": {
+    "build": "vite build",
+    "preview": "vite preview --host 127.0.0.1"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.750.0",
+    "@jsquash/jpeg": "^1.6.0",
+    "@jsquash/jxl": "^1.3.0",
+    "@jsquash/png": "^3.1.1",
+    "@jsquash/webp": "^1.5.0",
+    "qrcode": "^1.5.4",
+    "vite": "^7.1.7"
+  }
+}
