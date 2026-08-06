@@ -231,8 +231,8 @@
                 <span id="storageUsageText" style="font-weight: 500;">使用量: 0 MB / 1.0 GB (0%)</span>
                 <div class="storage-limit-control" style="display: flex; align-items: center; gap: 6px;">
                   <label for="storageLimitRange" style="font-size: 12px; color: var(--muted);" data-i18n="limitLabel">上限:</label>
-                  <input id="storageLimitRange" type="range" min="100" max="1000" step="50" value="1000" style="width: 120px; cursor: pointer;">
-                  <output id="storageLimitOutput" style="font-size: 12px; font-weight: bold; min-width: 48px;">1.0 GB</output>
+                  <input id="storageLimitRange" type="range" min="100" max="10000" step="100" value="10000" style="width: 120px; cursor: pointer;">
+                  <output id="storageLimitOutput" style="font-size: 12px; font-weight: bold; min-width: 48px;">10.0 GB</output>
                 </div>
               </div>
               <progress id="storageUsageBar" value="0" max="100" style="width: 100%; height: 8px; border-radius: 4px; overflow: hidden; accent-color: var(--accent);"></progress>

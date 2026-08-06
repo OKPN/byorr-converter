@@ -700,9 +700,10 @@ function updateProgress(value) {
 function updateLimitOutput(value) {
   const mb = Number(value);
   if (mb >= 1000) {
-    storageLimitOutput.textContent = `1.0 GB`;
+    const gb = (mb / 1000).toFixed(1);
+    storageLimitOutput.textContent = `${gb} GB`;
   } else {
-    storageLimitOutput.textContent = `${(mb / 1000).toFixed(1)} GB`;
+    storageLimitOutput.textContent = `${mb} MB`;
   }
 }
 
@@ -1195,7 +1196,7 @@ function updateR2BatchButtons() {
 // R2 ストレージ使用量UI更新
 function updateStorageUsageUI() {
   const currentBytes = state.r2TotalSize || 0;
-  const limitMb = Number(storageLimitRange.value) || 1000;
+  const limitMb = Number(storageLimitRange.value) || 10000;
   const limitBytes = limitMb * 1024 * 1024;
   const percent = limitBytes > 0 ? (currentBytes / limitBytes) * 100 : 0;
   const clampedPercent = Math.min(100, Math.round(percent * 100) / 100);
@@ -1204,7 +1205,7 @@ function updateStorageUsageUI() {
   const fillBar = document.querySelector("#storageUsageBar");
 
   if (usageText) {
-    const formattedLimit = limitMb >= 1000 ? "1.0 GB" : `${(limitMb / 1000).toFixed(1)} GB`;
+    const formattedLimit = limitMb >= 1000 ? `${(limitMb / 1000).toFixed(1)} GB` : `${limitMb} MB`;
     usageText.textContent = `${formatSize(currentBytes)} / ${formattedLimit} (${clampedPercent.toFixed(2)}%)`;
   }
   if (fillBar) {
