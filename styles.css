@@ -557,6 +557,86 @@ progress::-webkit-progress-value {
   color: #fff;
 }
 
+/* フッター (BYOC Converter 同等デザイン) */
+.site-footer {
+  margin-top: 24px;
+  padding: 16px 24px;
+  border: 1px solid var(--border);
+  background: var(--panel-strong);
+  backdrop-filter: blur(10px);
+  border-radius: 12px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.footer-inner {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+
+.footer-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.footer-app-name {
+  font-weight: 700;
+  color: var(--text);
+}
+
+.license-badge {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 12px;
+  background: rgba(99, 102, 241, 0.15);
+  color: #818cf8;
+  border: 1px solid rgba(99, 102, 241, 0.3);
+}
+
+.footer-center {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.footer-github-link {
+  color: var(--muted);
+  text-decoration: none;
+  font-weight: 500;
+  transition: color 0.2s ease, transform 0.2s ease;
+  display: inline-flex;
+  align-items: center;
+}
+
+.footer-github-link:hover {
+  color: #38bdf8;
+  transform: translateY(-1px);
+}
+
+.footer-divider {
+  color: rgba(255, 255, 255, 0.2);
+}
+
+.footer-right {
+  font-size: 12px;
+}
+
+.signature-text {
+  color: var(--muted);
+}
+
+.author-name {
+  color: #f43f5e;
+  font-weight: 700;
+  margin-left: 2px;
+}
+
 /* アコーディオン・詳細設定 */
 .settings-accordion {
   border: 1px solid var(--border);
