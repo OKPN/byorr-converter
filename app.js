@@ -277,6 +277,20 @@ function isR2Configured() {
   return Boolean(accountId && bucket && accessKey && secretKey);
 }
 
+function updateCfStatus() {
+  const isOk = isR2Configured();
+  if (cfStatus) {
+    if (isOk) {
+      cfStatus.style.color = "var(--good)";
+      cfStatus.textContent = "✅ R2 接続設定がローカルに自動保存されています";
+    } else {
+      cfStatus.style.color = "var(--muted)";
+      cfStatus.textContent = "⚠️ Account ID, バケット名, Access Key, Secret Key をすべて入力すると自動保存されます";
+    }
+  }
+  return isOk;
+}
+
 // 接続設定の自動保存・ボタン状態更新
 function saveCfSettingsAuto() {
   const accountId = r2AccountId.value.trim();
@@ -286,15 +300,25 @@ function saveCfSettingsAuto() {
   const domain = r2PublicDomain.value.trim();
   const devDomain = r2DevDomain?.value?.trim() || "";
 
-  if (accountId && bucket && accessKey && secretKey) {
-    localStorage.setItem("r2AccountId", accountId);
-    localStorage.setItem("r2BucketName", bucket);
-    localStorage.setItem("r2AccessKeyId", accessKey);
-    localStorage.setItem("r2SecretAccessKey", secretKey);
-    localStorage.setItem("r2PublicDomain", domain);
-    localStorage.setItem("r2DevDomain", devDomain);
-  }
+  if (accountId) localStorage.setItem("r2AccountId", accountId);
+  else localStorage.removeItem("r2AccountId");
 
+  if (bucket) localStorage.setItem("r2BucketName", bucket);
+  else localStorage.removeItem("r2BucketName");
+
+  if (accessKey) localStorage.setItem("r2AccessKeyId", accessKey);
+  else localStorage.removeItem("r2AccessKeyId");
+
+  if (secretKey) localStorage.setItem("r2SecretAccessKey", secretKey);
+  else localStorage.removeItem("r2SecretAccessKey");
+
+  if (domain) localStorage.setItem("r2PublicDomain", domain);
+  else localStorage.removeItem("r2PublicDomain");
+
+  if (devDomain) localStorage.setItem("r2DevDomain", devDomain);
+  else localStorage.removeItem("r2DevDomain");
+
+  updateCfStatus();
   render();
 }
 
@@ -386,6 +410,7 @@ function loadSettings() {
   }
 
   loadTemplates();
+  updateCfStatus();
   applyLanguage(getAppLanguage());
 }
 
