@@ -255,18 +255,20 @@ function getR2PublicBaseUrl() {
   const custom = r2PublicDomain.value.trim();
   if (custom) return custom.replace(/\/$/, "");
   
-  const bucket = r2BucketName.value.trim();
-  const accountId = r2AccountId.value.trim();
-  if (bucket && accountId) {
-    return `https://${bucket}.${accountId}.r2.cloudflarestorage.com`;
-  }
+  const dev = r2DevDomain?.value?.trim();
+  if (dev) return dev.replace(/\/$/, "");
+
   return "";
 }
 
 function getR2DevBaseUrl() {
   const dev = r2DevDomain?.value?.trim();
   if (dev) return dev.replace(/\/$/, "");
-  return getR2PublicBaseUrl();
+
+  const custom = r2PublicDomain.value.trim();
+  if (custom) return custom.replace(/\/$/, "");
+
+  return "";
 }
 
 function isR2Configured() {
@@ -940,28 +942,27 @@ async function fetchAndRenderR2Files() {
       const item = document.createElement("div");
       item.className = "cache-file-item";
 
-      const ext = file.key.split(".").pop().toLowerCase();
-      const isMedia = /\.(jpg|jpeg|png|webp|gif|jxl|mp4|webm|mov)$/i.test(file.key);
-      const isVideo = /\.(mp4|webm|mov)$/i.test(file.key);
-
+      const hasUrl = Boolean(file.url);
       let mediaHtml = "";
-      if (isVideo) {
-        mediaHtml = `<video src="${file.url}#t=0.5" class="cache-file-thumb" preload="metadata" muted playsinline style="object-fit: cover; pointer-events: none;"></video>`;
-      } else if (isMedia) {
-        mediaHtml = `<img src="${file.url}" alt="${file.key}" class="cache-file-thumb" loading="lazy">`;
+      if (hasUrl && isVideo) {
+        mediaHtml = `<video src="${escapeHtml(file.url)}#t=0.5" class="cache-file-thumb" preload="metadata" muted playsinline style="object-fit: cover; pointer-events: none;"></video>`;
+      } else if (hasUrl && isMedia) {
+        mediaHtml = `<img src="${escapeHtml(file.url)}" alt="${escapeHtml(file.key)}" class="cache-file-thumb" loading="lazy">`;
       } else {
-        mediaHtml = `<div class="cache-file-thumb-placeholder">📄</div>`;
+        mediaHtml = `<div class="cache-file-thumb-placeholder" title="直リンク公開ドメイン未設定">📄</div>`;
       }
 
       const isKeep = file.key.startsWith("keep/");
       const keepBadge = isKeep ? '<span class="badge-keep">📌 永続化</span>' : "";
 
+      const thumbLinkHtml = hasUrl
+        ? `<a href="${escapeHtml(file.url)}" target="_blank" rel="noopener noreferrer" class="thumb-link" title="画像を表示" style="display: block; text-decoration: none;">${mediaHtml}</a>`
+        : `<div class="thumb-link" title="公開URL未設定" style="display: block;">${mediaHtml}</div>`;
+
       item.innerHTML = `
         <div style="display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0;">
           <input type="checkbox" class="r2-file-checkbox" data-key="${escapeHtml(file.key)}" style="width: 18px; height: 18px; cursor: pointer;">
-          <a href="${escapeHtml(file.url)}" target="_blank" rel="noopener noreferrer" class="thumb-link" title="画像を表示">
-            ${mediaHtml}
-          </a>
+          ${thumbLinkHtml}
           <div class="cache-file-info" style="flex: 1; min-width: 0;">
             <div class="cache-file-name-container" style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
               <span class="cache-file-name" title="${escapeHtml(file.key)}">${escapeHtml(file.key)}</span>
@@ -1347,6 +1348,10 @@ if (r2FileList) {
     // コピーボタン
     if (e.target.classList.contains("copy-url-btn")) {
       const url = e.target.getAttribute("data-url");
+      if (!url) {
+        alert("⚠️ 「直リンク公開ドメイン URL」または「R2 Dev アドレス (dev URL)」を Cloudflare R2 接続設定に入力してください。");
+        return;
+      }
       navigator.clipboard.writeText(url).then(() => {
         const lang = getAppLanguage();
         const dict = i18nDict[lang] || i18nDict.ja;
@@ -1359,6 +1364,10 @@ if (r2FileList) {
     // devコピーボタン
     if (e.target.classList.contains("dev-copy-url-btn")) {
       const devUrl = e.target.getAttribute("data-url");
+      if (!devUrl) {
+        alert("⚠️ 「R2 Dev アドレス (dev URL)」または「直リンク公開ドメイン URL」を Cloudflare R2 接続設定に入力してください。");
+        return;
+      }
       navigator.clipboard.writeText(devUrl).then(() => {
         const lang = getAppLanguage();
         const dict = i18nDict[lang] || i18nDict.ja;
