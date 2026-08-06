@@ -30,7 +30,7 @@ const i18nDict = {
     retentionPeriod: "保存期間",
     cfTitle: "☁️ Cloudflare R2 接続設定 (S3 API)",
     r2AccountLabel: "Account ID",
-    r2AccountSub: "Cloudflare アカウント ID",
+    r2AccountSub: "Cloudflare アカウント ID（S3 API URLを貼り付けても自動抽出されます）",
     r2BucketLabel: "R2 バケット名",
     r2BucketSub: "対象の Cloudflare R2 バケット名",
     r2AccessKeyLabel: "Access Key ID",
@@ -230,7 +230,7 @@ function escapeHtml(str) {
 }
 
 function getCleanAccountId() {
-  const raw = r2AccountId?.value?.trim() || "";
+  const raw = (localStorage.getItem("r2AccountId") || r2AccountId?.value || "").trim();
   if (!raw) return "";
   const match = raw.match(/https?:\/\/([a-f0-9]{32})\.r2\.cloudflarestorage\.com/i);
   if (match) return match[1];
@@ -240,8 +240,8 @@ function getCleanAccountId() {
 // S3 クライアントのオンデマンド取得
 function getS3Client() {
   const accountId = getCleanAccountId();
-  const accessKey = r2AccessKeyId.value.trim();
-  const secretKey = r2SecretAccessKey.value.trim();
+  const accessKey = (localStorage.getItem("r2AccessKeyId") || r2AccessKeyId?.value || "").trim();
+  const secretKey = (localStorage.getItem("r2SecretAccessKey") || r2SecretAccessKey?.value || "").trim();
 
   if (!accountId || !accessKey || !secretKey) {
     return null;
@@ -260,20 +260,20 @@ function getS3Client() {
 }
 
 function getR2PublicBaseUrl() {
-  const custom = r2PublicDomain.value.trim();
+  const custom = (localStorage.getItem("r2PublicDomain") || r2PublicDomain?.value || "").trim();
   if (custom) return custom.replace(/\/$/, "");
   
-  const dev = r2DevDomain?.value?.trim();
+  const dev = (localStorage.getItem("r2DevDomain") || r2DevDomain?.value || "").trim();
   if (dev) return dev.replace(/\/$/, "");
 
   return "";
 }
 
 function getR2DevBaseUrl() {
-  const dev = r2DevDomain?.value?.trim();
+  const dev = (localStorage.getItem("r2DevDomain") || r2DevDomain?.value || "").trim();
   if (dev) return dev.replace(/\/$/, "");
 
-  const custom = r2PublicDomain.value.trim();
+  const custom = (localStorage.getItem("r2PublicDomain") || r2PublicDomain?.value || "").trim();
   if (custom) return custom.replace(/\/$/, "");
 
   return "";
@@ -281,81 +281,84 @@ function getR2DevBaseUrl() {
 
 function isR2Configured() {
   const accountId = getCleanAccountId();
-  const bucket = r2BucketName.value.trim();
-  const accessKey = r2AccessKeyId.value.trim();
-  const secretKey = r2SecretAccessKey.value.trim();
+  const bucket = (localStorage.getItem("r2BucketName") || r2BucketName?.value || "").trim();
+  const accessKey = (localStorage.getItem("r2AccessKeyId") || r2AccessKeyId?.value || "").trim();
+  const secretKey = (localStorage.getItem("r2SecretAccessKey") || r2SecretAccessKey?.value || "").trim();
   return Boolean(accountId && bucket && accessKey && secretKey);
 }
 
 function updateCfStatus() {
-  const isOk = isR2Configured();
+  const accountId = (localStorage.getItem("r2AccountId") || r2AccountId?.value || "").trim();
+  const bucket    = (localStorage.getItem("r2BucketName") || r2BucketName?.value || "").trim();
+  const accessKey = (localStorage.getItem("r2AccessKeyId") || r2AccessKeyId?.value || "").trim();
+  const secretKey = (localStorage.getItem("r2SecretAccessKey") || r2SecretAccessKey?.value || "").trim();
+  const isOk = Boolean(accountId && bucket && accessKey && secretKey);
+
   if (cfStatus) {
     if (isOk) {
       cfStatus.style.color = "var(--good)";
-      cfStatus.textContent = "✅ R2 接続設定がローカルに自動保存されています";
+      cfStatus.textContent = `✅ R2 接続設定済み (Account: ${accountId.substring(0, 8)}...)`;
     } else {
       cfStatus.style.color = "var(--muted)";
-      cfStatus.textContent = "⚠️ Account ID, バケット名, Access Key, Secret Key をすべて入力すると自動保存されます";
+      cfStatus.textContent = "⚠️ Account ID, バケット名, Access Key, Secret Key を設定して保存してください";
     }
   }
   return isOk;
 }
 
-// 接続設定の自動保存・ボタン状態更新
+// 接続設定の自動保存 (byoc-publisher 同等ロジック)
+let autoSaveTimer = null;
 function saveCfSettingsAuto() {
-  const accountId = r2AccountId.value.trim();
-  const bucket = r2BucketName.value.trim();
-  const accessKey = r2AccessKeyId.value.trim();
-  const secretKey = r2SecretAccessKey.value.trim();
-  const domain = r2PublicDomain.value.trim();
+  const accountId = r2AccountId?.value?.trim() || "";
+  const bucket    = r2BucketName?.value?.trim() || "";
+  const accessKey = r2AccessKeyId?.value?.trim() || "";
+  const secretKey = r2SecretAccessKey?.value?.trim() || "";
+  const domain    = r2PublicDomain?.value?.trim() || "";
   const devDomain = r2DevDomain?.value?.trim() || "";
 
   if (accountId) localStorage.setItem("r2AccountId", accountId);
-  if (bucket) localStorage.setItem("r2BucketName", bucket);
+  if (bucket)    localStorage.setItem("r2BucketName", bucket);
   if (accessKey) localStorage.setItem("r2AccessKeyId", accessKey);
   if (secretKey) localStorage.setItem("r2SecretAccessKey", secretKey);
-  if (domain) localStorage.setItem("r2PublicDomain", domain);
+  if (domain)    localStorage.setItem("r2PublicDomain", domain);
   if (devDomain) localStorage.setItem("r2DevDomain", devDomain);
 
-  updateCfStatus();
+  const isConfigured = updateCfStatus();
   render();
+
+  if (autoSaveTimer) clearTimeout(autoSaveTimer);
+  if (isConfigured) {
+    autoSaveTimer = setTimeout(() => {
+      fetchAndRenderR2Files();
+    }, 400);
+  }
 }
 
-// 接続設定の保存・読み込み
+// 接続設定の手動保存 (byoc-publisher 同等)
 function saveCfSettings() {
-  const accountId = r2AccountId.value.trim();
-  const bucket = r2BucketName.value.trim();
-  const accessKey = r2AccessKeyId.value.trim();
-  const secretKey = r2SecretAccessKey.value.trim();
-  const domain = r2PublicDomain.value.trim();
-  const devDomain = r2DevDomain?.value?.trim() || "";
+  const accountId = r2AccountId?.value?.trim() || "";
+  const bucket    = r2BucketName?.value?.trim() || "";
+  const accessKey = r2AccessKeyId?.value?.trim() || "";
+  const secretKey = r2SecretAccessKey?.value?.trim() || "";
 
   const lang = getAppLanguage();
   const dict = i18nDict[lang] || i18nDict.ja;
 
   if (!accountId || !bucket || !accessKey || !secretKey) {
-    cfStatus.style.color = "var(--danger)";
-    cfStatus.textContent = dict.missingConfig;
+    if (cfStatus) {
+      cfStatus.style.color = "var(--danger)";
+      cfStatus.textContent = dict.missingConfig;
+    }
     return;
   }
 
-  localStorage.setItem("r2AccountId", accountId);
-  localStorage.setItem("r2BucketName", bucket);
-  localStorage.setItem("r2AccessKeyId", accessKey);
-  localStorage.setItem("r2SecretAccessKey", secretKey);
-  localStorage.setItem("r2PublicDomain", domain);
-  localStorage.setItem("r2DevDomain", devDomain);
-
-  cfStatus.style.color = "var(--good)";
-  cfStatus.textContent = dict.saveSuccess;
-  render();
+  saveCfSettingsAuto();
+  if (cfSettingsAccordion) cfSettingsAccordion.open = false;
   fetchAndRenderR2Files();
 }
 
+// 接続設定のクリア (byoc-publisher 同等)
 function clearCfSettings() {
-  const lang = getAppLanguage();
-  const dict = i18nDict[lang] || i18nDict.ja;
-
   localStorage.removeItem("r2AccountId");
   localStorage.removeItem("r2BucketName");
   localStorage.removeItem("r2AccessKeyId");
@@ -363,45 +366,121 @@ function clearCfSettings() {
   localStorage.removeItem("r2PublicDomain");
   localStorage.removeItem("r2DevDomain");
 
-  r2AccountId.value = "";
-  r2BucketName.value = "";
-  r2AccessKeyId.value = "";
-  r2SecretAccessKey.value = "";
-  r2PublicDomain.value = "";
+  if (r2AccountId) r2AccountId.value = "";
+  if (r2BucketName) r2BucketName.value = "";
+  if (r2AccessKeyId) r2AccessKeyId.value = "";
+  if (r2SecretAccessKey) r2SecretAccessKey.value = "";
+  if (r2PublicDomain) r2PublicDomain.value = "";
   if (r2DevDomain) r2DevDomain.value = "";
 
-  cfStatus.style.color = "var(--muted)";
-  cfStatus.textContent = dict.clearSuccess;
+  updateCfStatus();
   render();
   fetchAndRenderR2Files();
+  if (cfSettingsAccordion) cfSettingsAccordion.open = true;
 }
 
+// --- 📱 可視光スキャン（QRコード）同期ハンドラ (byoc-publisher 同等) ---
+function shareConnectionQr() {
+  const accountId = (localStorage.getItem("r2AccountId") || r2AccountId?.value || "").trim();
+  const bucket    = (localStorage.getItem("r2BucketName") || r2BucketName?.value || "").trim();
+  const accessKey = (localStorage.getItem("r2AccessKeyId") || r2AccessKeyId?.value || "").trim();
+  const secretKey = (localStorage.getItem("r2SecretAccessKey") || r2SecretAccessKey?.value || "").trim();
+  const domain    = (localStorage.getItem("r2PublicDomain") || r2PublicDomain?.value || "").trim();
+  const devDomain = (localStorage.getItem("r2DevDomain") || r2DevDomain?.value || "").trim();
+
+  const lang = getAppLanguage();
+  const dict = i18nDict[lang] || i18nDict.ja;
+
+  if (!accountId || !bucket || !accessKey || !secretKey) {
+    alert(dict.missingConfig);
+    return;
+  }
+
+  const payload = {
+    a: accountId,
+    b: bucket,
+    k: accessKey,
+    s: secretKey,
+    d: domain,
+    dev: devDomain,
+  };
+
+  const jsonStr = JSON.stringify(payload);
+  const encoded = btoa(encodeURIComponent(jsonStr));
+  const syncUrl = `${window.location.origin}${window.location.pathname}#sync=${encoded}`;
+
+  QRCode.toCanvas(qrCanvas, syncUrl, { width: 260, margin: 2 }, err => {
+    if (err) console.error("QR Code Error:", err);
+    else qrModal.style.display = "flex";
+  });
+}
+
+function checkAndApplyHashSync() {
+  try {
+    const hash = window.location.hash || "";
+    if (hash.startsWith("#sync=") || hash.startsWith("#cfg=")) {
+      const prefix = hash.startsWith("#sync=") ? "#sync=" : "#cfg=";
+      const raw = hash.replace(prefix, "");
+      if (raw) {
+        let config = {};
+        try {
+          const jsonStr = decodeURIComponent(atob(raw));
+          config = JSON.parse(jsonStr);
+        } catch {
+          config = JSON.parse(decodeURIComponent(raw));
+        }
+
+        if (config.a) localStorage.setItem("r2AccountId", config.a);
+        if (config.b) localStorage.setItem("r2BucketName", config.b);
+        if (config.k) localStorage.setItem("r2AccessKeyId", config.k);
+        if (config.s) localStorage.setItem("r2SecretAccessKey", config.s);
+        if (config.d) localStorage.setItem("r2PublicDomain", config.d);
+        if (config.dev) localStorage.setItem("r2DevDomain", config.dev);
+
+        window.history.replaceState(null, "", window.location.pathname + window.location.search);
+      }
+    }
+  } catch (e) {
+    console.error("Parse sync hash error:", e);
+  }
+}
+
+// 読み込みと初期化 (byoc-publisher 同等)
 function loadSettings() {
-  r2AccountId.value = localStorage.getItem("r2AccountId") || "";
-  r2BucketName.value = localStorage.getItem("r2BucketName") || "";
-  r2AccessKeyId.value = localStorage.getItem("r2AccessKeyId") || "";
-  r2SecretAccessKey.value = localStorage.getItem("r2SecretAccessKey") || "";
-  r2PublicDomain.value = localStorage.getItem("r2PublicDomain") || "";
-  if (r2DevDomain) r2DevDomain.value = localStorage.getItem("r2DevDomain") || "";
+  const savedAccount   = localStorage.getItem("r2AccountId") || "";
+  const savedBucket    = localStorage.getItem("r2BucketName") || "";
+  const savedAccessKey = localStorage.getItem("r2AccessKeyId") || "";
+  const savedSecretKey = localStorage.getItem("r2SecretAccessKey") || "";
+  const savedDomain    = localStorage.getItem("r2PublicDomain") || "";
+  const savedDevDomain = localStorage.getItem("r2DevDomain") || "";
+
+  if (r2AccountId)       r2AccountId.value       = savedAccount;
+  if (r2BucketName)      r2BucketName.value      = savedBucket;
+  if (r2AccessKeyId)     r2AccessKeyId.value     = savedAccessKey;
+  if (r2SecretAccessKey) r2SecretAccessKey.value = savedSecretKey;
+  if (r2PublicDomain)    r2PublicDomain.value    = savedDomain;
+  if (r2DevDomain)       r2DevDomain.value       = savedDevDomain;
+
+  updateCfStatus();
 
   const savedFormat = localStorage.getItem("formatSelect");
-  if (savedFormat && extensions[savedFormat]) {
+  if (savedFormat && extensions[savedFormat] && formatSelect) {
     formatSelect.value = savedFormat;
   }
 
   const savedQuality = localStorage.getItem("qualityRange");
   if (savedQuality) {
-    qualityRange.value = savedQuality;
-    qualityOutput.textContent = savedQuality;
+    if (qualityRange) qualityRange.value = savedQuality;
+    if (qualityOutput) qualityOutput.textContent = savedQuality;
   }
 
   const savedRename = localStorage.getItem("renamePattern");
-  if (savedRename) {
+  if (savedRename && renamePattern) {
     renamePattern.value = savedRename;
   }
 
   const savedLimit = localStorage.getItem("storageLimit") || "10000";
-  storageLimitRange.value = savedLimit;
+  if (storageLimitRange) storageLimitRange.value = savedLimit;
   updateLimitOutput(savedLimit);
 
   if (autoCleanupCheckbox) {
@@ -409,55 +488,7 @@ function loadSettings() {
   }
 
   loadTemplates();
-  updateCfStatus();
   applyLanguage(getAppLanguage());
-}
-
-// QRコードによる設定共有
-function shareConnectionQr() {
-  const config = {
-    a: r2AccountId.value.trim(),
-    b: r2BucketName.value.trim(),
-    k: r2AccessKeyId.value.trim(),
-    s: r2SecretAccessKey.value.trim(),
-    d: r2PublicDomain.value.trim(),
-    dev: r2DevDomain?.value?.trim() || "",
-  };
-
-  const lang = getAppLanguage();
-  const dict = i18nDict[lang] || i18nDict.ja;
-
-  if (!config.a || !config.b || !config.k || !config.s) {
-    alert(dict.missingConfig);
-    return;
-  }
-
-  const jsonStr = JSON.stringify(config);
-  const currentUrl = new URL(window.location.href);
-  currentUrl.hash = `#cfg=${encodeURIComponent(jsonStr)}`;
-
-  QRCode.toCanvas(qrCanvas, currentUrl.href, { width: 260, margin: 2 }, err => {
-    if (err) console.error("QR Code Error:", err);
-    else qrModal.style.display = "flex";
-  });
-}
-
-function parseUrlConfigHash() {
-  if (!window.location.hash.startsWith("#cfg=")) return;
-  try {
-    const raw = window.location.hash.replace("#cfg=", "");
-    const config = JSON.parse(decodeURIComponent(raw));
-    if (config.a) r2AccountId.value = config.a;
-    if (config.b) r2BucketName.value = config.b;
-    if (config.k) r2AccessKeyId.value = config.k;
-    if (config.s) r2SecretAccessKey.value = config.s;
-    if (config.d) r2PublicDomain.value = config.d;
-    if (config.dev && r2DevDomain) r2DevDomain.value = config.dev;
-    saveCfSettings();
-    window.history.replaceState(null, "", window.location.pathname + window.location.search);
-  } catch (e) {
-    console.error("Parse config hash error:", e);
-  }
 }
 
 // Web Worker (画像変換)
@@ -745,7 +776,7 @@ async function processImages(autoDownload = false, autoUpload = false) {
 // ダイレクト S3 アップロード
 async function uploadSingleResult(resultObj) {
   const s3 = getS3Client();
-  const bucket = r2BucketName.value.trim();
+  const bucket = (localStorage.getItem("r2BucketName") || r2BucketName?.value || "").trim();
   const lang = getAppLanguage();
   const dict = i18nDict[lang] || i18nDict.ja;
 
@@ -772,7 +803,7 @@ async function uploadRawFiles(applyRename = false) {
   if (!state.files.length) return;
 
   const s3 = getS3Client();
-  const bucket = r2BucketName.value.trim();
+  const bucket = (localStorage.getItem("r2BucketName") || r2BucketName?.value || "").trim();
   const lang = getAppLanguage();
   const dict = i18nDict[lang] || i18nDict.ja;
 
@@ -848,7 +879,7 @@ function downloadFile(url, filename) {
 // S3 でのオブジェクトリネーム (Copy ➔ Delete)
 async function renameR2Object(oldKey, newKey) {
   const s3 = getS3Client();
-  const bucket = r2BucketName.value.trim();
+  const bucket = (localStorage.getItem("r2BucketName") || r2BucketName?.value || "").trim();
   if (!s3 || !bucket || !oldKey || !newKey || oldKey === newKey) return;
 
   const copyCommand = new CopyObjectCommand({
@@ -868,7 +899,7 @@ async function renameR2Object(oldKey, newKey) {
 // R2 ストレージのファイル一覧取得 ＆ 描画 (目標UI準拠)
 async function fetchAndRenderR2Files() {
   const s3 = getS3Client();
-  const bucket = r2BucketName.value.trim();
+  const bucket = (localStorage.getItem("r2BucketName") || r2BucketName?.value || "").trim();
   const lang = getAppLanguage();
   const dict = i18nDict[lang] || i18nDict.ja;
 
@@ -938,6 +969,10 @@ async function fetchAndRenderR2Files() {
     files.forEach(file => {
       const item = document.createElement("div");
       item.className = "cache-file-item";
+
+      const ext = file.key.split(".").pop().toLowerCase();
+      const isMedia = /\.(jpg|jpeg|png|webp|gif|jxl|mp4|webm|mov)$/i.test(file.key);
+      const isVideo = /\.(mp4|webm|mov)$/i.test(file.key);
 
       const hasUrl = Boolean(file.url);
       let mediaHtml = "";
@@ -1029,7 +1064,7 @@ async function deleteR2File(key) {
   if (!confirm(dict.confirmSingleDelete.replace("{key}", key))) return;
 
   const s3 = getS3Client();
-  const bucket = r2BucketName.value.trim();
+  const bucket = (localStorage.getItem("r2BucketName") || r2BucketName?.value || "").trim();
 
   try {
     const command = new DeleteObjectCommand({ Bucket: bucket, Key: key });
@@ -1056,7 +1091,7 @@ async function bulkDeleteR2Files() {
   if (!confirm(dict.confirmBatchDelete.replace("{count}", keys.length))) return;
 
   const s3 = getS3Client();
-  const bucket = r2BucketName.value.trim();
+  const bucket = (localStorage.getItem("r2BucketName") || r2BucketName?.value || "").trim();
 
   try {
     const objectsToDelete = keys.map(k => ({ Key: k }));
@@ -1123,14 +1158,14 @@ function loadTemplates() {
 }
 
 // イベントリスナー登録
-dropzone.addEventListener("dragover", e => {
+dropzone?.addEventListener("dragover", e => {
   e.preventDefault();
   dropzone.classList.add("is-dragging");
 });
 
-dropzone.addEventListener("dragleave", () => dropzone.classList.remove("is-dragging"));
+dropzone?.addEventListener("dragleave", () => dropzone.classList.remove("is-dragging"));
 
-dropzone.addEventListener("drop", async e => {
+dropzone?.addEventListener("drop", async e => {
   e.preventDefault();
   dropzone.classList.remove("is-dragging");
   if (e.dataTransfer.files.length) {
@@ -1138,20 +1173,20 @@ dropzone.addEventListener("drop", async e => {
   }
 });
 
-fileInput.addEventListener("change", e => {
+fileInput?.addEventListener("change", e => {
   if (e.target.files.length) {
     addFiles(e.target.files);
   }
 });
 
-folderSelectButton.addEventListener("click", () => folderInput.click());
-folderInput.addEventListener("change", e => {
+folderSelectButton?.addEventListener("click", () => folderInput.click());
+folderInput?.addEventListener("change", e => {
   if (e.target.files.length) {
     addFiles(e.target.files);
   }
 });
 
-fileList.addEventListener("click", e => {
+fileList?.addEventListener("click", e => {
   if (e.target.classList.contains("delete-button")) {
     const index = Number(e.target.getAttribute("data-index"));
     if (!isNaN(index) && index >= 0 && index < state.files.length) {
@@ -1161,20 +1196,20 @@ fileList.addEventListener("click", e => {
   }
 });
 
-clearButton.addEventListener("click", () => {
+clearButton?.addEventListener("click", () => {
   state.files = [];
   state.results = [];
   render();
 });
 
-formatSelect.addEventListener("change", () => localStorage.setItem("formatSelect", formatSelect.value));
-qualityRange.addEventListener("input", () => {
+formatSelect?.addEventListener("change", () => localStorage.setItem("formatSelect", formatSelect.value));
+qualityRange?.addEventListener("input", () => {
   qualityOutput.textContent = qualityRange.value;
   localStorage.setItem("qualityRange", qualityRange.value);
 });
 
-renamePattern.addEventListener("input", () => localStorage.setItem("renamePattern", renamePattern.value));
-clearRenamePattern.addEventListener("click", () => {
+renamePattern?.addEventListener("input", () => localStorage.setItem("renamePattern", renamePattern.value));
+clearRenamePattern?.addEventListener("click", () => {
   renamePattern.value = "";
   localStorage.setItem("renamePattern", "");
 });
@@ -1187,19 +1222,19 @@ document.querySelectorAll(".tag-button").forEach(btn => {
   });
 });
 
-storageLimitRange.addEventListener("input", () => {
+storageLimitRange?.addEventListener("input", () => {
   updateLimitOutput(storageLimitRange.value);
   localStorage.setItem("storageLimit", storageLimitRange.value);
   updateStorageUsageUI();
 });
 
-convertButton.addEventListener("click", () => processImages(false, false));
-convertDownloadButton.addEventListener("click", () => processImages(true, false));
-convertUploadButton.addEventListener("click", () => processImages(false, true));
-uploadRenameButton.addEventListener("click", () => uploadRawFiles(true));
-uploadOriginalButton.addEventListener("click", () => uploadRawFiles(false));
+convertButton?.addEventListener("click", () => processImages(false, false));
+convertDownloadButton?.addEventListener("click", () => processImages(true, false));
+convertUploadButton?.addEventListener("click", () => processImages(false, true));
+uploadRenameButton?.addEventListener("click", () => uploadRawFiles(true));
+uploadOriginalButton?.addEventListener("click", () => uploadRawFiles(false));
 
-resultList.addEventListener("click", async e => {
+resultList?.addEventListener("click", async e => {
   if (e.target.classList.contains("download-single-btn")) {
     const idx = Number(e.target.getAttribute("data-index"));
     const res = state.results[idx];
@@ -1219,7 +1254,7 @@ resultList.addEventListener("click", async e => {
   }
 });
 
-uploadAllButton.addEventListener("click", async () => {
+uploadAllButton?.addEventListener("click", async () => {
   for (const res of state.results) {
     if (!res.uploadedUrl) {
       try {
@@ -1233,10 +1268,17 @@ uploadAllButton.addEventListener("click", async () => {
   fetchAndRenderR2Files();
 });
 
-cfSaveButton.addEventListener("click", saveCfSettings);
-cfClearButton.addEventListener("click", clearCfSettings);
-cfShareQrButton.addEventListener("click", shareConnectionQr);
-closeQrModalButton.addEventListener("click", () => (qrModal.style.display = "none"));
+r2AccountId?.addEventListener("input", saveCfSettingsAuto);
+r2BucketName?.addEventListener("input", saveCfSettingsAuto);
+r2AccessKeyId?.addEventListener("input", saveCfSettingsAuto);
+r2SecretAccessKey?.addEventListener("input", saveCfSettingsAuto);
+r2PublicDomain?.addEventListener("input", saveCfSettingsAuto);
+r2DevDomain?.addEventListener("input", saveCfSettingsAuto);
+
+cfSaveButton?.addEventListener("click", saveCfSettings);
+cfClearButton?.addEventListener("click", clearCfSettings);
+cfShareQrButton?.addEventListener("click", shareConnectionQr);
+closeQrModalButton?.addEventListener("click", () => (qrModal.style.display = "none"));
 
 if (langSelect) {
   langSelect.addEventListener("change", () => setAppLanguage(langSelect.value));
@@ -1245,14 +1287,6 @@ if (langSelect) {
 if (reloadR2FilesButton) reloadR2FilesButton.addEventListener("click", fetchAndRenderR2Files);
 if (deleteSelectedR2FilesButton) deleteSelectedR2FilesButton.addEventListener("click", bulkDeleteR2Files);
 
-if (selectAllR2Checkbox) {
-  selectAllR2Checkbox.addEventListener("change", e => {
-    document.querySelectorAll(".r2-file-checkbox").forEach(cb => (cb.checked = e.target.checked));
-    updateR2BatchButtons();
-  });
-}
-
-// R2 ストレージ内のファイル操作イベントハンドラ (ペンリネーム ＆ 永続化トグル ＆ コピー ＆ devコピー ＆ 削除)
 if (r2FileList) {
   r2FileList.addEventListener("change", async e => {
     if (e.target.classList.contains("r2-file-checkbox")) {
@@ -1402,10 +1436,6 @@ if (clearComposerButton && composerTextarea) {
   });
 }
 
-[r2AccountId, r2BucketName, r2AccessKeyId, r2SecretAccessKey, r2PublicDomain, r2DevDomain].forEach(el => {
-  el?.addEventListener("input", saveCfSettingsAuto);
-});
-
 if (autoCleanupCheckbox) {
   autoCleanupCheckbox.addEventListener("change", () => {
     localStorage.setItem("autoCleanup7Days", String(autoCleanupCheckbox.checked));
@@ -1415,17 +1445,11 @@ if (autoCleanupCheckbox) {
   });
 }
 
-// 初期化
-parseUrlConfigHash();
+// 初期化 (byoc-publisher 完全一致順序)
+checkAndApplyHashSync();
 loadSettings();
-fetchAndRenderR2Files();
+setAppLanguage(getAppLanguage());
 
-// ブラウザのフォーム初期化・オートコンプリート完了後の二重復元
-setTimeout(() => {
-  loadSettings();
+if (isR2Configured()) {
   fetchAndRenderR2Files();
-}, 200);
-
-setTimeout(() => {
-  loadSettings();
-}, 600);
+}
