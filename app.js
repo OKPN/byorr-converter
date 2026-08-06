@@ -457,7 +457,6 @@ const progressBar = document.querySelector("#progressBar");
 // R2 ストレージ一覧 DOM
 const reloadR2FilesButton = document.querySelector("#reloadR2FilesButton");
 const deleteSelectedR2FilesButton = document.querySelector("#deleteSelectedR2FilesButton");
-const selectAllR2Checkbox = document.querySelector("#selectAllR2Checkbox");
 const r2FileList = document.querySelector("#r2FileList");
 
 const extensions = {
@@ -1015,7 +1014,6 @@ async function bulkDeleteR2Files() {
       Delete: { Objects: objectsToDelete },
     });
     await s3.send(command);
-    if (selectAllR2Checkbox) selectAllR2Checkbox.checked = false;
     fetchAndRenderR2Files();
   } catch (err) {
     alert(`${dict.failed}: ${err.message}`);
