@@ -443,8 +443,12 @@ function decryptPayloadWithPin(encodedStr, pin) {
   }
 }
 
-// PINコード付き暗号化バックアップURLの発行
-function generatePinBackupUrl() {
+function generateRandom6DigitPin() {
+  return String(Math.floor(100000 + Math.random() * 900000));
+}
+
+// PINコード付き暗号化バックアップURLの自動発行
+async function generatePinBackupUrl() {
   const accountId = (localStorage.getItem("r2AccountId") || r2AccountId?.value || "").trim();
   const bucket    = (localStorage.getItem("r2BucketName") || r2BucketName?.value || "").trim();
   const accessKey = (localStorage.getItem("r2AccessKeyId") || r2AccessKeyId?.value || "").trim();
@@ -462,8 +466,8 @@ function generatePinBackupUrl() {
     return;
   }
 
-  const pin = prompt("🔐 復元時に使用するパスコード (PINコード) を設定してください:\n(例: 1234 や 9999 などのお好きな数字/英字)");
-  if (!pin) return;
+  // 6桁のPINコードをプログラムが自動決定！
+  const autoPin = generateRandom6DigitPin();
 
   const payload = {
     a: accountId,
@@ -474,12 +478,22 @@ function generatePinBackupUrl() {
     dev: devDomain,
   };
 
-  const encrypted = encryptPayloadWithPin(payload, pin);
+  const encrypted = encryptPayloadWithPin(payload, autoPin);
   const backupUrl = `${window.location.origin}${window.location.pathname}#enc=${encrypted}`;
 
-  navigator.clipboard.writeText(backupUrl).then(() => {
-    alert(`✅ PIN暗号化されたバックアップURLをコピーしました！\n\n【設定したPIN】: ${pin}\n\nメモ帳などにこのURLを保存しておけば、次回このURLを開いてPINを入力するだけでシークレットキーも含めて1秒で復元されます。`);
-  });
+  try {
+    await navigator.clipboard.writeText(backupUrl);
+  } catch (err) {
+    console.error("Clipboard copy error:", err);
+  }
+
+  const pinDisplayModal = document.querySelector("#pinDisplayModal");
+  const generatedPinText = document.querySelector("#generatedPinText");
+  const backupUrlTextarea = document.querySelector("#backupUrlTextarea");
+
+  if (generatedPinText) generatedPinText.textContent = autoPin;
+  if (backupUrlTextarea) backupUrlTextarea.value = backupUrl;
+  if (pinDisplayModal) pinDisplayModal.style.display = "grid";
 }
 
 // 📱 可視光スキャン（QRコード）同期ハンドラ
@@ -1636,6 +1650,14 @@ pinInput?.addEventListener("keydown", e => {
     submitPinButton?.click();
   }
 });
+
+const closePinDisplayModalButton = document.querySelector("#closePinDisplayModalButton");
+if (closePinDisplayModalButton) {
+  closePinDisplayModalButton.addEventListener("click", () => {
+    const pinDisplayModal = document.querySelector("#pinDisplayModal");
+    if (pinDisplayModal) pinDisplayModal.style.display = "none";
+  });
+}
 
 // 初期化 (byoc-publisher 完全一致順序)
 checkAndApplyHashSync();

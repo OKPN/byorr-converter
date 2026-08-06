@@ -291,15 +291,37 @@
       <div class="modal-content" style="max-width: 380px; text-align: center; padding: 24px;">
         <h3 style="margin-top: 0; font-size: 16px; color: var(--accent);">🔑 暗号化バックアップデータを検出</h3>
         <p style="font-size: 12px; color: var(--muted); margin-bottom: 16px; line-height: 1.5;">
-          発行時に設定したパスコード (PINコード) を入力してください。
+          発行時に生成された 6桁のパスコード (PINコード) を入力してください。
         </p>
         <div style="margin-bottom: 16px;">
-          <input type="password" id="pinInput" placeholder="PINコード (例: 1234)" style="width: 100%; height: 42px; text-align: center; font-size: 18px; letter-spacing: 4px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); color: var(--text); outline: none;">
+          <input type="text" id="pinInput" placeholder="6桁のPIN (例: 849201)" maxlength="8" style="width: 100%; height: 42px; text-align: center; font-size: 20px; font-weight: bold; letter-spacing: 4px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); color: var(--text); outline: none;">
           <div id="pinErrorNotice" style="font-size: 12px; color: var(--danger); margin-top: 6px; min-height: 16px;"></div>
         </div>
         <div style="display: flex; gap: 8px;">
           <button class="ghost-button" id="cancelPinButton" type="button" style="flex: 1;">キャンセル</button>
           <button class="primary-button" id="submitPinButton" type="button" style="flex: 2; margin: 0;">復号して保存</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 生成された6桁PIN表示モーダル -->
+    <div id="pinDisplayModal" class="modal-backdrop" style="display: none;">
+      <div class="modal-content" style="max-width: 400px; text-align: center; padding: 24px;">
+        <h3 style="margin-top: 0; font-size: 16px; color: #4caf50;">✅ バックアップURLを発行しました</h3>
+        <p style="font-size: 12px; color: var(--muted); margin-bottom: 12px; line-height: 1.5;">
+          暗号化された復元用URLをクリップボードにコピーしました！
+        </p>
+        <div style="background: rgba(99, 102, 241, 0.12); border: 1px solid rgba(99, 102, 241, 0.3); border-radius: 12px; padding: 16px; margin-bottom: 16px;">
+          <div style="font-size: 11px; color: var(--muted); margin-bottom: 4px;">【 自動生成された復元用 6桁 PIN 】</div>
+          <div id="generatedPinText" style="font-size: 34px; font-weight: bold; font-family: monospace; letter-spacing: 8px; color: var(--accent);">849201</div>
+          <div style="font-size: 11px; color: #f43f5e; margin-top: 6px; font-weight: 600;">※ この6桁のPIN数字をメモ帳等に控えておいてください</div>
+        </div>
+        <div style="margin-bottom: 16px; text-align: left;">
+          <label style="font-size: 11px; color: var(--muted); display: block; margin-bottom: 4px;">復元用URL (クリップボードコピー済み):</label>
+          <textarea id="backupUrlTextarea" readonly style="width: 100%; height: 52px; font-size: 11px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--text); padding: 6px; resize: none; word-break: break-all; outline: none;"></textarea>
+        </div>
+        <div>
+          <button class="primary-button" id="closePinDisplayModalButton" type="button" style="width: 100%; margin: 0;">完了</button>
         </div>
       </div>
     </div>
