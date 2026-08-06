@@ -98,16 +98,8 @@
               </div>
             </div>
 
-            <!-- アップロードボタン群の下に配置した「おまけ設定」領域 -->
+            <!-- アップロードボタン群の下に配置した設定領域 -->
             <div style="margin-top: 18px; padding-top: 14px; border-top: 1px dashed rgba(255, 255, 255, 0.1); display: flex; flex-direction: column; gap: 12px;">
-              <label class="field" style="padding: 0;">
-                <span data-i18n="retentionPeriod">保存期間 (自動消滅タイマー)</span>
-                <select id="tempTtlSelect" style="width: 100%; height: 38px; border: 1px solid var(--border); border-radius: 6px; background: #17191e; color: var(--text); padding: 0 8px; font-size: 14px; outline: none;">
-                  <option value="86400" data-i18n="ttl1d">1日間 (24時間後消滅)</option>
-                  <option value="259200" selected data-i18n="ttl3d">3日間 (72時間後消滅)</option>
-                  <option value="604800" data-i18n="ttl7d">7日間 (168時間後消滅)</option>
-                </select>
-              </label>
 
               <!-- 安全な Cloudflare R2 接続情報アコーディオン -->
               <details class="settings-accordion cf-settings-accordion" id="cfSettingsAccordion">
