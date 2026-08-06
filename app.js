@@ -279,28 +279,67 @@ function getR2DevBaseUrl() {
   return "";
 }
 
+function updateStep2UnlockState() {
+  const domain = (localStorage.getItem("r2PublicDomain") || r2PublicDomain?.value || "").trim();
+  const dev = (localStorage.getItem("r2DevDomain") || r2DevDomain?.value || "").trim();
+  const hasPublicUrl = Boolean(domain || dev);
+
+  const container = document.querySelector("#r2KeysStepContainer");
+  const notice = document.querySelector("#step2Notice");
+  const keyInputs = [r2AccountId, r2BucketName, r2AccessKeyId, r2SecretAccessKey];
+
+  if (hasPublicUrl) {
+    if (container) {
+      container.style.opacity = "1";
+      container.style.pointerEvents = "auto";
+    }
+    if (notice) {
+      notice.style.color = "#4caf50";
+      notice.textContent = "✅ 入力可能になりました";
+    }
+    keyInputs.forEach(input => { if (input) input.disabled = false; });
+  } else {
+    if (container) {
+      container.style.opacity = "0.5";
+      container.style.pointerEvents = "none";
+    }
+    if (notice) {
+      notice.style.color = "var(--danger)";
+      notice.textContent = "⚠️ 上の公開URLを先に入力してください";
+    }
+    keyInputs.forEach(input => { if (input) input.disabled = true; });
+  }
+
+  return hasPublicUrl;
+}
+
 function isR2Configured() {
+  const hasPublicUrl = updateStep2UnlockState();
   const accountId = getCleanAccountId();
   const bucket = (localStorage.getItem("r2BucketName") || r2BucketName?.value || "").trim();
   const accessKey = (localStorage.getItem("r2AccessKeyId") || r2AccessKeyId?.value || "").trim();
   const secretKey = (localStorage.getItem("r2SecretAccessKey") || r2SecretAccessKey?.value || "").trim();
-  return Boolean(accountId && bucket && accessKey && secretKey);
+  return Boolean(hasPublicUrl && accountId && bucket && accessKey && secretKey);
 }
 
 function updateCfStatus() {
-  const accountId = (localStorage.getItem("r2AccountId") || r2AccountId?.value || "").trim();
+  const hasPublicUrl = updateStep2UnlockState();
+  const accountId = getCleanAccountId();
   const bucket    = (localStorage.getItem("r2BucketName") || r2BucketName?.value || "").trim();
   const accessKey = (localStorage.getItem("r2AccessKeyId") || r2AccessKeyId?.value || "").trim();
   const secretKey = (localStorage.getItem("r2SecretAccessKey") || r2SecretAccessKey?.value || "").trim();
-  const isOk = Boolean(accountId && bucket && accessKey && secretKey);
+  const isOk = Boolean(hasPublicUrl && accountId && bucket && accessKey && secretKey);
 
   if (cfStatus) {
     if (isOk) {
       cfStatus.style.color = "var(--good)";
       cfStatus.textContent = `✅ R2 接続設定済み (Account: ${accountId.substring(0, 8)}...)`;
+    } else if (!hasPublicUrl) {
+      cfStatus.style.color = "var(--danger)";
+      cfStatus.textContent = "⚠️ 最初にステップ1の公開URL (直リンクドメイン または Devアドレス) を設定してください";
     } else {
       cfStatus.style.color = "var(--muted)";
-      cfStatus.textContent = "⚠️ Account ID, バケット名, Access Key, Secret Key を設定して保存してください";
+      cfStatus.textContent = "⚠️ ステップ2の Account ID, バケット名, Access Key, Secret Key をすべて入力してください";
     }
   }
   return isOk;

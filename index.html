@@ -104,37 +104,56 @@
               <!-- 安全な Cloudflare R2 接続情報アコーディオン -->
               <details class="settings-accordion cf-settings-accordion" id="cfSettingsAccordion">
                 <summary data-i18n="cfTitle">☁️ Cloudflare R2 接続設定 (S3 API)</summary>
-                <div class="settings-content" style="padding: 14px 0 4px; display: flex; flex-direction: column; gap: 10px;">
-                  <label class="field">
-                    <span><span data-i18n="r2AccountLabel">Account ID</span> <span style="color: var(--danger);">*</span></span>
-                    <input id="r2AccountId" type="text" placeholder="例: 0123456789abcdef... または S3 API URL" spellcheck="false" autocomplete="new-password">
-                    <span style="font-size: 11px; color: var(--muted); margin-top: 3px;" data-i18n="r2AccountSub">Cloudflare アカウント ID（S3 API URLを貼り付けても自動抽出されます）</span>
-                  </label>
-                  <label class="field">
-                    <span><span data-i18n="r2BucketLabel">R2 バケット名</span> <span style="color: var(--danger);">*</span></span>
-                    <input id="r2BucketName" type="text" placeholder="例: my-bucket" spellcheck="false" autocomplete="new-password">
-                    <span style="font-size: 11px; color: var(--muted); margin-top: 3px;" data-i18n="r2BucketSub">対象の Cloudflare R2 バケット名</span>
-                  </label>
-                  <label class="field">
-                    <span><span data-i18n="r2AccessKeyLabel">Access Key ID</span> <span style="color: var(--danger);">*</span></span>
-                    <input id="r2AccessKeyId" type="text" placeholder="例: c8a1928374..." spellcheck="false" autocomplete="new-password">
-                    <span style="font-size: 11px; color: var(--muted); margin-top: 3px;" data-i18n="r2AccessKeySub">R2 API トークンの Access Key ID</span>
-                  </label>
-                  <label class="field">
-                    <span><span data-i18n="r2SecretKeyLabel">Secret Access Key</span> <span style="color: var(--danger);">*</span></span>
-                    <input id="r2SecretAccessKey" type="text" style="-webkit-text-security: disc;" placeholder="例: 99f87654..." spellcheck="false" autocomplete="off">
-                    <span style="font-size: 11px; color: var(--muted); margin-top: 3px;" data-i18n="r2SecretKeySub">R2 API トークンの Secret Access Key</span>
-                  </label>
-                  <label class="field">
-                    <span><span data-i18n="r2DomainLabel">直リンク公開ドメイン URL</span> <span style="color: var(--muted); font-size: 11px;">(任意)</span></span>
-                    <input id="r2PublicDomain" type="url" placeholder="例: https://my-domain.com" spellcheck="false" autocomplete="off">
-                    <span style="font-size: 11px; color: var(--muted); margin-top: 3px;" data-i18n="r2DomainSub">カスタムドメイン（コピーボタンで使用）</span>
-                  </label>
-                  <label class="field">
-                    <span><span data-i18n="r2DevDomainLabel">R2 Dev アドレス (dev URL)</span> <span style="color: var(--muted); font-size: 11px;">(任意)</span></span>
-                    <input id="r2DevDomain" type="url" placeholder="例: https://pub-xxx.r2.dev" spellcheck="false" autocomplete="off">
-                    <span style="font-size: 11px; color: var(--muted); margin-top: 3px;" data-i18n="r2DevDomainSub">R2 パブリック dev アドレス（devコピーで使用）</span>
-                  </label>
+                <div class="settings-content" style="padding: 14px 0 4px; display: flex; flex-direction: column; gap: 12px;">
+                  <!-- STEP 1: 画像公開URL設定 -->
+                  <div class="setup-step-box" style="padding: 12px; border: 1px solid rgba(255, 122, 26, 0.4); border-radius: 8px; background: rgba(255, 122, 26, 0.05);">
+                    <div style="font-size: 13px; font-weight: bold; color: var(--accent); margin-bottom: 8px; display: flex; align-items: center; gap: 6px;">
+                      <span>1️⃣ 画像の公開 URL を設定</span>
+                      <span style="font-size: 11px; color: var(--danger); font-weight: normal;">* (どちらか1つ必須)</span>
+                    </div>
+                    <div style="display: flex; flex-direction: column; gap: 8px;">
+                      <label class="field">
+                        <span><span data-i18n="r2DomainLabel">直リンク公開ドメイン URL</span></span>
+                        <input id="r2PublicDomain" type="url" placeholder="例: https://my-domain.com" spellcheck="false" autocomplete="off">
+                        <span style="font-size: 11px; color: var(--muted);" data-i18n="r2DomainSub">カスタムドメイン（コピーボタンで使用）</span>
+                      </label>
+                      <label class="field">
+                        <span><span data-i18n="r2DevDomainLabel">R2 Dev アドレス (dev URL)</span></span>
+                        <input id="r2DevDomain" type="url" placeholder="例: https://pub-xxx.r2.dev" spellcheck="false" autocomplete="off">
+                        <span style="font-size: 11px; color: var(--muted);" data-i18n="r2DevDomainSub">R2 パブリック dev アドレス（devコピーで使用）</span>
+                      </label>
+                    </div>
+                  </div>
+
+                  <!-- STEP 2: S3 API 通信鍵設定 (STEP 1 入力でアンロック) -->
+                  <div id="r2KeysStepContainer" class="setup-step-box" style="padding: 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel-strong); opacity: 0.5; pointer-events: none; transition: opacity 0.2s ease;">
+                    <div style="font-size: 13px; font-weight: bold; color: var(--text); margin-bottom: 8px; display: flex; align-items: center; gap: 6px;">
+                      <span>2️⃣ R2 S3 API 通信鍵を入力</span>
+                      <span id="step2Notice" style="font-size: 11px; color: var(--danger); font-weight: normal;">⚠️ 上の公開URLを先に入力してください</span>
+                    </div>
+                    <div style="display: flex; flex-direction: column; gap: 8px;">
+                      <label class="field">
+                        <span><span data-i18n="r2AccountLabel">Account ID</span> <span style="color: var(--danger);">*</span></span>
+                        <input id="r2AccountId" type="text" placeholder="例: 0123456789abcdef... または S3 API URL" spellcheck="false" autocomplete="off" disabled>
+                        <span style="font-size: 11px; color: var(--muted);" data-i18n="r2AccountSub">Cloudflare アカウント ID（S3 API URLを貼り付けても自動抽出されます）</span>
+                      </label>
+                      <label class="field">
+                        <span><span data-i18n="r2BucketLabel">R2 バケット名</span> <span style="color: var(--danger);">*</span></span>
+                        <input id="r2BucketName" type="text" placeholder="例: my-bucket" spellcheck="false" autocomplete="off" disabled>
+                        <span style="font-size: 11px; color: var(--muted);" data-i18n="r2BucketSub">対象の Cloudflare R2 バケット名</span>
+                      </label>
+                      <label class="field">
+                        <span><span data-i18n="r2AccessKeyLabel">Access Key ID</span> <span style="color: var(--danger);">*</span></span>
+                        <input id="r2AccessKeyId" type="text" placeholder="例: c8a1928374..." spellcheck="false" autocomplete="off" disabled>
+                        <span style="font-size: 11px; color: var(--muted);" data-i18n="r2AccessKeySub">R2 API トークンの Access Key ID</span>
+                      </label>
+                      <label class="field">
+                        <span><span data-i18n="r2SecretKeyLabel">Secret Access Key</span> <span style="color: var(--danger);">*</span></span>
+                        <input id="r2SecretAccessKey" type="text" style="-webkit-text-security: disc;" placeholder="例: 99f87654..." spellcheck="false" autocomplete="off" disabled>
+                        <span style="font-size: 11px; color: var(--muted);" data-i18n="r2SecretKeySub">R2 API トークンの Secret Access Key</span>
+                      </label>
+                    </div>
+                  </div>
                   <div style="display: flex; gap: 6px; margin-top: 4px; flex-wrap: wrap;">
                     <button class="primary-button" id="cfSaveButton" type="button" style="flex: 1; min-width: 90px;" data-i18n="btnSave">保存する</button>
                     <button class="ghost-button" id="cfShareQrButton" type="button" title="別端末へ可視光QRスキャン共有" data-i18n="btnShareQr">📱 スマホへ共有</button>
