@@ -709,7 +709,7 @@ progress::-webkit-progress-value {
   }
 }
 
-/* --- QR モーダル スタイル --- */
+/* --- QR モーダル スタイル (全画面中心浮き上がり) --- */
 .modal-backdrop {
   position: fixed;
   top: 0;
@@ -718,10 +718,12 @@ progress::-webkit-progress-value {
   height: 100vh;
   background: rgba(0, 0, 0, 0.75);
   backdrop-filter: blur(6px);
-  z-index: 1000;
+  -webkit-backdrop-filter: blur(6px);
+  z-index: 9999;
   display: grid;
   place-items: center;
   padding: 16px;
+  animation: modalFadeIn 0.2s ease-out;
 }
 
 .modal-content {
@@ -730,4 +732,9 @@ progress::-webkit-progress-value {
   border-radius: 16px;
   box-shadow: 0 20px 40px rgba(0, 0, 0, 0.6);
   width: 100%;
+}
+
+@keyframes modalFadeIn {
+  from { opacity: 0; transform: scale(0.95); }
+  to { opacity: 1; transform: scale(1); }
 }

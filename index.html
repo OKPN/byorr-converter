@@ -269,12 +269,12 @@
       </section>
     </main>
 
-    <!-- QRコード同期モーダル -->
+    <!-- QRコード同期モーダル (最外郭・全画面オーバーレイ) -->
     <div id="qrModal" class="modal-backdrop" style="display: none;">
       <div class="modal-content" style="max-width: 360px; text-align: center; padding: 24px;">
         <h3 style="margin-top: 0; font-size: 16px; color: var(--text);">📱 スマホ/別端末でスキャン</h3>
-        <p style="font-size: 12px; color: var(--text-muted, #9ea3b0); margin-bottom: 16px; line-height: 1.5;">
-          スマホのカメラで下記QRコードを読み取ると、接続情報（Worker URL / トークン / カスタムドメイン）が安全に直接同期されます。
+        <p style="font-size: 12px; color: var(--muted); margin-bottom: 16px; line-height: 1.5;">
+          スマホのカメラで下記QRコードを読み取ると、接続情報（Account ID / 鍵 / 公開URL）が安全に直接同期されます。
         </p>
         <div id="qrContainer" style="background: #ffffff; padding: 16px; border-radius: 12px; display: inline-block; margin-bottom: 16px; box-shadow: 0 4px 12px rgba(0,0,0,0.3);">
           <canvas id="qrCanvas" style="display: block; margin: 0 auto;"></canvas>
