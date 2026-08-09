@@ -1154,8 +1154,9 @@ async function fetchAndRenderR2Files() {
           <div class="cache-file-info" style="flex: 1; min-width: 0;">
             <div class="cache-file-name-container" style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap; min-width: 0;">
               <span class="cache-file-name" title="${escapeHtml(file.key)}">${escapeHtml(file.key)}</span>
-              ${keepBadge}
               <button type="button" class="edit-btn rename-trigger-btn" data-key="${escapeHtml(file.key)}" title="ファイル名を変更">✏️</button>
+              <button type="button" class="edit-btn password-trigger-btn" data-key="${escapeHtml(file.key)}" title="閲覧パスワードを設定・変更">🔑</button>
+              ${file.hasPassword ? `<span class="password-badge" style="background: rgba(99, 102, 241, 0.15); color: #818cf8; border: 1px solid rgba(99, 102, 241, 0.3); font-size: 10px; padding: 1px 6px; border-radius: 4px; font-weight: 600;">🔒 パスワード保護</span>` : ""}
             </div>
             <div class="cache-file-meta">
               <span>${formatSize(file.size)}</span> · 
