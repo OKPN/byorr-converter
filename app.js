@@ -679,12 +679,69 @@ const extensions = {
   "image/png": "png",
 };
 
-function formatSize(bytes) {
-  if (bytes === 0) return "0 B";
-  const k = 1024;
-  const sizes = ["B", "KB", "MB", "GB"];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return `${(bytes / Math.pow(k, i)).toFixed(2)} ${sizes[i]}`;
+function formatBytes(bytes) {
+  if (bytes < 1024) return `${bytes} B`;
+  const units = ["KB", "MB", "GB"];
+  let value = bytes / 1024;
+  let unit = units.shift();
+  while (value >= 1024 && units.length) {
+    value /= 1024;
+    unit = units.shift();
+  }
+  return `${value.toFixed(value >= 10 ? 1 : 2)} ${unit}`;
+}
+
+async function copyToClipboard(text, button) {
+  if (!text) return;
+  let success = false;
+
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      success = true;
+    } catch (err) {
+      console.warn("navigator.clipboard.writeText failed, trying fallback:", err);
+    }
+  }
+
+  if (!success) {
+    try {
+      const textarea = document.createElement("textarea");
+      textarea.value = text;
+      textarea.style.position = "fixed";
+      textarea.style.left = "-9999px";
+      textarea.style.top = "-9999px";
+      textarea.setAttribute("readonly", "");
+      document.body.appendChild(textarea);
+      textarea.focus();
+      textarea.select();
+      success = document.execCommand("copy");
+      document.body.removeChild(textarea);
+    } catch (err) {
+      console.error("execCommand copy fallback failed:", err);
+    }
+  }
+
+  if (button) {
+    const lang = getAppLanguage();
+    const dict = i18nDict[lang] || i18nDict.ja;
+    const originalText = button.textContent;
+    if (success) {
+      button.textContent = dict.copied || "コピー完了!";
+      button.style.color = "#4caf50";
+      setTimeout(() => {
+        button.textContent = originalText;
+        button.style.color = "";
+      }, 2000);
+    } else {
+      button.textContent = dict.failed || "失敗";
+      button.style.color = "var(--danger)";
+      setTimeout(() => {
+        button.textContent = originalText;
+        button.style.color = "";
+      }, 2000);
+    }
+  }
 }
 
 function updateStatus(text) {
@@ -771,7 +828,7 @@ function render() {
         ${thumbHtml}
         <div>
           <div class="item-name">${escapeHtml(file.name)}</div>
-          <div class="item-meta">${formatSize(file.size)} · ${escapeHtml(file.type || "不明")}</div>
+          <div class="item-meta">${formatBytes(file.size)} · ${escapeHtml(file.type || "不明")}</div>
         </div>
         <button type="button" class="ghost-button delete-button danger-button" data-index="${index}" aria-label="削除">&times;</button>
       `;
@@ -819,7 +876,7 @@ function renderResults() {
 
     let metaHtml = "";
     if (result.isNonImage) {
-      metaHtml = `${formatSize(result.size)} · ${escapeHtml(dict.nonConverted)}`;
+      metaHtml = `${formatBytes(result.size)} · ${escapeHtml(dict.nonConverted)}`;
     } else {
       let rateText = "";
       if (savedRate > 0) {
@@ -829,7 +886,7 @@ function renderResults() {
       } else {
         rateText = `<span style="color: var(--muted);">0% 変化なし</span>`;
       }
-      metaHtml = `${formatSize(result.originalSize || result.size)} -> ${formatSize(result.size)} · ${rateText}`;
+      metaHtml = `${formatBytes(result.originalSize || result.size)} -> ${formatBytes(result.size)} · ${rateText}`;
     }
 
     item.innerHTML = `
@@ -1157,7 +1214,7 @@ async function fetchAndRenderR2Files() {
               ${file.hasPassword ? `<span class="password-badge" style="background: rgba(99, 102, 241, 0.15); color: #818cf8; border: 1px solid rgba(99, 102, 241, 0.3); font-size: 10px; padding: 1px 6px; border-radius: 4px; font-weight: 600;">🔒 パスワード保護</span>` : ""}
             </div>
             <div class="cache-file-meta">
-              <span>${formatSize(file.size)}</span> · 
+              <span>${formatBytes(file.size)}</span> · 
               <span>📅 ${new Date(file.uploaded).toLocaleString()}</span>
             </div>
           </div>
@@ -1205,7 +1262,7 @@ function updateStorageUsageUI() {
 
   if (usageText) {
     const formattedLimit = limitMb >= 1000 ? `${(limitMb / 1000).toFixed(1)} GB` : `${limitMb} MB`;
-    usageText.textContent = `${formatSize(currentBytes)} / ${formattedLimit} (${clampedPercent.toFixed(2)}%)`;
+    usageText.textContent = `${formatBytes(currentBytes)} / ${formattedLimit} (${clampedPercent.toFixed(2)}%)`;
   }
   if (fillBar) {
     fillBar.value = clampedPercent;
@@ -1538,13 +1595,7 @@ if (r2FileList) {
         alert("⚠️ 「直リンク公開ドメイン URL」または「R2 Dev アドレス (dev URL)」を Cloudflare R2 接続設定に入力してください。");
         return;
       }
-      navigator.clipboard.writeText(url).then(() => {
-        const lang = getAppLanguage();
-        const dict = i18nDict[lang] || i18nDict.ja;
-        const originalText = e.target.textContent;
-        e.target.textContent = dict.copied;
-        setTimeout(() => (e.target.textContent = originalText), 1500);
-      });
+      await copyToClipboard(url, e.target);
     }
 
     // devコピーボタン
@@ -1554,13 +1605,7 @@ if (r2FileList) {
         alert("⚠️ 「R2 Dev アドレス (dev URL)」または「直リンク公開ドメイン URL」を Cloudflare R2 接続設定に入力してください。");
         return;
       }
-      navigator.clipboard.writeText(devUrl).then(() => {
-        const lang = getAppLanguage();
-        const dict = i18nDict[lang] || i18nDict.ja;
-        const originalText = e.target.textContent;
-        e.target.textContent = dict.copied;
-        setTimeout(() => (e.target.textContent = originalText), 1500);
-      });
+      await copyToClipboard(devUrl, e.target);
     }
 
     // 削除ボタン
@@ -1573,15 +1618,9 @@ if (r2FileList) {
 
 // 5ch 文章コピー
 if (copyComposerTextButton && composerTextarea) {
-  copyComposerTextButton.addEventListener("click", () => {
+  copyComposerTextButton.addEventListener("click", async () => {
     const text = composerTextarea.value;
-    navigator.clipboard.writeText(text).then(() => {
-      const lang = getAppLanguage();
-      const dict = i18nDict[lang] || i18nDict.ja;
-      const orig = copyComposerTextButton.textContent;
-      copyComposerTextButton.textContent = dict.copied;
-      setTimeout(() => (copyComposerTextButton.textContent = orig), 1500);
-    });
+    if (text) await copyToClipboard(text, copyComposerTextButton);
   });
 }
 
