@@ -996,16 +996,11 @@ async function uploadSingleResult(resultObj) {
   }
 
   const arrayBuffer = await resultObj.blob.arrayBuffer();
-  const pwdInput = document.querySelector("#tempPasswordInput");
-  const password = pwdInput ? pwdInput.value.trim() : "";
-  const metadata = password ? { password } : undefined;
-
   const command = new PutObjectCommand({
     Bucket: bucket,
     Key: resultObj.filename,
     Body: new Uint8Array(arrayBuffer),
     ContentType: resultObj.type || "application/octet-stream",
-    Metadata: metadata,
   });
 
   await s3.send(command);
@@ -1047,16 +1042,11 @@ async function uploadRawFiles(applyRename = false) {
 
     try {
       const arrayBuffer = await file.arrayBuffer();
-      const pwdInput = document.querySelector("#tempPasswordInput");
-      const password = pwdInput ? pwdInput.value.trim() : "";
-      const metadata = password ? { password } : undefined;
-
       const command = new PutObjectCommand({
         Bucket: bucket,
         Key: uploadName,
         Body: new Uint8Array(arrayBuffer),
         ContentType: file.type || "application/octet-stream",
-        Metadata: metadata,
       });
 
       await s3.send(command);
@@ -1220,8 +1210,6 @@ async function fetchAndRenderR2Files() {
             <div class="cache-file-name-container" style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap; min-width: 0;">
               <span class="cache-file-name" title="${escapeHtml(file.key)}">${escapeHtml(file.key)}</span>
               <button type="button" class="edit-btn rename-trigger-btn" data-key="${escapeHtml(file.key)}" title="ファイル名を変更">✏️</button>
-              <button type="button" class="edit-btn password-trigger-btn" data-key="${escapeHtml(file.key)}" title="閲覧パスワードを設定・変更">🔑</button>
-              ${file.hasPassword ? `<span class="password-badge" style="background: rgba(99, 102, 241, 0.15); color: #818cf8; border: 1px solid rgba(99, 102, 241, 0.3); font-size: 10px; padding: 1px 6px; border-radius: 4px; font-weight: 600;">🔒 パスワード保護</span>` : ""}
             </div>
             <div class="cache-file-meta">
               <span>${formatBytes(file.size)}</span> · 
@@ -1598,72 +1586,6 @@ if (r2FileList) {
       }
     }
 
-    // 🔑 パスワードアイコンボタン（インラインパスワード表示）
-    if (e.target.classList.contains("password-trigger-btn")) {
-      const key = e.target.getAttribute("data-key");
-      const nameContainer = e.target.closest(".cache-file-name-container");
-      if (!nameContainer || !key) return;
-
-      const lang = getAppLanguage();
-      const dict = i18nDict[lang] || i18nDict.ja;
-      const saveText = dict.btnSaveShort || (lang === "en" ? "Save" : "保存");
-      const cancelText = dict.btnCancelShort || (lang === "en" ? "Cancel" : "戻る");
-
-      nameContainer.innerHTML = `
-        <div class="password-inline-form" style="display: flex; align-items: center; gap: 6px; flex: 1; flex-wrap: wrap;">
-          <input type="password" class="password-inline-input" placeholder="🔑 パスワード (空欄で解除)" style="flex: 1; min-width: 140px; height: 32px; border: 1px solid var(--border); border-radius: 4px; background: #121316; color: var(--text); padding: 0 8px; font-size: 13px; outline: none;">
-          <button type="button" class="primary-button password-save-btn" data-key="${escapeHtml(key)}" style="min-height: 32px; padding: 0 10px; font-size: 12px; font-weight: bold;">${escapeHtml(saveText)}</button>
-          <button type="button" class="ghost-button password-cancel-btn" style="min-height: 32px; padding: 0 10px; font-size: 12px;">${escapeHtml(cancelText)}</button>
-        </div>
-      `;
-
-      const input = nameContainer.querySelector(".password-inline-input");
-      const saveBtn = nameContainer.querySelector(".password-save-btn");
-      const cancelBtn = nameContainer.querySelector(".password-cancel-btn");
-
-      if (input) {
-        input.focus();
-        input.addEventListener("keydown", async (ev) => {
-          if (ev.key === "Enter") {
-            ev.preventDefault();
-            saveBtn?.click();
-          } else if (ev.key === "Escape") {
-            ev.preventDefault();
-            cancelBtn?.click();
-          }
-        });
-      }
-
-      cancelBtn?.addEventListener("click", () => {
-        fetchAndRenderR2Files();
-      });
-
-      saveBtn?.addEventListener("click", async () => {
-        const newPassword = input?.value?.trim() || "";
-
-        try {
-          saveBtn.disabled = true;
-          saveBtn.textContent = "...";
-          const s3 = getS3Client();
-          const bucket = (localStorage.getItem("r2BucketName") || r2BucketName?.value || "").trim();
-          if (!s3 || !bucket) throw new Error(dict.missingConfig);
-
-          const copyCommand = new CopyObjectCommand({
-            Bucket: bucket,
-            CopySource: encodeURIComponent(`${bucket}/${key}`),
-            Key: key,
-            Metadata: { password: newPassword },
-            MetadataDirective: "REPLACE",
-          });
-          await s3.send(copyCommand);
-          await fetchAndRenderR2Files();
-        } catch (err) {
-          alert("エラー: " + err.message);
-          fetchAndRenderR2Files();
-        }
-      });
-      return;
-    }
 
     // コピーボタン
     if (e.target.classList.contains("copy-url-btn")) {
