@@ -1209,10 +1209,10 @@ async function fetchAndRenderR2Files() {
           <div class="cache-file-info" style="flex: 1; min-width: 0;">
             <div class="cache-file-name-container" style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap; min-width: 0;">
               <span class="cache-file-name" title="${escapeHtml(file.key)}">${escapeHtml(file.key)}</span>
+              <span style="color: #64748b; font-size: 11px; white-space: nowrap;">${formatBytes(file.size)}</span>
               <button type="button" class="edit-btn rename-trigger-btn" data-key="${escapeHtml(file.key)}" title="ファイル名を変更">✏️</button>
             </div>
             <div class="cache-file-meta">
-              <span>${formatBytes(file.size)}</span> · 
               <span>📅 ${new Date(file.uploaded).toLocaleString()}</span>
             </div>
           </div>
