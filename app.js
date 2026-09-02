@@ -1,4 +1,23 @@
 import QRCode from "qrcode";
+import encodeJxl, { init as initJxl } from "@jsquash/jxl/encode.js";
+import jxlWasmUrl from "@jsquash/jxl/codec/enc/jxl_enc.wasm?url";
+
+let jxlInitialized = false;
+async function ensureJxl() {
+  if (!jxlInitialized) {
+    try {
+      const res = await fetch(jxlWasmUrl);
+      if (!res.ok) throw new Error(`WASM fetch failed: HTTP ${res.status}`);
+      const wasmBytes = await res.arrayBuffer();
+      const wasmModule = await WebAssembly.compile(wasmBytes);
+      await initJxl(wasmModule);
+      jxlInitialized = true;
+    } catch (e) {
+      console.error("Failed to init JXL encoder:", e);
+      throw e;
+    }
+  }
+}
 import {
   S3Client,
   PutObjectCommand,
@@ -32,7 +51,8 @@ const i18nDict = {
     previewLabel: "プレビュー:",
     zipOptionLabel: "🗜️ ZIP形式でまとめて保存する",
     btnDownload: "📥 ダウンロード",
-    btnConvertUpload: "🟩 変換してアップロード",
+    btnUpload: "🟩 アップロード",
+    btnConvertUpload: "🟩 アップロード",
     cfTitle: "☁️ Cloudflare R2 接続設定 (S3 API)",
     r2AccountLabel: "Account ID",
     r2AccountSub: "Cloudflare アカウント ID（S3 API URLを貼り付けても自動抽出されます）",
@@ -111,7 +131,8 @@ const i18nDict = {
     previewLabel: "Preview:",
     zipOptionLabel: "🗜️ Save all in ZIP archive",
     btnDownload: "📥 Download",
-    btnConvertUpload: "🟩 Convert & Upload",
+    btnUpload: "🟩 Upload",
+    btnConvertUpload: "🟩 Upload",
     cfTitle: "☁️ Cloudflare R2 Connection (S3 API)",
     r2AccountLabel: "Account ID",
     r2AccountSub: "Cloudflare Account ID",
@@ -1056,7 +1077,7 @@ function render() {
   const isRenameOn = enableRenameCheck?.checked ?? true;
   const canProcessLocal = isConvertOn || isRenameOn;
 
-  if (convertDownloadButton) convertDownloadButton.disabled = !hasFiles || !canProcessLocal;
+  if (convertDownloadButton) convertDownloadButton.disabled = !hasFiles;
   if (convertUploadButton) convertUploadButton.disabled = !hasFiles || !r2Ok;
 
   if (dropzone) {
