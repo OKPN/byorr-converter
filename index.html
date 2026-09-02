@@ -16,7 +16,7 @@
       <section class="workspace" aria-label="画像圧縮ツール">
         <header class="topbar">
           <div>
-            <p class="eyebrow" data-i18n="eyebrow">ブラウザ内のみで画像をセキュアに変換処理!</p>
+            <p class="eyebrow" data-i18n="eyebrow">ブラウザ内のみで画像をセキュアに変換 ＆ R2にダイレクト保存!</p>
             <h1 data-i18n="siteTitle">BYORR Converter</h1>
           </div>
           <div class="topbar-actions" style="display: flex; gap: 8px; align-items: center;">
@@ -30,15 +30,18 @@
         <details class="settings-accordion site-about-accordion" style="margin-bottom: 20px;">
           <summary style="font-size: 13px; font-weight: 600; color: #c7d2fe; cursor: pointer;" data-i18n="whatIsSiteSummary">❓ どのようなサイト？</summary>
           <div class="settings-content" style="padding: 12px 16px; font-size: 13px; color: var(--text-muted); line-height: 1.6; background: rgba(99, 102, 241, 0.06); border: 1px solid rgba(99, 102, 241, 0.2); border-radius: 8px; margin-top: 8px;" data-i18n="whatIsSiteBody" data-i18n-html="true">
-            外部サーバを一切介さず、お使いのブラウザ内だけで画像をセキュアに変換・軽量化・Exif削除できるローカル専用ツールです。<br>
-            <span style="display: inline-block; margin-top: 6px; font-size: 12px; color: #a5b4fc;">※（おまけ機能）ご自身のCloudflare情報を入力することで（これもブラウザ内のみにセキュア保存）、ファイルのアップロード・共有も可能です。</span>
+            外部サーバやWorkerを一切介さず、お使いのブラウザ内だけで画像をセキュアに変換し、ご自身の Cloudflare R2 ストレージ（S3互換）にダイレクト保存・配信できるローカル＆R2専用ツールです。<br>
+            <span style="display: inline-block; margin-top: 6px; font-size: 12px; color: #a5b4fc;">※接続情報は全てお使いのブラウザ内（localStorage）にのみセキュア保存されます。</span>
           </div>
         </details>
 
         <div class="tool-grid">
           <section class="panel input-panel">
             <div class="panel-heading">
-              <h2 data-i18n="inputFiles">入力ファイル</h2>
+              <div style="display: flex; align-items: center; gap: 10px;">
+                <h2 data-i18n="inputFiles">入力ファイル</h2>
+                <span id="statusText" class="status-text" data-i18n="statusWaiting">待機中</span>
+              </div>
               <div class="heading-actions" style="display: flex; gap: 8px; align-items: center;">
                 <button class="ghost-button" id="folderSelectButton" type="button" data-i18n="addFolder">フォルダを追加</button>
                 <button class="ghost-button danger-button" id="clearButton" type="button" data-i18n="btnClear">クリア</button>
@@ -52,6 +55,9 @@
               <strong data-i18n="dropText">画像やフォルダをここにドロップ</strong>
               <span data-i18n="orClick">またはクリックしてファイルを選択</span>
             </label>
+            <div class="progress-container">
+              <progress id="progressBar" value="0" max="100"></progress>
+            </div>
             <div class="file-list" id="fileList"></div>
           </section>
 
@@ -60,51 +66,77 @@
               <h2 data-i18n="settings">設定</h2>
             </div>
 
-            <label class="field">
-              <span data-i18n="outputFormat">出力形式</span>
-              <select id="formatSelect">
-                <option value="image/jpeg">JPEG</option>
-                <option value="image/webp" selected>WebP</option>
-                <option value="image/jxl">JXL</option>
-              </select>
-            </label>
+            <!-- ① 画像変換設定トグル -->
+            <div class="settings-section">
+              <div class="toggle-control-group">
+                <label class="check-label-row">
+                  <input type="checkbox" id="enableConvertCheck" checked>
+                  <span class="section-label-text" data-i18n="enableConvertLabel">画像を変換する</span>
+                </label>
+                <div id="convertSettingsArea" class="toggle-sub-area" style="display: flex; flex-direction: column; gap: 10px; margin-top: 4px;">
+                  <label class="field">
+                    <span data-i18n="outputFormat">出力形式</span>
+                    <select id="formatSelect">
+                      <option value="image/webp" selected>WebP</option>
+                      <option value="image/jxl">JXL</option>
+                      <option value="image/jpeg">JPEG</option>
+                    </select>
+                  </label>
 
-            <label class="field">
-              <span data-i18n="quality">品質</span>
-              <div class="range-row">
-                <input id="qualityRange" type="range" min="1" max="100" value="85">
-                <output id="qualityOutput">85</output>
-              </div>
-            </label>
-
-            <label class="field">
-              <span data-i18n="renameRule">リネーム規則</span>
-              <div class="input-clear-wrapper" style="position: relative; width: 100%;">
-                <input id="renamePattern" type="text" value="{name}" spellcheck="false" style="padding-right: 28px;">
-                <button type="button" id="clearRenamePattern" title="入力をクリア">&times;</button>
-              </div>
-              <div class="pattern-helpers" style="margin-top: 6px; display: flex; gap: 6px; flex-wrap: wrap;">
-                <button type="button" class="tag-button" data-insert="{name}" data-i18n="originalName">元ファイル名</button>
-                <button type="button" class="tag-button" data-insert="{num:2}" data-i18n="seq01">連番 (01)</button>
-                <button type="button" class="tag-button" data-insert="{num:3}" data-i18n="seq001">連番 (001)</button>
-                <button type="button" class="tag-button" data-insert="{randam:6}" data-i18n="random6">ランダム (6文字)</button>
-              </div>
-            </label>
-
-            <div class="action-buttons-group" style="margin-top: 20px;">
-              <button class="primary-button" id="convertDownloadButton" type="button" disabled data-i18n="btnConvertDownload">変換してダウンロード</button>
-              <button class="secondary-button" id="convertButton" type="button" disabled data-i18n="btnConvertOnly">変換だけする</button>
-              <div style="margin-top: 8px; border-top: 1px dashed var(--border); padding-top: 12px; display: flex; flex-direction: column; gap: 8px;">
-                <button class="ghost-button" id="convertUploadButton" type="button" disabled data-i18n="btnConvertUpload">変換してアップロード</button>
-                <button class="ghost-button" id="uploadRenameButton" type="button" disabled data-i18n="btnUploadRename">リネームだけしてアップロード</button>
-                <button class="ghost-button" id="uploadOriginalButton" type="button" disabled data-i18n="btnUploadOriginal">そのままアップロード</button>
+                  <label class="field">
+                    <span data-i18n="quality">品質</span>
+                    <div class="range-row">
+                      <input id="qualityRange" type="range" min="1" max="100" value="85">
+                      <output id="qualityOutput">85</output>
+                    </div>
+                  </label>
+                </div>
               </div>
             </div>
 
-            <!-- アップロードボタン群の下に配置した設定領域 -->
-            <div style="margin-top: 18px; padding-top: 14px; border-top: 1px dashed rgba(255, 255, 255, 0.1); display: flex; flex-direction: column; gap: 12px;">
+            <!-- ② リネーム設定トグル -->
+            <div class="settings-section" style="border-top: 1px dashed var(--border); padding-top: 14px;">
+              <div class="toggle-control-group">
+                <label class="check-label-row">
+                  <input type="checkbox" id="enableRenameCheck" checked>
+                  <span class="section-label-text" data-i18n="enableRenameLabel">ファイル名をリネームする</span>
+                </label>
+                <div id="renameSettingsArea" class="toggle-sub-area" style="display: flex; flex-direction: column; gap: 8px; margin-top: 4px;">
+                  <label class="field">
+                    <span data-i18n="renameRule">リネーム規則</span>
+                    <div class="input-clear-wrapper">
+                      <input id="renamePattern" type="text" value="{name}" spellcheck="false" style="padding-right: 28px;">
+                      <button type="button" id="clearRenamePattern" title="入力をクリア">&times;</button>
+                    </div>
+                    <div class="pattern-helpers" style="margin-top: 4px; display: flex; gap: 6px; flex-wrap: wrap;">
+                      <button type="button" class="tag-button" data-insert="{name}" data-i18n="originalName">元ファイル名</button>
+                      <button type="button" class="tag-button" data-insert="{num:2}" data-i18n="seq01">連番 (01)</button>
+                      <button type="button" class="tag-button" data-insert="{num:3}" data-i18n="seq001">連番 (001)</button>
+                      <button type="button" class="tag-button" data-insert="{randam:6}" data-i18n="random6">ランダム (6文字)</button>
+                    </div>
+                  </label>
+                  <div class="preview-chip" id="renamePreviewBox">
+                    <span style="color: var(--muted); font-size: 11px;" data-i18n="previewLabel">プレビュー:</span>
+                    <strong id="renamePreviewText" style="font-family: monospace; font-size: 12px; color: #818cf8;">sample.webp</strong>
+                  </div>
+                </div>
+              </div>
+            </div>
 
-              <!-- 安全な Cloudflare R2 接続情報アコーディオン -->
+            <!-- アクションボタン群 -->
+            <div class="action-buttons-group" style="border-top: 1px solid var(--border);">
+              <label class="check-label-row" style="margin-bottom: 4px;">
+                <input type="checkbox" id="enableZipCheck">
+                <span style="font-size: 12px; font-weight: 600; color: #c7d2fe;" data-i18n="zipOptionLabel">🗜️ ZIP形式でまとめて保存する</span>
+              </label>
+
+              <button class="primary-button" id="convertDownloadButton" type="button" disabled data-i18n="btnDownload">📥 ダウンロード</button>
+
+              <button class="primary-button upload-primary-cta" id="convertUploadButton" type="button" disabled data-i18n="btnConvertUpload">🟩 変換してアップロード</button>
+            </div>
+
+            <!-- 安全な Cloudflare R2 接続情報アコーディオン -->
+            <div style="padding: 0 18px 18px;">
               <details class="settings-accordion cf-settings-accordion" id="cfSettingsAccordion">
                 <summary data-i18n="cfTitle">☁️ Cloudflare R2 接続設定 (S3 API)</summary>
                 <div class="settings-content" style="padding: 14px 0 4px; display: flex; flex-direction: column; gap: 12px;">
@@ -178,21 +210,6 @@
           </aside>
         </div>
 
-        <section class="panel output-panel">
-          <div class="panel-heading">
-            <h2 data-i18n="outputFiles">出力ファイル</h2>
-            <span id="statusText" data-i18n="statusWaiting">待機中</span>
-          </div>
-          <div class="progress-container">
-            <progress id="progressBar" value="0" max="100"></progress>
-          </div>
-          <div class="output-actions">
-            <button class="ghost-button" id="uploadAllButton" type="button" disabled data-i18n="btnUploadAll">すべてアップロード</button>
-            <button class="primary-button" id="zipButton" type="button" disabled data-i18n="btnZipDownload">ZIPで一括ダウンロード</button>
-          </div>
-          <div class="result-list" id="resultList"></div>
-        </section>
-
         <details class="panel settings-accordion" id="postComposerPanel" style="margin: 24px 0;">
           <summary data-i18n="textComposerHeading">💬 テキスト作成支援</summary>
           <div class="settings-content" style="padding: 18px; display: flex; flex-direction: column; gap: 12px;">
@@ -213,7 +230,7 @@
             </div>
 
             <div style="display: flex; flex-direction: column; gap: 6px;">
-              <textarea id="composerTextarea" rows="6" placeholder="ここに5chに投稿する文章を書きます。上の画像をクリックしてURLを挿入したり、定型文をロードできます。" data-i18n="composerPlaceholder" style="width: 100%; border: 1px solid var(--border); border-radius: 6px; background: #17191e; color: var(--text); padding: 12px; resize: vertical; font-family: inherit; font-size: 14px; outline: none;"></textarea>
+              <textarea id="composerTextarea" rows="6" placeholder="ここにチャット等に投稿する文章を書きます。上の画像をクリックしてURLを挿入したり、定型文をロードできます。" data-i18n="composerPlaceholder" style="width: 100%; border: 1px solid var(--border); border-radius: 6px; background: #17191e; color: var(--text); padding: 12px; resize: vertical; font-family: inherit; font-size: 14px; outline: none;"></textarea>
             </div>
 
             <div style="display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap;">
