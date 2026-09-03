@@ -1234,7 +1234,9 @@ fileList?.addEventListener("click", async (event) => {
     target.disabled = true;
     target.textContent = "...";
     try {
-      if (!result) {
+      if (!result || !isConversionCacheValid()) {
+        if (result && result.url) URL.revokeObjectURL(result.url);
+        if (result && result.previewUrl) URL.revokeObjectURL(result.previewUrl);
         result = await convertImage(file, index);
         state.results[index] = result;
       }
@@ -1259,7 +1261,9 @@ fileList?.addEventListener("click", async (event) => {
     target.disabled = true;
     target.textContent = "UP中...";
     try {
-      if (!result) {
+      if (!result || !isConversionCacheValid()) {
+        if (result && result.url) URL.revokeObjectURL(result.url);
+        if (result && result.previewUrl) URL.revokeObjectURL(result.previewUrl);
         result = await convertImage(file, index);
         state.results[index] = result;
       }
@@ -1286,9 +1290,51 @@ fileList?.addEventListener("click", async (event) => {
   }
 });
 
-// --- 画像変換処理 ---
-async function runConversion() {
+// --- 設定シグネチャ & スマートバイパス ---
+
+let lastConvertedSignature = null;
+
+function getCurrentConfigSignature() {
+  const isConvertOn = enableConvertCheck?.checked ?? true;
+  const format = formatSelect ? formatSelect.value : "image/webp";
+  const quality = qualityRange ? qualityRange.value : "85";
+  const isRenameOn = enableRenameCheck?.checked ?? true;
+  const pattern = renamePattern ? renamePattern.value : "";
+  const fileSig = state.files.map(f => `${f.name}:${f.size}:${f.lastModified}`).join("|");
+
+  return `${isConvertOn}_${format}_${quality}_${isRenameOn}_${pattern}_${fileSig}`;
+}
+
+function isConversionCacheValid() {
   if (!state.files.length) return false;
+  if (!state.results || state.results.length !== state.files.length) return false;
+  if (state.results.some(r => !r || !r.blob)) return false;
+  return lastConvertedSignature === getCurrentConfigSignature();
+}
+
+function invalidateConversionCache(clearResults = true) {
+  lastConvertedSignature = null;
+  if (clearResults && state.results.length > 0) {
+    state.results.forEach(result => {
+      if (result) {
+        if (result.url) URL.revokeObjectURL(result.url);
+        if (result.previewUrl) URL.revokeObjectURL(result.previewUrl);
+      }
+    });
+    state.results = [];
+    render();
+  }
+}
+
+// --- 画像変換処理 ---
+async function runConversion(force = false) {
+  if (!state.files.length) return false;
+
+  // 設定が変わっておらず、すでに変換済みBlobが揃っている場合は完全バイパス！
+  if (!force && isConversionCacheValid()) {
+    return true;
+  }
+
   if (progressBar) progressBar.value = 0;
   if (statusText) {
     statusText.textContent = "変換中...";
@@ -1317,6 +1363,7 @@ async function runConversion() {
       })
     );
     await Promise.all(conversionPromises);
+    lastConvertedSignature = getCurrentConfigSignature();
     if (statusText) {
       statusText.textContent = "変換完了";
       statusText.className = "status-text";
@@ -1324,6 +1371,7 @@ async function runConversion() {
     return true;
   } catch (error) {
     console.error("Conversion error:", error);
+    lastConvertedSignature = null;
     if (statusText) {
       statusText.textContent = "変換失敗";
       statusText.className = "status-text error";
@@ -1331,6 +1379,7 @@ async function runConversion() {
     return false;
   } finally {
     setUiLock(false);
+    render();
   }
 }
 
