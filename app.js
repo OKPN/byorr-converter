@@ -76,6 +76,7 @@ const i18nDict = {
     templateLabel: "定型文:",
     promptSave: "定型文を保存",
     promptDelete: "削除",
+    btnInsertUrlTag: "＋ {url} を挿入",
     paletteNote: "クリックしてURLを本文（カーソル位置）に挿入:",
     composerPlaceholder: "ここにチャット等に投稿する文章を書きます。上の画像をクリックしてURLを挿入したり、定型文をロードできます。",
     btnPromptCopy: "文章をコピーする",
@@ -156,6 +157,7 @@ const i18nDict = {
     templateLabel: "Template:",
     promptSave: "Save Template",
     promptDelete: "Delete",
+    btnInsertUrlTag: "＋ Insert {url}",
     paletteNote: "Click image to insert URL at cursor:",
     composerPlaceholder: "Write your post here. Click images above to insert direct URLs.",
     btnPromptCopy: "Copy Post Text",
@@ -210,7 +212,7 @@ const extensions = {
 const defaultTemplates = {
   "standard": {
     name: "基本の挨拶",
-    text: "お世話になっております。\n画像を添付いたします。\n"
+    text: "お世話になっております。\n画像を添付いたします。\n\n{url}"
   }
 };
 
@@ -270,6 +272,7 @@ const autoCleanupCheckbox = document.querySelector("#autoCleanupCheckbox");
 const templateSelect = document.querySelector("#templateSelect");
 const saveTemplateButton = document.querySelector("#saveTemplateButton");
 const deleteTemplateButton = document.querySelector("#deleteTemplateButton");
+const insertUrlTagButton = document.querySelector("#insertUrlTagButton");
 const paletteList = document.querySelector("#paletteList");
 const composerTextarea = document.querySelector("#composerTextarea");
 const clearComposerButton = document.querySelector("#clearComposerButton");
@@ -1832,15 +1835,23 @@ function renderUrlPalette() {
 
 function insertUrlToComposer(url) {
   if (!composerTextarea) return;
-  const start = composerTextarea.selectionStart;
-  const end = composerTextarea.selectionEnd;
   const text = composerTextarea.value;
-  const before = text.substring(0, start);
-  const after = text.substring(end);
+  if (text.includes("{url}")) {
+    const idx = text.indexOf("{url}");
+    composerTextarea.value = text.replace("{url}", url);
+    const newPos = idx + url.length;
+    composerTextarea.focus();
+    composerTextarea.setSelectionRange(newPos, newPos);
+  } else {
+    const start = composerTextarea.selectionStart;
+    const end = composerTextarea.selectionEnd;
+    const before = text.substring(0, start);
+    const after = text.substring(end);
 
-  composerTextarea.value = `${before}${url}\n${after}`;
-  composerTextarea.focus();
-  composerTextarea.selectionStart = composerTextarea.selectionEnd = start + url.length + 1;
+    composerTextarea.value = `${before}${url}\n${after}`;
+    composerTextarea.focus();
+    composerTextarea.selectionStart = composerTextarea.selectionEnd = start + url.length + 1;
+  }
 }
 
 // テキスト作成支援のイベント
@@ -1915,6 +1926,18 @@ deleteTemplateButton?.addEventListener("click", () => {
   delete saved[val];
   localStorage.setItem("composerTemplates", JSON.stringify(saved));
   loadTemplates();
+});
+
+insertUrlTagButton?.addEventListener("click", () => {
+  if (!composerTextarea) return;
+  const start = composerTextarea.selectionStart ?? composerTextarea.value.length;
+  const end = composerTextarea.selectionEnd ?? composerTextarea.value.length;
+  const text = composerTextarea.value;
+  const insertText = "{url}";
+  composerTextarea.value = text.substring(0, start) + insertText + text.substring(end);
+  composerTextarea.focus();
+  const nextPos = start + insertText.length;
+  composerTextarea.setSelectionRange(nextPos, nextPos);
 });
 
 clearComposerButton?.addEventListener("click", () => {
