@@ -996,6 +996,179 @@ clearButton?.addEventListener("click", () => {
   render();
 });
 
+
+// --- ComfyUI ワークフロー / 生成メタデータ検出ユーティリティ ---
+async function detectComfyMetadata(file) {
+  if (!file) return { hasWorkflow: false, hasPrompt: false, hasA1111: false, type: "none" };
+
+  const fileName = (file.name || "").toLowerCase();
+  const isPng = fileName.endsWith(".png") || file.type === "image/png";
+  const isMp4 = fileName.endsWith(".mp4") || file.type === "video/mp4";
+  const isWebm = fileName.endsWith(".webm") || file.type === "video/webm";
+
+  try {
+    const headSize = Math.min(file.size, 4 * 1024 * 1024);
+    const headBuffer = await file.slice(0, headSize).arrayBuffer();
+
+    if (isPng) {
+      const view = new DataView(headBuffer);
+      if (view.getUint32(0) === 0x89504e47 && view.getUint32(4) === 0x0d0a1a0a) {
+        let offset = 8;
+        const length = headBuffer.byteLength;
+        let hasWorkflow = false;
+        let hasPrompt = false;
+        let hasA1111 = false;
+        let nodeCount = 0;
+
+        while (offset < length - 8) {
+          const chunkLength = view.getUint32(offset);
+          offset += 4;
+          const chunkType = String.fromCharCode(
+            view.getUint8(offset),
+            view.getUint8(offset + 1),
+            view.getUint8(offset + 2),
+            view.getUint8(offset + 3)
+          );
+          offset += 4;
+
+          if (chunkType === "IEND") break;
+
+          if (chunkType === "tEXt" || chunkType === "iTXt") {
+            const chunkData = new Uint8Array(headBuffer, offset, chunkLength);
+            let nullIndex = -1;
+            for (let i = 0; i < chunkData.length; i++) {
+              if (chunkData[i] === 0) { nullIndex = i; break; }
+            }
+            if (nullIndex > 0) {
+              const keyword = new TextDecoder("utf-8").decode(chunkData.subarray(0, nullIndex));
+              if (keyword === "workflow") {
+                hasWorkflow = true;
+                try {
+                  const text = new TextDecoder("utf-8").decode(chunkData.subarray(nullIndex + 1));
+                  const wfJson = JSON.parse(text);
+                  if (Array.isArray(wfJson.nodes)) nodeCount = wfJson.nodes.length;
+                } catch (e) {}
+              } else if (keyword === "prompt") {
+                hasPrompt = true;
+              } else if (keyword === "parameters") {
+                hasA1111 = true;
+              }
+            }
+          }
+
+          offset += chunkLength + 4;
+        }
+
+        if (hasWorkflow) return { hasWorkflow: true, hasPrompt, hasA1111, nodeCount, type: "comfy_workflow" };
+        if (hasPrompt) return { hasWorkflow: false, hasPrompt: true, hasA1111, type: "comfy_prompt" };
+        if (hasA1111) return { hasWorkflow: false, hasPrompt: false, hasA1111: true, type: "a1111" };
+      }
+    }
+
+    let textSample = new TextDecoder("utf-8", { fatal: false }).decode(new Uint8Array(headBuffer));
+
+    if ((isMp4 || isWebm) && file.size > headSize) {
+      const tailSize = Math.min(file.size, 3 * 1024 * 1024);
+      const tailBuffer = await file.slice(file.size - tailSize).arrayBuffer();
+      const tailText = new TextDecoder("utf-8", { fatal: false }).decode(new Uint8Array(tailBuffer));
+      textSample = textSample + "\n" + tailText;
+    }
+
+    const hasWf = (textSample.includes('"nodes"') && textSample.includes('"links"')) ||
+                  (textSample.includes('"workflow"') && textSample.includes('"nodes"'));
+    const hasPrompt = (textSample.includes('"inputs"') && textSample.includes('"class_type"')) ||
+                      textSample.includes('"client_id"') || textSample.includes('"extra_pnginfo"');
+
+    if (hasWf) return { hasWorkflow: true, hasPrompt, hasA1111: false, type: "comfy_workflow" };
+    if (hasPrompt) return { hasWorkflow: false, hasPrompt: true, hasA1111: false, type: "comfy_prompt" };
+    if (textSample.includes("Negative prompt:") || textSample.includes("Steps: ")) {
+      return { hasWorkflow: false, hasPrompt: false, hasA1111: true, type: "a1111" };
+    }
+
+  } catch (err) {
+    console.warn("Metadata detection error:", err);
+  }
+
+  return { hasWorkflow: false, hasPrompt: false, hasA1111: false, type: "none" };
+}
+
+function createComfyBadgeHtml(file, result) {
+  const meta = file.metaStatus;
+  if (!meta) return '<div style="font-size: 10px; color: var(--muted); margin-top: 3px;">🔍 メタデータ解析中...</div>';
+
+  const isConvertOn = enableConvertCheck?.checked ?? true;
+  let badge = "";
+  if (meta.hasWorkflow) {
+    badge = `
+      <span class="meta-badge" style="background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.4); font-size: 10.5px; padding: 2px 6px; border-radius: 4px; font-weight: 600; display: inline-flex; align-items: center; gap: 4px;" title="ComfyUIのワークフロー（ノード接続・配置情報）が完全な形で含まれています。ComfyUI画面にドロップすると完全再現可能です。">
+        <span>🧬 ComfyUI ワークフロー完全内包${meta.nodeCount ? ` (${meta.nodeCount}ノード)` : ""}</span>
+      </span>
+    `;
+  } else if (meta.hasPrompt) {
+    badge = `
+      <span class="meta-badge" style="background: rgba(245, 158, 11, 0.15); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.4); font-size: 10.5px; padding: 2px 6px; border-radius: 4px; font-weight: 600;" title="ComfyUIプロンプト/API入力設定が含まれています。">
+        📝 ComfyUI プロンプト情報あり
+      </span>
+    `;
+  } else if (meta.hasA1111) {
+    badge = `
+      <span class="meta-badge" style="background: rgba(139, 92, 246, 0.15); color: #a78bfa; border: 1px solid rgba(139, 92, 246, 0.4); font-size: 10.5px; padding: 2px 6px; border-radius: 4px; font-weight: 600;" title="Stable Diffusion WebUI (A1111) 生成パラメータが含まれています。">
+        🎨 A1111 生成情報あり
+      </span>
+    `;
+  }
+
+  const fileExt = (file.name || "").split('.').pop().toLowerCase();
+  const isVideo = ["mp4", "webm", "mov"].includes(fileExt) || file.type?.startsWith("video/");
+  let statusNotice = "";
+  if (meta.hasWorkflow || meta.hasPrompt) {
+    if (isConvertOn && !isVideo) {
+      statusNotice = '<span style="font-size: 10px; color: #f87171; margin-left: 4px;" title="画像を変換（再エンコード）するとブラウザの仕様によりワークフローは削除されます。保持したい場合は『画像を変換する』をOFFにしてください。">⚠️ 変換ONのためExif/WFは削除されます</span>';
+    } else {
+      statusNotice = '<span style="font-size: 10px; color: #34d399; margin-left: 4px;">🛡️ ワークフロー保持のまま保存/共有されます</span>';
+    }
+  }
+
+  if (!badge && !statusNotice) return "";
+
+  return `
+    <div class="comfy-meta-row" style="margin-top: 4px; display: flex; align-items: center; flex-wrap: wrap; gap: 6px;">
+      ${badge}
+      ${statusNotice}
+    </div>
+  `;
+}
+
+async function checkRemoteFileWf(key, publicUrl) {
+  if (!key || !publicUrl) return false;
+  const ext = key.split('.').pop().toLowerCase();
+  if (!["png", "webp", "mp4", "webm"].includes(ext)) return false;
+
+  let wfStore = {};
+  try {
+    wfStore = JSON.parse(localStorage.getItem("comfyWfMap") || "{}");
+  } catch (e) {}
+
+  if (wfStore[key] !== undefined) return wfStore[key];
+
+  try {
+    const res = await fetch(publicUrl, { headers: { Range: "bytes=0-131072" } });
+    if (res.ok || res.status === 206) {
+      const buf = await res.arrayBuffer();
+      const text = new TextDecoder("utf-8", { fatal: false }).decode(new Uint8Array(buf));
+      const hasWf = (text.includes('"nodes"') && text.includes('"links"')) ||
+                    (text.includes('"inputs"') && text.includes('"class_type"')) ||
+                    text.includes('"workflow"');
+      wfStore[key] = hasWf;
+      localStorage.setItem("comfyWfMap", JSON.stringify(wfStore));
+      return hasWf;
+    }
+  } catch (err) {
+    console.debug("Remote WF check skipped:", err);
+  }
+  return false;
+}
+
 function addFiles(files) {
   const allowed = files.filter((file) => {
     return file.type.startsWith("image/") || 
@@ -1005,6 +1178,15 @@ function addFiles(files) {
            file.name.endsWith(".mp4");
   });
   state.files.push(...allowed);
+
+  // 🧬 ファイル追加時に非同期で ComfyUI メタデータを自動解析
+  allowed.forEach(f => {
+    detectComfyMetadata(f).then(meta => {
+      f.metaStatus = meta;
+      render();
+    });
+  });
+
   render();
 }
 
@@ -1148,6 +1330,7 @@ function render() {
         <div class="item-info-col" style="flex: 1; min-width: 0;">
           <div class="item-name" style="font-weight: 600; font-size: 13px;">${escapeHtml(currentName)}</div>
           <div class="item-meta" style="font-size: 11px; margin-top: 2px;">${metaHtml}</div>
+          ${createComfyBadgeHtml(file, result)}
         </div>
         <div class="item-actions-col" style="display: flex; gap: 6px; align-items: center; flex-wrap: wrap;">
           ${createCardActionHtml(file, result, index)}
@@ -1681,6 +1864,7 @@ async function fetchAndRenderR2Files() {
           <div class="item-name-row" style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap;">
             <span class="item-name" style="font-weight: 600; word-break: break-all;">${escapeHtml(item.Key)}</span>
             <span style="color: #64748b; font-size: 11px; white-space: nowrap;">${formatBytes(item.Size || 0)}</span>
+            <span class="r2-wf-badge-placeholder" data-key="${escapeHtml(item.Key)}"></span>
           </div>
           <div class="item-meta" style="color: var(--muted); margin-top: 4px; font-size: 11px;">
             更新日: ${escapeHtml(dateStr)}
@@ -1694,6 +1878,16 @@ async function fetchAndRenderR2Files() {
       `;
 
       r2FileList.append(article);
+
+      // R2 ファイルのワークフロー有無を非同期で判定し、存在する場合のみバッジを表示
+      checkRemoteFileWf(item.Key, publicUrl).then(hasWf => {
+        if (hasWf) {
+          const placeholder = article.querySelector('.r2-wf-badge-placeholder');
+          if (placeholder) {
+            placeholder.innerHTML = '<span class="meta-badge" style="background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.4); font-size: 10px; padding: 1px 6px; border-radius: 4px; font-weight: 600;" title="ComfyUIワークフローまたはプロンプトが含まれています。">🧬 ワークフローあり</span>';
+          }
+        }
+      });
     });
 
     updateSelectedR2ActionButtonsState();
