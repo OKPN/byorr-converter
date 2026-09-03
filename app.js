@@ -289,7 +289,7 @@ const langSelect = document.querySelector("#langSelect");
 function getAppLanguage() {
   const saved = localStorage.getItem("appLang");
   if (saved && (saved === "ja" || saved === "en")) return saved;
-  return navigator.language.startsWith("ja") ? "ja" : "en";
+  return "en";
 }
 
 function setAppLanguage(lang) {
