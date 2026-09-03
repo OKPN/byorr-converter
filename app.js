@@ -114,7 +114,52 @@ const i18nDict = {
     siteTitle: "BYORR Converter",
     eyebrow: "Secure in-browser image conversion & direct Cloudflare R2 upload!",
     whatIsSiteSummary: "❓ What is this site?",
-    whatIsSiteBody: `A local-first tool that converts images entirely within your browser and uploads directly to your Cloudflare R2 storage via S3 API without any server/worker.<br><span style="display: inline-block; margin-top: 6px; font-size: 12px; color: #a5b4fc;">※ Connection details are stored safely in your browser (localStorage) only.</span>`,
+    whatIsSiteBody: `
+      <div style="font-size: 13px; line-height: 1.6; color: var(--text);">
+        <p style="margin-bottom: 12px; font-weight: 500;">
+          <strong>BYORR (Bring Your Own R2) Converter</strong> is a 100% serverless, client-side tool built for AI creators. Convert images in your browser and upload them directly to your personal Cloudflare R2 bucket via S3 API — without any intermediate server or Worker.
+        </p>
+
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 10px; margin: 14px 0;">
+          <div style="background: rgba(99, 102, 241, 0.08); border: 1px solid rgba(99, 102, 241, 0.25); border-radius: 8px; padding: 10px 12px;">
+            <div style="font-weight: bold; color: #818cf8; margin-bottom: 3px;">🔒 Zero External Servers</div>
+            <div style="font-size: 11.5px; color: var(--muted);">Direct S3 API communication from your browser to Cloudflare R2. No backend, no proxy, maximum privacy.</div>
+          </div>
+          <div style="background: rgba(16, 185, 129, 0.08); border: 1px solid rgba(16, 185, 129, 0.25); border-radius: 8px; padding: 10px 12px;">
+            <div style="font-weight: bold; color: #34d399; margin-bottom: 3px;">🧬 ComfyUI Workflows Intact</div>
+            <div style="font-size: 11.5px; color: var(--muted);">Preserves complete ComfyUI node graph workflows and API prompts in PNG, WebP, and MP4/WebM videos.</div>
+          </div>
+          <div style="background: rgba(56, 189, 248, 0.08); border: 1px solid rgba(56, 189, 248, 0.25); border-radius: 8px; padding: 10px 12px;">
+            <div style="font-weight: bold; color: #38bdf8; margin-bottom: 3px;">📦 Massive 10 GB Free Tier</div>
+            <div style="font-size: 11.5px; color: var(--muted);">Take advantage of Cloudflare R2's generous 10GB free storage every month with zero egress fees.</div>
+          </div>
+        </div>
+
+        <h4 style="font-size: 13.5px; font-weight: bold; color: #fff; margin: 16px 0 8px 0; display: flex; align-items: center; gap: 6px;">
+          🚀 Quick Setup Guide (3 Simple Steps)
+        </h4>
+
+        <ol style="margin: 0; padding-left: 20px; font-size: 12px; color: var(--text-secondary); display: flex; flex-direction: column; gap: 8px;">
+          <li>
+            <strong>Step 1: Create an R2 Bucket in Cloudflare</strong><br>
+            Log into your Cloudflare Dashboard, navigate to <strong>R2 Object Storage</strong>, and create a bucket (e.g. <code>my-images</code>).
+          </li>
+          <li>
+            <strong>Step 2: Generate S3 API Credentials</strong><br>
+            Under <strong>R2 > Manage R2 API Tokens</strong>, create an API token with <code>Object Read & Write</code> permissions. Note your <strong>Access Key ID</strong>, <strong>Secret Access Key</strong>, and <strong>Account ID</strong>.
+          </li>
+          <li>
+            <strong>Step 3: Connect in Settings Below</strong><br>
+            Paste your Account ID, Bucket Name, and API Keys into the <strong>☁️ Cloudflare R2 Connection Settings</strong> panel below. You are now ready to publish direct links!
+          </li>
+        </ol>
+
+        <div style="margin-top: 14px; padding: 10px 12px; background: rgba(245, 158, 11, 0.08); border-left: 3px solid #f59e0b; border-radius: 4px; font-size: 11.5px; color: var(--muted);">
+          <strong style="color: #fbbf24;">🛡️ Privacy & Security Guarantee:</strong><br>
+          Your R2 API keys are stored solely inside your browser's local storage (<code>localStorage</code>) and are transmitted only directly to Cloudflare's official S3 endpoint. We never store or see your keys.
+        </div>
+      </div>
+    `,
     inputFiles: "Input Files",
     addFolder: "Add Folder",
     dropText: "Drop images or folders here",
