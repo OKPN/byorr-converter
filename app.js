@@ -208,13 +208,9 @@ const extensions = {
 };
 
 const defaultTemplates = {
-  "5ch_standard": {
-    name: "5ch標準テンプレ",
-    text: `【画像】\n\n【プロンプト】\n\n【モデル】\n`
-  },
-  "simple_share": {
-    name: "シンプル共有",
-    text: `画像アップロードしました！\n`
+  "standard": {
+    name: "基本の挨拶",
+    text: "お世話になっております。\n画像を添付いたします。\n"
   }
 };
 
