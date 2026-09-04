@@ -36,6 +36,9 @@
             <h1 data-i18n="siteTitle">BYORR Converter</h1>
           </div>
           <div class="topbar-actions" style="display: flex; gap: 8px; align-items: center;">
+            <button class="ghost-button" id="topbarSyncButton" type="button" style="height: 36px; padding: 0 10px; font-size: 11.5px; display: inline-flex; align-items: center; gap: 5px; border-color: rgba(56, 189, 248, 0.4); color: #38bdf8;" title="スマホや別端末と設定・Civitaiクリエイター一覧を引き継ぐ">
+              <span style="font-size: 13px;">📱</span> <span data-i18n="topbarSyncBtn">スマホ共有 / バックアップ</span>
+            </button>
             <select id="langSelect" style="height: 36px; padding: 0 8px; border-radius: 6px; border: 1px solid var(--border); background: var(--panel-strong); color: var(--text); font-size: 12px; cursor: pointer; outline: none;">
               <option value="en" selected>🌐 EN</option>
               <option value="ja">🌐 JP</option>
@@ -207,12 +210,25 @@
                   </div>
                   <div style="display: flex; gap: 6px; margin-top: 4px; flex-wrap: wrap;">
                     <button class="primary-button" id="cfSaveButton" type="button" style="flex: 1; min-width: 90px;" data-i18n="btnSave">保存する</button>
-                    <button class="ghost-button" id="cfBackupUrlButton" type="button" title="PINコードで暗号化したバックアップURLをコピー">🔗 PIN付きバックアップURL</button>
-                    <button class="ghost-button" id="cfShareQrButton" type="button" title="別端末へ可視光QRスキャン共有" data-i18n="btnShareQr">📱 スマホへ共有</button>
                     <a href="https://dash.cloudflare.com/" target="_blank" rel="noopener noreferrer" class="ghost-button" id="cfDashboardLink" style="display: inline-flex; align-items: center; font-size: 12px; text-decoration: none;">Cloudflare ↗</a>
                     <button class="ghost-button danger-button" id="cfClearButton" type="button" data-i18n="btnClear">クリア</button>
                   </div>
                   <div id="cfStatus" style="font-size: 12px; min-height: 16px;"></div>
+                </div>
+              </details>
+
+              <!-- 📦 設定の引き継ぎ & バックアップ (独立アコーディオン) -->
+              <details class="settings-accordion cf-settings-accordion" id="dataSyncAccordion" style="margin-top: 6px;">
+                <summary data-i18n="dataSyncHeading">📦 設定の引き継ぎ & スマホ共有</summary>
+                <div class="settings-content" style="padding: 10px 0 4px; display: flex; flex-direction: column; gap: 8px;">
+                  <span style="font-size: 11px; color: var(--muted); line-height: 1.4;" data-i18n="dataSyncDesc">
+                    Civitai ウォッチリスト、Cloudflare R2 接続情報、画像変換設定を別の端末やスマホへ安全に引き継ぎます。
+                  </span>
+                  <div style="display: flex; gap: 6px; flex-wrap: wrap;">
+                    <button class="primary-button" id="cfShareQrButton" type="button" style="flex: 1.2; min-height: 36px; font-size: 12px; margin: 0; background: #0284c7; border-color: #38bdf8;" title="スマホのカメラでスキャンして全設定を引き継ぐ" data-i18n="btnShareQr">📱 スマホ共有 (QR)</button>
+                    <button class="ghost-button" id="cfBackupUrlButton" type="button" style="flex: 1.2; min-height: 36px; font-size: 11px; margin: 0;" title="PINコードで暗号化したバックアップURLを生成" data-i18n="btnPinBackup">🔗 PINバックアップ</button>
+                    <button class="ghost-button danger-button" id="globalClearButton" type="button" style="min-height: 36px; font-size: 11px; padding: 0 10px;" title="アプリに保存された全設定をクリア" data-i18n="btnClearAllData">🗑️ 全クリア</button>
+                  </div>
                 </div>
               </details>
 
@@ -283,6 +299,38 @@
           <div class="result-list" id="r2FileList"></div>
         </section>
 
+        <!-- 🎨 Civitai ギャラリー (投稿作品 & クリエイターウォッチ) セクション -->
+        <section class="panel" id="civitaiPanel" style="margin-top: 20px;">
+          <div class="panel-heading" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
+            <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+              <h2 style="font-size: 15px; margin: 0; display: flex; align-items: center; gap: 6px;">
+                <span data-i18n="civitaiGalleryHeading">🎨 Civitai Gallery & Watcher</span>
+              </h2>
+              <span id="civitaiNewBadge" style="display: none; font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 12px; background: rgba(239, 68, 68, 0.2); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.4);"></span>
+              <button class="ghost-button" id="civitaiMarkReadBtn" type="button" style="display: none; font-size: 10.5px; padding: 2px 8px; height: 24px;" data-i18n="civitaiMarkRead">✓ 既読にする</button>
+            </div>
+            <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+              <div style="display: flex; align-items: center; gap: 6px; background: rgba(255,255,255,0.04); padding: 0 8px; height: 38px; border-radius: 6px; border: 1px solid var(--border); box-sizing: border-box;">
+                <span style="font-size: 11px; color: var(--muted); white-space: nowrap;" data-i18n="civitaiUsernameLabel">👤 クリエイター:</span>
+                <select id="civitaiUserSelect" style="height: 100%; min-width: 120px; font-size: 12px; border: none; background: transparent; color: var(--text); outline: none; font-weight: 600; cursor: pointer; color-scheme: dark;">
+                </select>
+                <button class="ghost-button" id="civitaiUserAddBtn" type="button" style="padding: 2px 7px; font-size: 13px; height: 26px; min-width: 26px; line-height: 1;" title="新しいクリエイターを追加">＋</button>
+                <button class="ghost-button" id="civitaiUserDeleteBtn" type="button" style="padding: 2px 6px; font-size: 11px; height: 26px; min-width: 26px; line-height: 1; color: #f43f5e;" title="選択中のクリエイターを削除">🗑️</button>
+              </div>
+              <button class="ghost-button" id="reloadCivitaiButton" type="button" data-i18n="btnReload">🔄 更新</button>
+              <a id="civitaiProfileLink" href="https://civitai.com" target="_blank" rel="noopener noreferrer" class="ghost-button" style="text-decoration: none;" title="Civitai のプロフィールページを開く">Civitai ↗</a>
+            </div>
+          </div>
+          <!-- ➕ クリエイター追加用インラインフォーム -->
+          <div id="civitaiUserAddForm" style="display: none; align-items: center; gap: 8px; margin-top: 10px; padding: 10px 14px; background: rgba(56, 189, 248, 0.06); border: 1px dashed rgba(56, 189, 248, 0.35); border-radius: 6px; flex-wrap: wrap;">
+            <span style="font-size: 12px; color: #38bdf8; font-weight: 600;" data-i18n="civitaiAddCreator">➕ ウォッチするクリエイターを追加:</span>
+            <input type="text" id="civitaiUserNewInput" placeholder="Civitaiユーザー名 (例: OKPN)" style="flex: 1; min-width: 160px; height: 32px; font-size: 12px; padding: 0 10px; background: rgba(0,0,0,0.25); border: 1px solid var(--border); border-radius: 4px; color: var(--text);">
+            <button class="primary-button" id="civitaiUserNewSaveBtn" type="button" style="margin: 0; padding: 0 14px; height: 32px; font-size: 12px;" data-i18n="btnAdd">追加</button>
+            <button class="ghost-button" id="civitaiUserNewCancelBtn" type="button" style="padding: 0 12px; height: 32px; font-size: 12px;" data-i18n="btnCancel">キャンセル</button>
+          </div>
+          <div class="result-list" id="civitaiGalleryList" style="margin-top: 12px;"></div>
+        </section>
+
         <footer class="site-footer">
           <div class="footer-inner">
             <div class="footer-left">
@@ -310,9 +358,9 @@
     <!-- QRコード同期モーダル (最外郭・全画面オーバーレイ) -->
     <div id="qrModal" class="modal-backdrop" style="display: none;">
       <div class="modal-content" style="max-width: 360px; text-align: center; padding: 24px;">
-        <h3 style="margin-top: 0; font-size: 16px; color: var(--text);">📱 スマホ/別端末でスキャン</h3>
-        <p style="font-size: 12px; color: var(--muted); margin-bottom: 16px; line-height: 1.5;">
-          スマホのカメラで下記QRコードを読み取ると、接続情報（Account ID / 鍵 / 公開URL）が安全に直接同期されます。
+        <h3 style="margin-top: 0; font-size: 16px; color: var(--text);" data-i18n="qrModalTitle">📱 スマホ/別端末でスキャン</h3>
+        <p style="font-size: 12px; color: var(--muted); margin-bottom: 16px; line-height: 1.5;" data-i18n="qrModalSub">
+          スマホのカメラ等で下記QRコードを読み取ると、Civitaiウォッチリストや接続情報、変換設定が安全に直接引き継がれます。
         </p>
         <div id="qrContainer" style="background: #ffffff; padding: 16px; border-radius: 12px; display: inline-block; margin-bottom: 16px; box-shadow: 0 4px 12px rgba(0,0,0,0.3);">
           <canvas id="qrCanvas" style="display: block; margin: 0 auto;"></canvas>
