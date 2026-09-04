@@ -329,8 +329,15 @@ const r2AccountId = document.querySelector("#r2AccountId");
 const r2BucketName = document.querySelector("#r2BucketName");
 const r2AccessKeyId = document.querySelector("#r2AccessKeyId");
 const r2SecretAccessKey = document.querySelector("#r2SecretAccessKey");
-const r2PublicDomain = document.querySelector("#r2PublicDomain");
-const r2DevDomain = document.querySelector("#r2DevDomain");
+const r2DomainSelect = document.querySelector("#r2DomainSelect");
+const r2DomainAddBtn = document.querySelector("#r2DomainAddBtn");
+const r2DomainDeleteBtn = document.querySelector("#r2DomainDeleteBtn");
+const r2DomainAddForm = document.querySelector("#r2DomainAddForm");
+const r2DomainNewInput = document.querySelector("#r2DomainNewInput");
+const r2DomainNewSaveBtn = document.querySelector("#r2DomainNewSaveBtn");
+const r2DomainNewCancelBtn = document.querySelector("#r2DomainNewCancelBtn");
+const r2PublicDomain = document.querySelector("#r2PublicDomain"); // 後方互換
+const r2DevDomain = document.querySelector("#r2DevDomain"); // 後方互換
 
 const cfStatus = document.querySelector("#cfStatus");
 const cfSettingsAccordion = document.querySelector("#cfSettingsAccordion");
@@ -449,16 +456,89 @@ function getS3Client() {
   return s3ClientInstance;
 }
 
-// --- R2 設定状態の更新 ---
+// --- 🌐 R2 公開・配信ドメイン管理 ---
+
+function getR2DomainList() {
+  let list = [];
+  try {
+    list = JSON.parse(localStorage.getItem("r2DomainList") || "[]");
+  } catch (e) {
+    list = [];
+  }
+  // 後方互換性：旧 r2PublicDomain / r2DevDomain からの自動移行
+  const legacyPub = (localStorage.getItem("r2PublicDomain") || "").trim();
+  const legacyDev = (localStorage.getItem("r2DevDomain") || "").trim();
+  if (legacyPub && !list.includes(legacyPub)) list.push(legacyPub);
+  if (legacyDev && !list.includes(legacyDev)) list.push(legacyDev);
+
+  // 重複排除 & 空白除去
+  return [...new Set(list.map(d => d.trim().replace(/\/$/, "")).filter(Boolean))];
+}
+
+function saveR2DomainList(list) {
+  localStorage.setItem("r2DomainList", JSON.stringify(list));
+}
+
+function getSelectedR2Domain() {
+  const list = getR2DomainList();
+  const saved = (localStorage.getItem("r2SelectedDomain") || "").trim().replace(/\/$/, "");
+  if (saved && list.includes(saved)) {
+    return saved;
+  }
+  return list.length > 0 ? list[0] : "";
+}
+
+function setSelectedR2Domain(domain) {
+  const clean = (domain || "").trim().replace(/\/$/, "");
+  localStorage.setItem("r2SelectedDomain", clean);
+  localStorage.setItem("r2PublicDomain", clean); // 後方互換
+}
+
+function renderR2DomainSelect() {
+  if (!r2DomainSelect) return;
+  const list = getR2DomainList();
+  const current = getSelectedR2Domain();
+
+  r2DomainSelect.innerHTML = "";
+
+  if (list.length === 0) {
+    const opt = document.createElement("option");
+    opt.value = "";
+    opt.textContent = "-- 配信ドメインが未登録です (＋から追加) --";
+    r2DomainSelect.append(opt);
+    if (r2DomainDeleteBtn) r2DomainDeleteBtn.disabled = true;
+    return;
+  }
+
+  if (r2DomainDeleteBtn) r2DomainDeleteBtn.disabled = false;
+
+  list.forEach(domain => {
+    const opt = document.createElement("option");
+    opt.value = domain;
+    let icon = "🌐 ";
+    if (domain.includes(".pages.dev")) {
+      icon = "⚡ ";
+    } else if (domain.includes(".r2.dev")) {
+      icon = "📦 ";
+    }
+    opt.textContent = `${icon}${domain}`;
+    if (domain === current) opt.selected = true;
+    r2DomainSelect.append(opt);
+  });
+}
+
+// --- R2 設定状態の更新 (STEP 1のURL必須ルールを堅持) ---
 function updateR2Status() {
   const accountId = (localStorage.getItem("r2AccountId") || r2AccountId?.value || "").trim();
   const bucketName = (localStorage.getItem("r2BucketName") || r2BucketName?.value || "").trim();
   const accessKeyId = (localStorage.getItem("r2AccessKeyId") || r2AccessKeyId?.value || "").trim();
   const secretAccessKey = (localStorage.getItem("r2SecretAccessKey") || r2SecretAccessKey?.value || "").trim();
-  const publicDomain = (localStorage.getItem("r2PublicDomain") || r2PublicDomain?.value || "").trim();
-  const devDomain = (localStorage.getItem("r2DevDomain") || r2DevDomain?.value || "").trim();
+  
+  // 🔒 STEP 1: 配信ドメインが1件以上存在し、有効に選択されていること
+  const selectedDomain = getSelectedR2Domain();
+  const isStep1Ok = Boolean(selectedDomain && selectedDomain.trim());
 
-  const isStep1Ok = Boolean(publicDomain || devDomain);
+  // 🔒 STEP 2 のロック制御 (STEP 1 未設定時は完全ブロック)
   const step2Box = document.querySelector("#r2KeysStepContainer");
   const step2Notice = document.querySelector("#step2Notice");
   const step2Inputs = [r2AccountId, r2BucketName, r2AccessKeyId, r2SecretAccessKey];
@@ -469,6 +549,9 @@ function updateR2Status() {
   }
   if (step2Notice) {
     step2Notice.style.display = isStep1Ok ? "none" : "inline";
+    if (!isStep1Ok) {
+      step2Notice.textContent = "⚠️ 上の公開・配信URLを『＋』から登録・選択してください";
+    }
   }
   step2Inputs.forEach(input => {
     if (input) input.disabled = !isStep1Ok;
@@ -794,9 +877,8 @@ function loadSettings() {
   if (r2BucketName) r2BucketName.value = savedBucket;
   if (r2AccessKeyId) r2AccessKeyId.value = savedKeyId;
   if (r2SecretAccessKey) r2SecretAccessKey.value = savedSecret;
-  if (r2PublicDomain) r2PublicDomain.value = savedPublic;
-  if (r2DevDomain) r2DevDomain.value = savedDev;
 
+  renderR2DomainSelect();
   updateR2Status();
   renderCivitaiUserSelect();
   updateCivitaiStatus();
@@ -923,6 +1005,8 @@ function buildAppExportPayload() {
 
   const currentCivitaiUser = getCurrentCivitaiUser();
   const civitaiUserList = getCivitaiUserList();
+  const domainList = getR2DomainList();
+  const selectedDomain = getSelectedR2Domain();
 
   const payload = { v: 2 };
   if (accountId) payload.a = accountId;
@@ -931,6 +1015,8 @@ function buildAppExportPayload() {
   if (secretAccessKey) payload.s = secretAccessKey;
   if (publicDomain) payload.p = publicDomain;
   if (devDomain) payload.d = devDomain;
+  if (domainList.length > 0) payload.dl = domainList;
+  if (selectedDomain) payload.ds = selectedDomain;
 
   if (currentCivitaiUser) payload.cu = currentCivitaiUser;
   if (civitaiUserList.length > 0) payload.cul = civitaiUserList;
@@ -959,8 +1045,14 @@ function applyAppImportPayload(payload) {
     if (r2BucketName) r2BucketName.value = payload.b;
     if (r2AccessKeyId) r2AccessKeyId.value = payload.k;
     if (r2SecretAccessKey) r2SecretAccessKey.value = payload.s;
-    if (r2PublicDomain) r2PublicDomain.value = payload.p || "";
-    if (r2DevDomain) r2DevDomain.value = payload.d || "";
+    hasRestoredAny = true;
+  }
+
+  // 1.1 R2 配信ドメインリスト復元
+  if (Array.isArray(payload.dl) && payload.dl.length > 0) {
+    saveR2DomainList(payload.dl);
+    if (payload.ds) setSelectedR2Domain(payload.ds);
+    renderR2DomainSelect();
     hasRestoredAny = true;
   }
 
@@ -1088,8 +1180,6 @@ const saveR2SettingsAuto = () => {
   if (bucketName) localStorage.setItem("r2BucketName", bucketName);
   if (accessKeyId) localStorage.setItem("r2AccessKeyId", accessKeyId);
   if (secretAccessKey) localStorage.setItem("r2SecretAccessKey", secretAccessKey);
-  if (publicDomain) localStorage.setItem("r2PublicDomain", publicDomain);
-  if (devDomain) localStorage.setItem("r2DevDomain", devDomain);
 
   const isConfigured = updateR2Status();
   render();
@@ -1106,8 +1196,84 @@ r2AccountId?.addEventListener("input", saveR2SettingsAuto);
 r2BucketName?.addEventListener("input", saveR2SettingsAuto);
 r2AccessKeyId?.addEventListener("input", saveR2SettingsAuto);
 r2SecretAccessKey?.addEventListener("input", saveR2SettingsAuto);
-r2PublicDomain?.addEventListener("input", saveR2SettingsAuto);
-r2DevDomain?.addEventListener("input", saveR2SettingsAuto);
+
+// 🌐 ドメイン選択変更リスナー
+r2DomainSelect?.addEventListener("change", (e) => {
+  setSelectedR2Domain(e.target.value);
+  updateR2Status();
+  render();
+  fetchAndRenderR2Files();
+});
+
+// 🌐 ドメイン追加フォーム表示
+r2DomainAddBtn?.addEventListener("click", () => {
+  if (r2DomainAddForm) {
+    r2DomainAddForm.style.display = "flex";
+    if (r2DomainNewInput) {
+      r2DomainNewInput.value = "";
+      r2DomainNewInput.focus();
+    }
+  }
+});
+
+// 🌐 ドメイン追加フォームキャンセル
+r2DomainNewCancelBtn?.addEventListener("click", () => {
+  if (r2DomainAddForm) r2DomainAddForm.style.display = "none";
+});
+
+// 🌐 ドメイン新規追加処理
+function handleAddNewDomain() {
+  const raw = r2DomainNewInput?.value?.trim() || "";
+  if (!raw) return;
+
+  let formatted = raw.replace(/\/$/, "");
+  if (!/^https?:\/\//i.test(formatted)) {
+    formatted = "https://" + formatted;
+  }
+
+  const list = getR2DomainList();
+  if (!list.includes(formatted)) {
+    list.push(formatted);
+    saveR2DomainList(list);
+  }
+  setSelectedR2Domain(formatted);
+  renderR2DomainSelect();
+  updateR2Status();
+  render();
+  fetchAndRenderR2Files();
+
+  if (r2DomainAddForm) r2DomainAddForm.style.display = "none";
+}
+
+r2DomainNewSaveBtn?.addEventListener("click", handleAddNewDomain);
+r2DomainNewInput?.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") {
+    e.preventDefault();
+    handleAddNewDomain();
+  } else if (e.key === "Escape") {
+    if (r2DomainAddForm) r2DomainAddForm.style.display = "none";
+  }
+});
+
+// 🌐 ドメイン削除リスナー
+r2DomainDeleteBtn?.addEventListener("click", () => {
+  const current = getSelectedR2Domain();
+  if (!current) return;
+
+  if (!confirm(`選択中の配信ドメイン「${current}」を削除しますか？`)) return;
+
+  const list = getR2DomainList();
+  const nextList = list.filter(d => d !== current);
+  saveR2DomainList(nextList);
+
+  const nextSelected = nextList.length > 0 ? nextList[0] : "";
+  setSelectedR2Domain(nextSelected);
+
+  renderR2DomainSelect();
+  updateR2Status();
+  render();
+  fetchAndRenderR2Files();
+});
 
 cfSaveButton?.addEventListener("click", () => {
   saveR2SettingsAuto();
@@ -1120,6 +1286,8 @@ cfClearButton?.addEventListener("click", () => {
   localStorage.removeItem("r2BucketName");
   localStorage.removeItem("r2AccessKeyId");
   localStorage.removeItem("r2SecretAccessKey");
+  localStorage.removeItem("r2DomainList");
+  localStorage.removeItem("r2SelectedDomain");
   localStorage.removeItem("r2PublicDomain");
   localStorage.removeItem("r2DevDomain");
 
@@ -1127,9 +1295,8 @@ cfClearButton?.addEventListener("click", () => {
   if (r2BucketName) r2BucketName.value = "";
   if (r2AccessKeyId) r2AccessKeyId.value = "";
   if (r2SecretAccessKey) r2SecretAccessKey.value = "";
-  if (r2PublicDomain) r2PublicDomain.value = "";
-  if (r2DevDomain) r2DevDomain.value = "";
 
+  renderR2DomainSelect();
   updateR2Status();
   render();
   fetchAndRenderR2Files();
@@ -2488,15 +2655,14 @@ deleteSelectedR2FilesButton?.addEventListener("click", async () => {
 
 // URL 生成ヘルパー
 function getPublicUrl(key) {
-  const publicDomain = (localStorage.getItem("r2PublicDomain") || r2PublicDomain?.value || "").trim().replace(/\/$/, "");
-  const devDomain = (localStorage.getItem("r2DevDomain") || r2DevDomain?.value || "").trim().replace(/\/$/, "");
-  const base = publicDomain || devDomain;
-  return base ? `${base}/${encodeURIComponent(key)}` : key;
+  const domain = getSelectedR2Domain();
+  return domain ? `${domain.replace(/\/$/, "")}/${encodeURIComponent(key)}` : key;
 }
 
 function getDevUrl(key) {
-  const devDomain = (localStorage.getItem("r2DevDomain") || r2DevDomain?.value || "").trim().replace(/\/$/, "");
-  return devDomain ? `${devDomain}/${encodeURIComponent(key)}` : "";
+  const list = getR2DomainList();
+  const dev = list.find(d => d.includes(".r2.dev"));
+  return dev ? `${dev.replace(/\/$/, "")}/${encodeURIComponent(key)}` : getPublicUrl(key);
 }
 
 // パレット描画
