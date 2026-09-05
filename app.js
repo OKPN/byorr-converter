@@ -1500,6 +1500,7 @@ enableRenameCheck?.addEventListener("change", () => {
 enableZipCheck?.addEventListener("change", () => {
   const isChecked = enableZipCheck.checked;
   localStorage.setItem("enableZip", String(isChecked));
+  render();
 });
 
 qualityRange?.addEventListener("input", () => {
@@ -1881,12 +1882,18 @@ function setUiLock(locked) {
   const hasFiles = state.files.length > 0;
   const isConvertOn = enableConvertCheck?.checked ?? true;
   const isRenameOn = enableRenameCheck?.checked ?? true;
-  const canProcessLocal = isConvertOn || isRenameOn;
+  const isZipOn = enableZipCheck?.checked ?? false;
+  const canProcessLocal = isConvertOn || isRenameOn || isZipOn;
 
   if (fileInput) fileInput.disabled = locked;
   if (dropzone) dropzone.classList.toggle("is-disabled", locked);
   if (clearButton) clearButton.disabled = locked;
-  if (convertDownloadButton) convertDownloadButton.disabled = locked || !hasFiles || !canProcessLocal;
+  if (convertDownloadButton) {
+    convertDownloadButton.disabled = locked || !hasFiles || !canProcessLocal;
+    convertDownloadButton.title = (!canProcessLocal && hasFiles)
+      ? "画像変換・リネーム・ZIPまとめ保存がすべてオフのためダウンロード無効"
+      : "";
+  }
   if (convertUploadButton) convertUploadButton.disabled = locked || !hasFiles || !r2Ok;
 }
 
@@ -1942,9 +1949,15 @@ function render() {
 
   const isConvertOn = enableConvertCheck?.checked ?? true;
   const isRenameOn = enableRenameCheck?.checked ?? true;
-  const canProcessLocal = isConvertOn || isRenameOn;
+  const isZipOn = enableZipCheck?.checked ?? false;
+  const canProcessLocal = isConvertOn || isRenameOn || isZipOn;
 
-  if (convertDownloadButton) convertDownloadButton.disabled = !hasFiles;
+  if (convertDownloadButton) {
+    convertDownloadButton.disabled = !hasFiles || !canProcessLocal;
+    convertDownloadButton.title = (!canProcessLocal && hasFiles)
+      ? "画像変換・リネーム・ZIPまとめ保存がすべてオフのためダウンロード無効"
+      : "";
+  }
   if (convertUploadButton) convertUploadButton.disabled = !hasFiles || !r2Ok;
 
   if (dropzone) {
