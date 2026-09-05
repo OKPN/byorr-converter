@@ -6,12 +6,22 @@
 ![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)
 ![Architecture: Local--First](https://img.shields.io/badge/Architecture-Local--First-green.svg)
 ![Stack: S3--API--SDK](https://img.shields.io/badge/Stack-S3--API-orange.svg)
+[![Zero-Dollar CDN Guide](https://img.shields.io/badge/Guide-Free%20R2%20CDN-brightgreen?style=for-the-badge)](docs/FREE_R2_PAGES_CDN_GUIDE.md)
 
 ---
 
 ## 🌟 Live Demo
 
-👉 **[https://okpn.github.io/byorr-converter/](https://okpn.github.io/byorr-converter/)**
+👉 **[https://byorr-converter.pages.dev](https://byorr-converter.pages.dev)**
+
+---
+
+## 🚀 Free R2 Media CDN (No Custom Domain Required)
+
+Need a free, public direct URL for your R2 bucket without buying a custom domain?  
+Follow our zero-dollar recipe using Cloudflare Pages & `_worker.js`:
+
+👉 **[📖 Zero-Dollar R2 Image CDN via Cloudflare Pages Guide](docs/FREE_R2_PAGES_CDN_GUIDE.md)**
 
 ---
 
@@ -85,9 +95,9 @@ To allow your browser to communicate directly with your Cloudflare R2 bucket via
 
 ## 🛠️ Usage Guide
 
-1. Open **[BYORR Converter](https://okpn.github.io/byorr-converter/)**.
+1. Open **[BYORR Converter](https://byorr-converter.pages.dev)**.
 2. Expand **☁️ Cloudflare R2 Connection (S3 API)**.
-3. **Step 1**: Enter either your **Direct Public Domain URL** (e.g., `https://my-domain.com`) or **R2 Dev Address** (e.g., `https://pub-xxx.r2.dev`). This unlocks Step 2.
+3. **Step 1**: Enter either your **Direct Public Domain URL** (e.g., `https://my-media-bin.pages.dev` or `https://my-domain.com`) or **R2 Dev Address** (e.g., `https://pub-xxx.r2.dev`). This unlocks Step 2.
 4. **Step 2**: Enter your **Account ID**, **R2 Bucket Name**, **Access Key ID**, and **Secret Access Key**. *(Note: Pasting the full Cloudflare S3 API URL automatically extracts your Account ID)*.
 5. Click **Save** (credentials are saved locally).
 6. Drag & drop images, convert, and upload directly to R2!
@@ -97,7 +107,7 @@ To allow your browser to communicate directly with your Cloudflare R2 bucket via
 ## 🔗 Sister Project
 
 Looking for a Cloudflare Worker KV-based solution?  
-Check out **[BYOC Converter](https://okpn.github.io/byoc-converter/)** for Worker & KV workflow integration.
+Check out **[BYOC Converter](https://byoc-converter.pages.dev)** for Worker & KV workflow integration.
 
 ---
 
