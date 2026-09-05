@@ -1205,11 +1205,20 @@ function applyAppImportPayload(payload) {
   updateR2Status();
   updateCivitaiStatus();
 
+  // ☁️ 復元後に自動保存 & R2ファイル一覧同期を確実に実行
+  if (payload.a && payload.b && payload.k && payload.s) {
+    saveR2SettingsAuto();
+    fetchAndRenderR2Files();
+  }
+
   return hasRestoredAny;
 }
 
 // PINコード付き暗号化バックアップURLの発行
 async function generatePinBackupUrl() {
+  // 💾 バックアップ発行前に最新の入力状態を自動で一回保存
+  saveR2SettingsAuto();
+
   const payload = buildAppExportPayload();
   const hasData = (payload.a && payload.b) || payload.cu || (payload.cul && payload.cul.length > 0);
   if (!hasData) {
@@ -1281,7 +1290,7 @@ fetchAndRenderCivitaiGallery();
 // --- イベントリスナー: R2 設定自動保存 ---
 let r2AutoFetchTimer = null;
 
-const saveR2SettingsAuto = () => {
+function saveR2SettingsAuto() {
   let rawAccount = r2AccountId?.value?.trim() || "";
   // S3 API URL（https://<account_id>.r2.cloudflarestorage.com）が貼られた場合は自動抽出
   if (rawAccount.includes(".r2.cloudflarestorage.com")) {
