@@ -61,7 +61,8 @@
                 <h2 data-i18n="inputFiles">入力ファイル</h2>
                 <span id="statusText" class="status-text" data-i18n="statusWaiting">待機中</span>
               </div>
-              <div class="heading-actions" style="display: flex; gap: 8px; align-items: center;">
+              <div class="heading-actions" style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+                <button class="ghost-button" id="copyAllPromptsBtn" type="button" style="display: none; font-size: 11.5px; min-height: 32px; padding: 0 10px; color: #fbbf24; border-color: rgba(251, 191, 36, 0.4);" title="ドロップされた全ファイルのプロンプトを一括コピー">📝 プロンプト一括コピー</button>
                 <button class="ghost-button" id="folderSelectButton" type="button" data-i18n="addFolder">フォルダを追加</button>
                 <button class="ghost-button danger-button" id="clearButton" type="button" data-i18n="btnClear">クリア</button>
                 <span id="fileCount">0件</span>

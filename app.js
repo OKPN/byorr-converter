@@ -104,6 +104,9 @@ const i18nDict = {
     btnReload: "更新",
     btnBatchDelete: "選択削除",
     copyUrl: "コピー",
+    copyPrompt: "プロンプトコピー",
+    copyAllPrompts: "📝 プロンプト一括コピー",
+    civitaiPrompt: "📝 プロンプト",
     devCopyUrl: "devコピー",
     deleteNow: "削除",
     copied: "コピー完了!",
@@ -249,6 +252,9 @@ const i18nDict = {
     btnReload: "Reload",
     btnBatchDelete: "Delete Selected",
     copyUrl: "Copy",
+    copyPrompt: "Copy Prompt",
+    copyAllPrompts: "📝 Copy All Prompts",
+    civitaiPrompt: "📝 Prompt",
     devCopyUrl: "devCopy",
     deleteNow: "Delete",
     copied: "Copied!",
@@ -308,6 +314,8 @@ const fileList = document.querySelector("#fileList");
 const fileCount = document.querySelector("#fileCount");
 const statusText = document.querySelector("#statusText");
 const progressBar = document.querySelector("#progressBar");
+const copyAllPromptsBtn = document.querySelector("#copyAllPromptsBtn");
+const civitaiPromptsMap = {};
 
 // 設定要素
 const enableConvertCheck = document.querySelector("#enableConvertCheck");
@@ -907,6 +915,15 @@ function createCivitaiStatsHtml(stats) {
         ? `<button type="button" class="civitai-creator-tag" data-username="${escapeHtml(itemCreator)}" title="${escapeHtml(itemCreator)} の投稿だけに絞り込む">👤 ${escapeHtml(itemCreator)}</button>`
         : `<span></span>`;
 
+      const civitaiPrompt = item.meta?.prompt;
+      if (civitaiPrompt) {
+        civitaiPromptsMap[item.id] = civitaiPrompt;
+      }
+
+      const promptBtnHtml = civitaiPrompt
+        ? `<button type="button" class="ghost-button civitai-prompt-btn" data-id="${item.id}" style="height: 30px; font-size: 11px; padding: 0 8px; color: #fbbf24; border-color: rgba(251, 191, 36, 0.4); display: inline-flex; align-items: center; gap: 3px;" title="生成プロンプトをコピー">📝 ${escapeHtml(dict.civitaiPrompt || "プロンプト")}</button>`
+        : "";
+
       article.innerHTML = `
         <div class="civitai-card-media-wrap" style="position: relative; width: 100%; aspect-ratio: 3 / 4; background: #090a0f; overflow: hidden;">
           <a href="${escapeHtml(directUrl)}" target="_blank" rel="noopener noreferrer" class="civitai-card-media" title="直リンクを表示">
@@ -931,6 +948,7 @@ function createCivitaiStatsHtml(stats) {
             ${createCivitaiStatsHtml(item.stats)}
           </div>
           <div class="civitai-card-actions">
+            ${promptBtnHtml}
             <button type="button" class="ghost-button civitai-copy-btn" data-url="${escapeHtml(directUrl)}" style="flex: 1; height: 30px; font-size: 11px; padding: 0 8px; justify-content: center;">📋 ${escapeHtml(dict.copyUrl || "URLコピー")}</button>
             <a href="${escapeHtml(civitaiPostPageUrl)}" target="_blank" rel="noopener noreferrer" class="ghost-button civitai-post-link" style="height: 30px; font-size: 11px; padding: 0 8px; text-decoration: none; display: inline-flex; align-items: center; justify-content: center;" title="Civitai で投稿の編集・削除・確認を行う">Civitai ↗</a>
           </div>
@@ -1790,6 +1808,97 @@ clearButton?.addEventListener("click", () => {
 
 
 // --- ComfyUI ワークフロー / 生成メタデータ検出ユーティリティ ---
+function parseA1111Parameters(raw) {
+  if (!raw || typeof raw !== "string") return null;
+  const trimmed = raw.trim();
+  const negIndex = trimmed.indexOf("Negative prompt:");
+  const stepsIndex = trimmed.search(/\bSteps:\s*\d+/);
+
+  let prompt = "";
+  let negativePrompt = "";
+  let params = "";
+
+  if (negIndex !== -1) {
+    prompt = trimmed.substring(0, negIndex).trim();
+    if (stepsIndex !== -1 && stepsIndex > negIndex) {
+      negativePrompt = trimmed.substring(negIndex + "Negative prompt:".length, stepsIndex).trim();
+      params = trimmed.substring(stepsIndex).trim();
+    } else {
+      negativePrompt = trimmed.substring(negIndex + "Negative prompt:".length).trim();
+    }
+  } else if (stepsIndex !== -1) {
+    prompt = trimmed.substring(0, stepsIndex).trim();
+    params = trimmed.substring(stepsIndex).trim();
+  } else {
+    prompt = trimmed;
+  }
+
+  return { prompt, negativePrompt, params, raw: trimmed };
+}
+
+function parseComfyPromptJson(rawJson) {
+  if (!rawJson) return null;
+  let obj = null;
+  try {
+    obj = typeof rawJson === "string" ? JSON.parse(rawJson) : rawJson;
+  } catch (e) {
+    return null;
+  }
+  if (!obj || typeof obj !== "object") return null;
+
+  const textNodes = [];
+  for (const k of Object.keys(obj)) {
+    const node = obj[k];
+    if (node && node.inputs && typeof node.inputs.text === "string" && node.inputs.text.trim()) {
+      textNodes.push({
+        type: node.class_type || "CLIPTextEncode",
+        text: node.inputs.text.trim(),
+      });
+    }
+  }
+
+  if (textNodes.length === 0 && Array.isArray(obj.nodes)) {
+    for (const node of obj.nodes) {
+      if (node && Array.isArray(node.widgets_values)) {
+        for (const val of node.widgets_values) {
+          if (typeof val === "string" && val.trim().length > 3 && !val.startsWith("http") && !val.endsWith(".safetensors") && !val.endsWith(".ckpt")) {
+            textNodes.push({
+              type: node.type || "CLIPTextEncode",
+              text: val.trim(),
+            });
+          }
+        }
+      }
+    }
+  }
+
+  if (textNodes.length === 0) return null;
+  const prompt = textNodes[0]?.text || "";
+  const negativePrompt = textNodes.length > 1 ? textNodes[1]?.text : "";
+  return {
+    prompt,
+    negativePrompt,
+    params: `Nodes: ${textNodes.length}`,
+    raw: typeof rawJson === "string" ? rawJson : JSON.stringify(rawJson, null, 2),
+  };
+}
+
+function parseNovelAiComment(raw) {
+  if (!raw) return null;
+  try {
+    const obj = typeof raw === "string" ? JSON.parse(raw) : raw;
+    if (obj && (obj.prompt || obj.uc)) {
+      return {
+        prompt: obj.prompt || "",
+        negativePrompt: obj.uc || "",
+        params: `Steps: ${obj.steps || ""}, Scale: ${obj.scale || ""}, Seed: ${obj.seed || ""}`,
+        raw: typeof raw === "string" ? raw : JSON.stringify(raw),
+      };
+    }
+  } catch (e) {}
+  return null;
+}
+
 async function detectComfyMetadata(file) {
   if (!file) return { hasWorkflow: false, hasPrompt: false, hasA1111: false, type: "none" };
 
@@ -1797,6 +1906,8 @@ async function detectComfyMetadata(file) {
   const isPng = fileName.endsWith(".png") || file.type === "image/png";
   const isMp4 = fileName.endsWith(".mp4") || file.type === "video/mp4";
   const isWebm = fileName.endsWith(".webm") || file.type === "video/webm";
+
+  let promptDetails = null;
 
   try {
     const headSize = Math.min(file.size, 4 * 1024 * 1024);
@@ -1839,11 +1950,26 @@ async function detectComfyMetadata(file) {
                   const text = new TextDecoder("utf-8").decode(chunkData.subarray(nullIndex + 1));
                   const wfJson = JSON.parse(text);
                   if (Array.isArray(wfJson.nodes)) nodeCount = wfJson.nodes.length;
+                  if (!promptDetails) promptDetails = parseComfyPromptJson(wfJson);
                 } catch (e) {}
               } else if (keyword === "prompt") {
                 hasPrompt = true;
+                try {
+                  const text = new TextDecoder("utf-8").decode(chunkData.subarray(nullIndex + 1));
+                  const parsed = parseComfyPromptJson(text);
+                  if (parsed && parsed.prompt) promptDetails = parsed;
+                } catch (e) {}
               } else if (keyword === "parameters") {
                 hasA1111 = true;
+                try {
+                  const text = new TextDecoder("utf-8").decode(chunkData.subarray(nullIndex + 1));
+                  promptDetails = parseA1111Parameters(text);
+                } catch (e) {}
+              } else if (keyword === "Comment") {
+                try {
+                  const text = new TextDecoder("utf-8").decode(chunkData.subarray(nullIndex + 1));
+                  if (!promptDetails) promptDetails = parseNovelAiComment(text);
+                } catch (e) {}
               }
             }
           }
@@ -1851,9 +1977,9 @@ async function detectComfyMetadata(file) {
           offset += chunkLength + 4;
         }
 
-        if (hasWorkflow) return { hasWorkflow: true, hasPrompt, hasA1111, nodeCount, type: "comfy_workflow" };
-        if (hasPrompt) return { hasWorkflow: false, hasPrompt: true, hasA1111, type: "comfy_prompt" };
-        if (hasA1111) return { hasWorkflow: false, hasPrompt: false, hasA1111: true, type: "a1111" };
+        if (hasWorkflow) return { hasWorkflow: true, hasPrompt, hasA1111, nodeCount, type: "comfy_workflow", promptDetails };
+        if (hasPrompt) return { hasWorkflow: false, hasPrompt: true, hasA1111, type: "comfy_prompt", promptDetails };
+        if (hasA1111) return { hasWorkflow: false, hasPrompt: false, hasA1111: true, type: "a1111", promptDetails };
       }
     }
 
@@ -1870,18 +1996,45 @@ async function detectComfyMetadata(file) {
                   (textSample.includes('"workflow"') && textSample.includes('"nodes"'));
     const hasPrompt = (textSample.includes('"inputs"') && textSample.includes('"class_type"')) ||
                       textSample.includes('"client_id"') || textSample.includes('"extra_pnginfo"');
+    const hasA1111 = textSample.includes("Negative prompt:") || textSample.includes("Steps: ");
 
-    if (hasWf) return { hasWorkflow: true, hasPrompt, hasA1111: false, type: "comfy_workflow" };
-    if (hasPrompt) return { hasWorkflow: false, hasPrompt: true, hasA1111: false, type: "comfy_prompt" };
-    if (textSample.includes("Negative prompt:") || textSample.includes("Steps: ")) {
-      return { hasWorkflow: false, hasPrompt: false, hasA1111: true, type: "a1111" };
+    if (!promptDetails) {
+      if (hasA1111) {
+        const m = textSample.match(/([\s\S]+?)(Negative prompt:[\s\S]+?)(Steps:\s*\d+[\s\S]*)/);
+        if (m) {
+          promptDetails = parseA1111Parameters(m[0]);
+        } else {
+          const negIdx = textSample.indexOf("Negative prompt:");
+          if (negIdx !== -1) {
+            const start = Math.max(0, negIdx - 800);
+            promptDetails = parseA1111Parameters(textSample.substring(start, negIdx + 800));
+          }
+        }
+      } else if (textSample.includes('"class_type"') && textSample.includes('"inputs"')) {
+        const startIdx = textSample.indexOf('{"');
+        if (startIdx !== -1) {
+          const endIdx = textSample.lastIndexOf('}');
+          if (endIdx > startIdx) {
+            try {
+              const sub = textSample.substring(startIdx, endIdx + 1);
+              const parsed = parseComfyPromptJson(sub);
+              if (parsed && parsed.prompt) promptDetails = parsed;
+            } catch (e) {}
+          }
+        }
+      }
     }
+
+    if (hasWf) return { hasWorkflow: true, hasPrompt, hasA1111: false, type: "comfy_workflow", promptDetails };
+    if (hasPrompt) return { hasWorkflow: false, hasPrompt: true, hasA1111: false, type: "comfy_prompt", promptDetails };
+    if (hasA1111) return { hasWorkflow: false, hasPrompt: false, hasA1111: true, type: "a1111", promptDetails };
+    if (promptDetails && promptDetails.prompt) return { hasWorkflow: false, hasPrompt: false, hasA1111: false, type: "ai_metadata", promptDetails };
 
   } catch (err) {
     console.warn("Metadata detection error:", err);
   }
 
-  return { hasWorkflow: false, hasPrompt: false, hasA1111: false, type: "none" };
+  return { hasWorkflow: false, hasPrompt: false, hasA1111: false, type: "none", promptDetails };
 }
 
 function createComfyBadgeHtml(file, result) {
@@ -2129,6 +2282,11 @@ function render() {
         ? `<a href="${escapeHtml(targetUrl)}" target="_blank" rel="noopener noreferrer" class="thumb-link" title="表示">${thumbHtml}</a>`
         : thumbHtml;
 
+      const hasPromptDetails = Boolean(file.metaStatus?.promptDetails?.prompt);
+      const promptBtnHtml = hasPromptDetails
+        ? `<button type="button" class="ghost-button copy-prompt-btn" data-index="${index}" style="height: 28px; font-size: 11px; padding: 0 8px; color: #fbbf24; border-color: rgba(251, 191, 36, 0.4); display: inline-flex; align-items: center; gap: 3px;" title="AIプロンプトをコピー">📝 ${escapeHtml(dict.copyPrompt || "プロンプトコピー")}</button>`
+        : "";
+
       item.innerHTML = `
         ${thumbWrapper}
         <div class="item-info-col" style="flex: 1; min-width: 0;">
@@ -2137,12 +2295,23 @@ function render() {
           ${createComfyBadgeHtml(file, result)}
         </div>
         <div class="item-actions-col" style="display: flex; gap: 6px; align-items: center; flex-wrap: wrap;">
+          ${promptBtnHtml}
           ${createCardActionHtml(file, result, index)}
           <button type="button" class="ghost-button delete-button danger-button" data-index="${index}" aria-label="削除" title="一覧から削除" style="min-width: 28px; height: 28px; padding: 0 6px; font-size: 14px; line-height: 1;">&times;</button>
         </div>
       `;
       fileList.append(item);
     });
+
+    const totalPrompts = state.files.filter(f => f.metaStatus?.promptDetails?.prompt).length;
+    if (copyAllPromptsBtn) {
+      if (totalPrompts > 0) {
+        copyAllPromptsBtn.style.display = "inline-flex";
+        copyAllPromptsBtn.textContent = `📝 ${dict.copyAllPrompts || "プロンプト一括コピー"} (${totalPrompts})`;
+      } else {
+        copyAllPromptsBtn.style.display = "none";
+      }
+    }
   }
 }
 
@@ -2188,6 +2357,22 @@ function createCardActionHtml(file, result, index) {
   `;
 }
 
+copyAllPromptsBtn?.addEventListener("click", async () => {
+  const promptList = state.files
+    .filter(f => f?.metaStatus?.promptDetails?.prompt)
+    .map(f => {
+      const p = f.metaStatus.promptDetails;
+      let text = `【${f.name}】\n${p.prompt}`;
+      if (p.negativePrompt) text += `\nNegative prompt: ${p.negativePrompt}`;
+      if (p.params) text += `\n${p.params}`;
+      return text;
+    });
+  if (promptList.length > 0) {
+    const textToCopy = promptList.join("\n\n" + "=".repeat(30) + "\n\n");
+    await copyToClipboard(textToCopy, copyAllPromptsBtn, "📋 全プロンプトコピー完了!");
+  }
+});
+
 // ファイルリストイベント委譲
 fileList?.addEventListener("click", async (event) => {
   const target = event.target;
@@ -2195,6 +2380,18 @@ fileList?.addEventListener("click", async (event) => {
   if (!card) return;
 
   const index = Number(target.dataset.index);
+
+  // 0. プロンプト個別コピーボタン
+  const promptBtn = target.closest(".copy-prompt-btn");
+  if (promptBtn) {
+    const idx = Number(promptBtn.dataset.index);
+    const f = state.files[idx];
+    const p = f?.metaStatus?.promptDetails;
+    if (p && p.prompt) {
+      await copyToClipboard(p.prompt, promptBtn, "📋 コピー完了!");
+    }
+    return;
+  }
 
   // 1. 削除ボタン
   if (target.classList.contains("delete-button")) {
@@ -3155,6 +3352,16 @@ civitaiGalleryList?.addEventListener("click", async (event) => {
       updateCivitaiStatus();
       renderCivitaiUserSelect();
       fetchAndRenderCivitaiGallery();
+    }
+    return;
+  }
+
+  const promptBtn = target.closest(".civitai-prompt-btn");
+  if (promptBtn) {
+    const id = promptBtn.dataset.id;
+    const promptText = civitaiPromptsMap[id];
+    if (promptText) {
+      await copyToClipboard(promptText, promptBtn, "📋 コピー完了!");
     }
     return;
   }
