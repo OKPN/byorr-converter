@@ -871,9 +871,10 @@ function createCivitaiStatsHtml(stats) {
     });
     renderUrlPalette();
 
+    civitaiGalleryList.className = "result-list civitai-grid";
     civitaiGalleryList.innerHTML = "";
     if (items.length === 0) {
-      civitaiGalleryList.innerHTML = `<span class="item-meta" style="padding: 18px;">Civitai に投稿されたメディアが見つかりませんでした。</span>`;
+      civitaiGalleryList.innerHTML = `<span class="item-meta" style="padding: 18px; text-align: center;">Civitai に投稿されたメディアが見つかりませんでした。</span>`;
       return;
     }
 
@@ -882,7 +883,7 @@ function createCivitaiStatsHtml(stats) {
       const lastSeenId = Number(lastSeenMap[itemCreator] || 0);
       const isNewItem = (lastSeenId > 0 && Number(item.id) > lastSeenId);
       const article = document.createElement("article");
-      article.className = "result-item";
+      article.className = "civitai-card";
 
       const isVideo = item.type === "video";
       const directUrl = item.url;
@@ -890,43 +891,63 @@ function createCivitaiStatsHtml(stats) {
 
       let thumbHtml = "";
       if (isVideo) {
-        thumbHtml = `<video class="thumb" src="${escapeHtml(directUrl)}" preload="metadata" muted playsinline style="object-fit: cover; pointer-events: none;"></video>`;
+        thumbHtml = `
+          <video src="${escapeHtml(directUrl)}" preload="metadata" muted playsinline loop style="pointer-events: none;"></video>
+          <div class="civitai-video-play-indicator">▶</div>
+        `;
       } else {
         const previewSrc = directUrl.includes("/original=true/") ? directUrl.replace("/original=true/", "/width=450/") : directUrl;
-        thumbHtml = `<img class="thumb" alt="" src="${escapeHtml(previewSrc)}" loading="lazy">`;
+        thumbHtml = `<img alt="" src="${escapeHtml(previewSrc)}" loading="lazy">`;
       }
 
       const dateStr = item.createdAt ? new Date(item.createdAt).toLocaleDateString() : "";
       const dimensions = item.width && item.height ? `${item.width}×${item.height}` : "";
 
       const creatorTagHtml = itemCreator
-        ? `<button type="button" class="civitai-creator-tag" data-username="${escapeHtml(itemCreator)}" style="font-size: 11px; font-weight: 600; padding: 1px 7px; border-radius: 4px; background: rgba(56, 189, 248, 0.12); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.3); cursor: pointer; display: inline-flex; align-items: center; gap: 3px;" title="${escapeHtml(itemCreator)} の投稿だけに絞り込む">👤 ${escapeHtml(itemCreator)}</button>`
-        : "";
+        ? `<button type="button" class="civitai-creator-tag" data-username="${escapeHtml(itemCreator)}" title="${escapeHtml(itemCreator)} の投稿だけに絞り込む">👤 ${escapeHtml(itemCreator)}</button>`
+        : `<span></span>`;
 
       article.innerHTML = `
-        <a href="${escapeHtml(directUrl)}" target="_blank" rel="noopener noreferrer" class="thumb-link" title="直リンクを表示">
-          ${thumbHtml}
-        </a>
-        <div class="item-info-container" style="flex: 1; min-width: 0;">
-          <div class="item-name-row" style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap;">
-            <span class="item-name" style="font-weight: 600; font-size: 12px; font-family: monospace;">ID: ${escapeHtml(String(item.id))}</span>
+        <div class="civitai-card-media-wrap" style="position: relative; width: 100%; aspect-ratio: 3 / 4; background: #090a0f; overflow: hidden;">
+          <a href="${escapeHtml(directUrl)}" target="_blank" rel="noopener noreferrer" class="civitai-card-media" title="直リンクを表示">
+            ${thumbHtml}
+          </a>
+          <div class="civitai-card-overlay-top">
             ${creatorTagHtml}
-            ${isNewItem ? `<span class="civitai-new-item-badge" style="font-size: 10px; padding: 1px 6px; border-radius: 4px; background: rgba(239, 68, 68, 0.2); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.4); font-weight: bold;">✨ NEW</span>` : ""}
-            <span class="format-badge" style="font-size: 10px; padding: 1px 5px; border-radius: 4px; background: rgba(56, 189, 248, 0.15); color: #38bdf8;">${isVideo ? "🎬 VIDEO" : "🖼️ IMAGE"}</span>
-            <span class="civitai-wf-badge-placeholder" data-id="${item.id}"></span>
-            ${item.nsfwLevel && item.nsfwLevel !== "None" ? `<span style="font-size: 10px; padding: 1px 5px; border-radius: 4px; background: rgba(244, 63, 94, 0.15); color: #f43f5e; font-weight: bold;">${escapeHtml(item.nsfwLevel)}</span>` : ""}
-            ${dimensions ? `<span style="color: #64748b; font-size: 11px;">${escapeHtml(dimensions)}</span>` : ""}
+            <div class="civitai-card-badges-col">
+              ${isNewItem ? `<span class="civitai-new-item-badge" style="font-size: 10px; padding: 2px 6px; border-radius: 4px; background: rgba(239, 68, 68, 0.9); backdrop-filter: blur(4px); color: #fff; border: 1px solid rgba(239, 68, 68, 0.5); font-weight: bold; box-shadow: 0 2px 4px rgba(0,0,0,0.3);">✨ NEW</span>` : ""}
+              ${isVideo ? `<span style="font-size: 10px; padding: 2px 6px; border-radius: 4px; background: rgba(14, 165, 233, 0.9); backdrop-filter: blur(4px); color: #fff; font-weight: bold; box-shadow: 0 2px 4px rgba(0,0,0,0.3);">🎬 VIDEO</span>` : ""}
+              <span class="civitai-wf-badge-placeholder" data-id="${item.id}"></span>
+              ${item.nsfwLevel && item.nsfwLevel !== "None" ? `<span style="font-size: 10px; padding: 2px 6px; border-radius: 4px; background: rgba(244, 63, 94, 0.9); backdrop-filter: blur(4px); color: #fff; font-weight: bold; box-shadow: 0 2px 4px rgba(0,0,0,0.3);">${escapeHtml(item.nsfwLevel)}</span>` : ""}
+            </div>
           </div>
-          <div class="item-meta" style="color: var(--muted); margin-top: 4px; font-size: 11px;">
-            投稿日: ${escapeHtml(dateStr)} · <a href="${escapeHtml(civitaiPostPageUrl)}" target="_blank" rel="noopener noreferrer" style="color: #818cf8; text-decoration: none;">Civitai 投稿ページ ↗</a>
-          </div>
-          ${createCivitaiStatsHtml(item.stats)}
         </div>
-        <div class="result-actions" style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
-          <button type="button" class="ghost-button civitai-copy-btn" data-url="${escapeHtml(directUrl)}">${escapeHtml(dict.copyUrl || "URLコピー")}</button>
-          <a href="${escapeHtml(civitaiPostPageUrl)}" target="_blank" rel="noopener noreferrer" class="ghost-button" style="font-size: 11px; padding: 4px 8px; text-decoration: none; color: #f43f5e; border-color: rgba(244, 63, 94, 0.3); display: inline-flex; align-items: center; justify-content: center;" title="Civitai で投稿の編集・削除を行う">🗑️ 削除/確認 ↗</a>
+        <div class="civitai-card-body">
+          <div class="civitai-card-meta-row">
+            <span class="item-id">#${escapeHtml(String(item.id))}</span>
+            <span style="font-size: 10.5px;">${escapeHtml(dateStr)} ${dimensions ? `· ${escapeHtml(dimensions)}` : ""}</span>
+          </div>
+          <div class="civitai-card-stats">
+            ${createCivitaiStatsHtml(item.stats)}
+          </div>
+          <div class="civitai-card-actions">
+            <button type="button" class="ghost-button civitai-copy-btn" data-url="${escapeHtml(directUrl)}" style="flex: 1; height: 30px; font-size: 11px; padding: 0 8px; justify-content: center;">📋 ${escapeHtml(dict.copyUrl || "URLコピー")}</button>
+            <a href="${escapeHtml(civitaiPostPageUrl)}" target="_blank" rel="noopener noreferrer" class="ghost-button civitai-post-link" style="height: 30px; font-size: 11px; padding: 0 8px; text-decoration: none; display: inline-flex; align-items: center; justify-content: center;" title="Civitai で投稿の編集・削除・確認を行う">Civitai ↗</a>
+          </div>
         </div>
       `;
+
+      if (isVideo) {
+        const videoEl = article.querySelector("video");
+        if (videoEl) {
+          article.addEventListener("mouseenter", () => {
+            videoEl.play().catch(() => {});
+          });
+          article.addEventListener("mouseleave", () => {
+            videoEl.pause();
+          });
+        }
+      }
 
       civitaiGalleryList.append(article);
 
@@ -934,7 +955,7 @@ function createCivitaiStatsHtml(stats) {
         if (hasWf) {
           const badgePlaceholder = article.querySelector('.civitai-wf-badge-placeholder');
           if (badgePlaceholder) {
-            badgePlaceholder.innerHTML = '<span class="meta-badge" style="background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.4); font-size: 10px; padding: 1px 6px; border-radius: 4px; font-weight: 600;" title="ComfyUIワークフローが完全な形で含まれています。">🧬 ワークフローあり</span>';
+            badgePlaceholder.innerHTML = '<span class="meta-badge" style="background: rgba(16, 185, 129, 0.9); backdrop-filter: blur(4px); color: #fff; border: 1px solid rgba(16, 185, 129, 0.6); font-size: 9.5px; padding: 2px 6px; border-radius: 4px; font-weight: 600; box-shadow: 0 2px 4px rgba(0,0,0,0.3);" title="ComfyUIワークフローが完全な形で含まれています。">🧬 WF</span>';
           }
         }
       });
@@ -3138,12 +3159,13 @@ civitaiGalleryList?.addEventListener("click", async (event) => {
     return;
   }
 
-  if (target.classList.contains("civitai-copy-btn")) {
-    const rawUrl = target.dataset.url;
+  const copyBtn = target.closest(".civitai-copy-btn");
+  if (copyBtn) {
+    const rawUrl = copyBtn.dataset.url;
     if (!rawUrl) return;
 
     try {
-      target.textContent = "解決中...";
+      copyBtn.textContent = "解決中...";
       let finalUrl = rawUrl;
       try {
         const res = await fetch(rawUrl);
@@ -3152,11 +3174,11 @@ civitaiGalleryList?.addEventListener("click", async (event) => {
         // CORS等で直接fetchできない場合はそのままrawUrlを使用
       }
 
-      target.dataset.url = finalUrl;
-      await copyToClipboard(finalUrl, target);
+      copyBtn.dataset.url = finalUrl;
+      await copyToClipboard(finalUrl, copyBtn, "📋 URLコピー");
     } catch (err) {
       console.warn("Failed to copy civitai url:", err);
-      await copyToClipboard(rawUrl, target);
+      await copyToClipboard(rawUrl, copyBtn, "📋 URLコピー");
     }
   }
 });
