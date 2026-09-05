@@ -1836,29 +1836,127 @@ function parseA1111Parameters(raw) {
   return { prompt, negativePrompt, params, raw: trimmed };
 }
 
+function unescapeJsonString(str) {
+  if (!str) return "";
+  try {
+    return JSON.parse(`"${str}"`);
+  } catch (e) {
+    return str.replace(/\\n/g, "\n").replace(/\\r/g, "\r").replace(/\\"/g, '"').replace(/\\\\/g, "\\");
+  }
+}
+
+function extractPromptsFromRawText(text) {
+  if (!text || typeof text !== "string") return null;
+
+  const candidates = [];
+
+  // 1. inputs 内の text / prompt / positive / caption
+  const inputMatches = text.matchAll(/"inputs"\s*:\s*\{[^}]*?"(?:text|prompt|positive|text_positive|caption)"\s*:\s*"((?:[^"\\]|\\.)*)"/gi);
+  for (const m of inputMatches) {
+    const val = unescapeJsonString(m[1]).trim();
+    if (val.length >= 3 && !candidates.includes(val)) {
+      candidates.push(val);
+    }
+  }
+
+  // 2. widgets_values 内の文字列 (UI workflow形式)
+  const widgetMatches = text.matchAll(/"widgets_values"\s*:\s*\[\s*"((?:[^"\\]|\\.)*)"/gi);
+  for (const m of widgetMatches) {
+    const val = unescapeJsonString(m[1]).trim();
+    if (val.length >= 3 && !candidates.includes(val) && !val.endsWith(".safetensors") && !val.endsWith(".ckpt")) {
+      candidates.push(val);
+    }
+  }
+
+  // 3. 一般的な "text": "..." や "prompt": "..."
+  const generalMatches = text.matchAll(/"(?:text|positive_prompt|positive|prompt)"\s*:\s*"((?:[^"\\]|\\.)*)"/gi);
+  for (const m of generalMatches) {
+    const val = unescapeJsonString(m[1]).trim();
+    if (val.length >= 5 && 
+        !val.startsWith("http") && 
+        !val.endsWith(".safetensors") && 
+        !val.endsWith(".ckpt") && 
+        !val.endsWith(".pt") && 
+        !val.endsWith(".png") && 
+        !val.endsWith(".mp4") &&
+        !candidates.includes(val)) {
+      candidates.push(val);
+    }
+  }
+
+  if (candidates.length === 0) return null;
+
+  const negKeywords = ["low quality", "worst quality", "blurry", "bad anatomy", "watermark", "deformed", "ugly"];
+  const positives = [];
+  const negatives = [];
+
+  for (const c of candidates) {
+    const lower = c.toLowerCase();
+    const isNeg = negKeywords.some(k => lower.includes(k)) || lower.startsWith("negative") || lower.includes("embedding:");
+    if (isNeg) {
+      negatives.push(c);
+    } else {
+      positives.push(c);
+    }
+  }
+
+  let prompt = "";
+  let negativePrompt = "";
+
+  if (positives.length > 0) {
+    positives.sort((a, b) => b.length - a.length);
+    prompt = positives[0];
+    if (negatives.length > 0) {
+      negativePrompt = negatives[0];
+    } else if (positives.length > 1) {
+      negativePrompt = positives[1];
+    }
+  } else {
+    prompt = candidates[0];
+    if (candidates.length > 1) negativePrompt = candidates[1];
+  }
+
+  return {
+    prompt,
+    negativePrompt,
+    params: `Extracted ${candidates.length} candidate(s)`,
+    raw: text.slice(0, 5000),
+  };
+}
+
 function parseComfyPromptJson(rawJson) {
   if (!rawJson) return null;
   let obj = null;
   try {
     obj = typeof rawJson === "string" ? JSON.parse(rawJson) : rawJson;
   } catch (e) {
+    if (typeof rawJson === "string") {
+      return extractPromptsFromRawText(rawJson);
+    }
     return null;
   }
   if (!obj || typeof obj !== "object") return null;
 
+  // { prompt: { ... }, workflow: { ... } } などのラッパー対応
+  const targetObj = (obj.prompt && typeof obj.prompt === "object") ? obj.prompt : obj;
+
   const textNodes = [];
-  for (const k of Object.keys(obj)) {
-    const node = obj[k];
-    if (node && node.inputs && typeof node.inputs.text === "string" && node.inputs.text.trim()) {
-      textNodes.push({
-        type: node.class_type || "CLIPTextEncode",
-        text: node.inputs.text.trim(),
-      });
+  for (const k of Object.keys(targetObj)) {
+    const node = targetObj[k];
+    if (node && node.inputs) {
+      const val = node.inputs.text || node.inputs.prompt || node.inputs.positive || node.inputs.text_positive || node.inputs.caption;
+      if (typeof val === "string" && val.trim().length >= 3) {
+        textNodes.push({
+          type: node.class_type || "CLIPTextEncode",
+          text: val.trim(),
+        });
+      }
     }
   }
 
-  if (textNodes.length === 0 && Array.isArray(obj.nodes)) {
-    for (const node of obj.nodes) {
+  const wfObj = (obj.workflow && typeof obj.workflow === "object") ? obj.workflow : obj;
+  if (textNodes.length === 0 && Array.isArray(wfObj.nodes)) {
+    for (const node of wfObj.nodes) {
       if (node && Array.isArray(node.widgets_values)) {
         for (const val of node.widgets_values) {
           if (typeof val === "string" && val.trim().length > 3 && !val.startsWith("http") && !val.endsWith(".safetensors") && !val.endsWith(".ckpt")) {
@@ -1872,7 +1970,10 @@ function parseComfyPromptJson(rawJson) {
     }
   }
 
-  if (textNodes.length === 0) return null;
+  if (textNodes.length === 0) {
+    return extractPromptsFromRawText(JSON.stringify(obj));
+  }
+
   const prompt = textNodes[0]?.text || "";
   const negativePrompt = textNodes.length > 1 ? textNodes[1]?.text : "";
   return {
@@ -1910,7 +2011,9 @@ async function detectComfyMetadata(file) {
   let promptDetails = null;
 
   try {
-    const headSize = Math.min(file.size, 4 * 1024 * 1024);
+    // 1. 先頭領域（10MB以下の動画クリップは全体、それ以外は先頭 5MB）
+    const isSmallVideo = (isMp4 || isWebm) && file.size <= 10 * 1024 * 1024;
+    const headSize = isSmallVideo ? file.size : Math.min(file.size, 5 * 1024 * 1024);
     const headBuffer = await file.slice(0, headSize).arrayBuffer();
 
     if (isPng) {
@@ -1983,19 +2086,22 @@ async function detectComfyMetadata(file) {
       }
     }
 
+    // 2. テキスト判定
     let textSample = new TextDecoder("utf-8", { fatal: false }).decode(new Uint8Array(headBuffer));
 
+    // 3. 動画（MP4 / WebM）で 10MB 超の場合、末尾（moov atom）も読み込む
     if ((isMp4 || isWebm) && file.size > headSize) {
-      const tailSize = Math.min(file.size, 3 * 1024 * 1024);
+      const tailSize = Math.min(file.size, 5 * 1024 * 1024);
       const tailBuffer = await file.slice(file.size - tailSize).arrayBuffer();
       const tailText = new TextDecoder("utf-8", { fatal: false }).decode(new Uint8Array(tailBuffer));
       textSample = textSample + "\n" + tailText;
     }
 
+    // 判定ロジック（ComfyUI-VideoHelperSuite / VHS 形式対応 & 汎用プロンプト検出）
     const hasWf = (textSample.includes('"nodes"') && textSample.includes('"links"')) ||
                   (textSample.includes('"workflow"') && textSample.includes('"nodes"'));
-    const hasPrompt = (textSample.includes('"inputs"') && textSample.includes('"class_type"')) ||
-                      textSample.includes('"client_id"') || textSample.includes('"extra_pnginfo"');
+    let hasPrompt = (textSample.includes('"inputs"') && (textSample.includes('"class_type"') || textSample.includes('"text"'))) ||
+                    textSample.includes('"client_id"') || textSample.includes('"extra_pnginfo"');
     const hasA1111 = textSample.includes("Negative prompt:") || textSample.includes("Steps: ");
 
     if (!promptDetails) {
@@ -2010,31 +2116,27 @@ async function detectComfyMetadata(file) {
             promptDetails = parseA1111Parameters(textSample.substring(start, negIdx + 800));
           }
         }
-      } else if (textSample.includes('"class_type"') && textSample.includes('"inputs"')) {
-        const startIdx = textSample.indexOf('{"');
-        if (startIdx !== -1) {
-          const endIdx = textSample.lastIndexOf('}');
-          if (endIdx > startIdx) {
-            try {
-              const sub = textSample.substring(startIdx, endIdx + 1);
-              const parsed = parseComfyPromptJson(sub);
-              if (parsed && parsed.prompt) promptDetails = parsed;
-            } catch (e) {}
-          }
-        }
+      }
+
+      if (!promptDetails) {
+        promptDetails = extractPromptsFromRawText(textSample);
       }
     }
 
-    if (hasWf) return { hasWorkflow: true, hasPrompt, hasA1111: false, type: "comfy_workflow", promptDetails };
+    if (promptDetails && promptDetails.prompt) {
+      hasPrompt = true;
+    }
+
+    if (hasWf) return { hasWorkflow: true, hasPrompt: true, hasA1111: false, type: "comfy_workflow", promptDetails };
     if (hasPrompt) return { hasWorkflow: false, hasPrompt: true, hasA1111: false, type: "comfy_prompt", promptDetails };
     if (hasA1111) return { hasWorkflow: false, hasPrompt: false, hasA1111: true, type: "a1111", promptDetails };
-    if (promptDetails && promptDetails.prompt) return { hasWorkflow: false, hasPrompt: false, hasA1111: false, type: "ai_metadata", promptDetails };
+    if (promptDetails && promptDetails.prompt) return { hasWorkflow: false, hasPrompt: true, hasA1111: false, type: "ai_metadata", promptDetails };
 
   } catch (err) {
     console.warn("Metadata detection error:", err);
   }
 
-  return { hasWorkflow: false, hasPrompt: false, hasA1111: false, type: "none", promptDetails };
+  return { hasWorkflow: false, hasPrompt: Boolean(promptDetails?.prompt), hasA1111: false, type: promptDetails ? "comfy_prompt" : "none", promptDetails };
 }
 
 function createComfyBadgeHtml(file, result) {
@@ -2388,7 +2490,9 @@ fileList?.addEventListener("click", async (event) => {
     const f = state.files[idx];
     const p = f?.metaStatus?.promptDetails;
     if (p && p.prompt) {
-      await copyToClipboard(p.prompt, promptBtn, "📋 コピー完了!");
+      let copyText = p.prompt;
+      if (p.negativePrompt) copyText += `\nNegative prompt: ${p.negativePrompt}`;
+      await copyToClipboard(copyText, promptBtn, "📋 コピー完了!");
     }
     return;
   }
