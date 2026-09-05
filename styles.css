@@ -868,4 +868,29 @@ input[type="range"] {
     align-items: center !important;
     justify-content: center !important;
   }
+
+  /* R2ストレージパネルのヘッダーのスマホ配置対策 */
+  .r2-files-panel .panel-heading {
+    flex-wrap: wrap;
+    gap: 12px;
+    align-items: center;
+  }
+
+  .r2-files-panel .panel-heading h2 {
+    order: 1;
+    margin: 0;
+    font-size: 15px;
+  }
+
+  .r2-files-panel .r2-heading-actions {
+    order: 2;
+    margin-left: auto !important;
+  }
+
+  .r2-files-panel .storage-usage {
+    order: 3;
+    width: 100%;
+    margin: 4px 0 0 0 !important;
+    align-items: flex-start;
+  }
 }
