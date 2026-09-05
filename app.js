@@ -1839,54 +1839,83 @@ function parseA1111Parameters(raw) {
 function unescapeJsonString(str) {
   if (!str) return "";
   try {
-    return JSON.parse(`"${str}"`);
+    const sanitized = str.replace(/[\u0000-\u001f]/g, (c) => {
+      if (c === "\n") return "\\n";
+      if (c === "\r") return "\\r";
+      if (c === "\t") return "\\t";
+      return "\\u" + c.charCodeAt(0).toString(16).padStart(4, "0");
+    });
+    return JSON.parse(`"${sanitized}"`);
   } catch (e) {
-    return str.replace(/\\n/g, "\n").replace(/\\r/g, "\r").replace(/\\"/g, '"').replace(/\\\\/g, "\\");
+    return str
+      .replace(/\\u([0-9a-fA-F]{4})/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)))
+      .replace(/\\n/g, "\n")
+      .replace(/\\r/g, "\r")
+      .replace(/\\t/g, "\t")
+      .replace(/\\"/g, '"')
+      .replace(/\\\\/g, "\\");
   }
+}
+
+const EXCLUDE_WORDS = new Set([
+  "true", "false", "null", "undefined", "none", "fixed", "increment",
+  "decrement", "randomize", "auto", "enable", "disable", "cpu", "gpu", "cuda",
+  "euler", "euler_ancestral", "heun", "dpm_2", "karras", "exponential",
+  "normal", "simple", "ddim", "uni_pc"
+]);
+
+function isExcludedString(s) {
+  if (!s || s.length < 3) return true;
+  const lower = s.toLowerCase().trim();
+  if (EXCLUDE_WORDS.has(lower)) return true;
+  if (/^https?:\/\//i.test(lower)) return true;
+  if (/\.(safetensors|ckpt|pt|bin|pth|onnx|engine|yaml|json|png|jpg|jpeg|webp|mp4|webm|gif|mov)$/i.test(lower)) return true;
+  if (/^[\d\s.,_-]+$/.test(lower)) return true;
+  return false;
 }
 
 function extractPromptsFromRawText(text) {
   if (!text || typeof text !== "string") return null;
 
+  // AI関連キーワードが一切ない場合は重い走査をスキップ（高速化）
+  const hasAiHint = text.includes('"inputs"') || 
+                    text.includes('"class_type"') || 
+                    text.includes('"prompt"') || 
+                    text.includes('"workflow"') || 
+                    text.includes('"nodes"') ||
+                    text.includes('"widgets_values"') ||
+                    text.includes('Negative prompt:') ||
+                    text.includes('Steps:');
+  if (!hasAiHint) return null;
+
   const candidates = [];
 
-  // 1. inputs 内の text / prompt / positive / caption
-  const inputMatches = text.matchAll(/"inputs"\s*:\s*\{[^}]*?"(?:text|prompt|positive|text_positive|caption)"\s*:\s*"((?:[^"\\]|\\.)*)"/gi);
-  for (const m of inputMatches) {
-    const val = unescapeJsonString(m[1]).trim();
-    if (val.length >= 3 && !candidates.includes(val)) {
+  const addCandidate = (rawVal) => {
+    const val = unescapeJsonString(rawVal).trim();
+    if (!isExcludedString(val) && !candidates.includes(val)) {
       candidates.push(val);
+    }
+  };
+
+  // 1. "widgets_values": [...] の配列内を走査 (UI workflow形式)
+  const widgetArrayMatches = text.matchAll(/"widgets_values"\s*:\s*\[([\s\S]*?)\]/gi);
+  for (const m of widgetArrayMatches) {
+    const arrayContent = m[1];
+    const stringMatches = arrayContent.matchAll(/"((?:[^"\\]|\\.)*)"/gi);
+    for (const sm of stringMatches) {
+      addCandidate(sm[1]);
     }
   }
 
-  // 2. widgets_values 内の文字列 (UI workflow形式)
-  const widgetMatches = text.matchAll(/"widgets_values"\s*:\s*\[\s*"((?:[^"\\]|\\.)*)"/gi);
-  for (const m of widgetMatches) {
-    const val = unescapeJsonString(m[1]).trim();
-    if (val.length >= 3 && !candidates.includes(val) && !val.endsWith(".safetensors") && !val.endsWith(".ckpt")) {
-      candidates.push(val);
-    }
-  }
-
-  // 3. 一般的な "text": "..." や "prompt": "..."
-  const generalMatches = text.matchAll(/"(?:text|positive_prompt|positive|prompt)"\s*:\s*"((?:[^"\\]|\\.)*)"/gi);
-  for (const m of generalMatches) {
-    const val = unescapeJsonString(m[1]).trim();
-    if (val.length >= 5 && 
-        !val.startsWith("http") && 
-        !val.endsWith(".safetensors") && 
-        !val.endsWith(".ckpt") && 
-        !val.endsWith(".pt") && 
-        !val.endsWith(".png") && 
-        !val.endsWith(".mp4") &&
-        !candidates.includes(val)) {
-      candidates.push(val);
-    }
+  // 2. キー名による抽出 ("text", "prompt", "positive", "caption", "text_positive", etc.)
+  const keyMatches = text.matchAll(/"(?:text|prompt|positive|text_positive|caption|prompt_text)"\s*:\s*"((?:[^"\\]|\\.)*)"/gi);
+  for (const m of keyMatches) {
+    addCandidate(m[1]);
   }
 
   if (candidates.length === 0) return null;
 
-  const negKeywords = ["low quality", "worst quality", "blurry", "bad anatomy", "watermark", "deformed", "ugly"];
+  const negKeywords = ["low quality", "worst quality", "blurry", "bad anatomy", "watermark", "deformed", "ugly", "nsfw", "lowres", "bad hands", "error", "missing fingers"];
   const positives = [];
   const negatives = [];
 
@@ -1945,7 +1974,7 @@ function parseComfyPromptJson(rawJson) {
     const node = targetObj[k];
     if (node && node.inputs) {
       const val = node.inputs.text || node.inputs.prompt || node.inputs.positive || node.inputs.text_positive || node.inputs.caption;
-      if (typeof val === "string" && val.trim().length >= 3) {
+      if (typeof val === "string" && !isExcludedString(val)) {
         textNodes.push({
           type: node.class_type || "CLIPTextEncode",
           text: val.trim(),
@@ -1959,7 +1988,7 @@ function parseComfyPromptJson(rawJson) {
     for (const node of wfObj.nodes) {
       if (node && Array.isArray(node.widgets_values)) {
         for (const val of node.widgets_values) {
-          if (typeof val === "string" && val.trim().length > 3 && !val.startsWith("http") && !val.endsWith(".safetensors") && !val.endsWith(".ckpt")) {
+          if (typeof val === "string" && !isExcludedString(val)) {
             textNodes.push({
               type: node.type || "CLIPTextEncode",
               text: val.trim(),
