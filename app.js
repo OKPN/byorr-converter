@@ -727,6 +727,36 @@ async function fetchAndRenderCivitaiGallery() {
   const username = getCurrentCivitaiUser();
   if (!civitaiGalleryList) return;
 
+function createCivitaiStatsHtml(stats) {
+  if (!stats) return "";
+  const hearts = stats.heartCount || 0;
+  const likes = stats.likeCount || 0;
+  const laughs = stats.laughCount || 0;
+  const cries = stats.cryCount || 0;
+  const comments = stats.commentCount || 0;
+  const total = hearts + likes + laughs + cries + comments;
+  if (total === 0) return "";
+
+  const badges = [];
+  if (hearts > 0) {
+    badges.push(`<span style="display: inline-flex; align-items: center; gap: 3px; color: #f43f5e; background: rgba(244, 63, 94, 0.12); padding: 1px 6px; border-radius: 10px; border: 1px solid rgba(244, 63, 94, 0.25); font-size: 10.5px;" title="ハート: ${hearts}">❤️ <strong>${hearts.toLocaleString()}</strong></span>`);
+  }
+  if (likes > 0) {
+    badges.push(`<span style="display: inline-flex; align-items: center; gap: 3px; color: #38bdf8; background: rgba(56, 189, 248, 0.12); padding: 1px 6px; border-radius: 10px; border: 1px solid rgba(56, 189, 248, 0.25); font-size: 10.5px;" title="いいね: ${likes}">👍 <strong>${likes.toLocaleString()}</strong></span>`);
+  }
+  if (laughs > 0) {
+    badges.push(`<span style="display: inline-flex; align-items: center; gap: 3px; color: #fbbf24; background: rgba(251, 191, 36, 0.12); padding: 1px 6px; border-radius: 10px; border: 1px solid rgba(251, 191, 36, 0.25); font-size: 10.5px;" title="笑い: ${laughs}">😂 <strong>${laughs.toLocaleString()}</strong></span>`);
+  }
+  if (cries > 0) {
+    badges.push(`<span style="display: inline-flex; align-items: center; gap: 3px; color: #94a3b8; background: rgba(148, 163, 184, 0.12); padding: 1px 6px; border-radius: 10px; border: 1px solid rgba(148, 163, 184, 0.25); font-size: 10.5px;" title="泣き: ${cries}">😢 <strong>${cries.toLocaleString()}</strong></span>`);
+  }
+  if (comments > 0) {
+    badges.push(`<span style="display: inline-flex; align-items: center; gap: 3px; color: #a78bfa; background: rgba(167, 139, 250, 0.12); padding: 1px 6px; border-radius: 10px; border: 1px solid rgba(167, 139, 250, 0.25); font-size: 10.5px;" title="コメント: ${comments}">💬 <strong>${comments.toLocaleString()}</strong></span>`);
+  }
+
+  return `<div class="civitai-stats-row" style="display: flex; gap: 6px; align-items: center; margin-top: 5px; flex-wrap: wrap;">${badges.join("")}</div>`;
+}
+
   const lang = getAppLanguage();
   const dict = i18nDict[lang] || i18nDict.ja;
 
@@ -837,6 +867,7 @@ async function fetchAndRenderCivitaiGallery() {
           <div class="item-meta" style="color: var(--muted); margin-top: 4px; font-size: 11px;">
             投稿日: ${escapeHtml(dateStr)} · <a href="${escapeHtml(civitaiPostPageUrl)}" target="_blank" rel="noopener noreferrer" style="color: #818cf8; text-decoration: none;">Civitai 投稿ページ ↗</a>
           </div>
+          ${createCivitaiStatsHtml(item.stats)}
         </div>
         <div class="result-actions" style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
           <button type="button" class="ghost-button civitai-copy-btn" data-url="${escapeHtml(directUrl)}">${escapeHtml(dict.copyUrl || "URLコピー")}</button>
