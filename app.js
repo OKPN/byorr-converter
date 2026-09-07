@@ -36,7 +36,7 @@ const i18nDict = {
     whatIsSiteBody: `外部サーバやWorkerを一切介さず、お使いのブラウザ内だけで画像をセキュアに変換し、ご自身の Cloudflare R2 ストレージ（S3互換）にダイレクト保存・配信できるローカル＆R2専用ツールです。<br><span style="display: inline-block; margin-top: 6px; font-size: 12px; color: #a5b4fc;">※接続情報は全てお使いのブラウザ内（localStorage）にのみセキュア保存されます。</span>`,
     inputFiles: "入力ファイル",
     addFolder: "フォルダを追加",
-    dropText: "画像やフォルダをここにドロップ",
+    dropText: "ファイルやフォルダをここにドロップ",
     orClick: "またはクリックしてファイルを選択",
     settings: "設定",
     enableConvertLabel: "画像を変換する",
@@ -184,7 +184,7 @@ const i18nDict = {
     `,
     inputFiles: "Input Files",
     addFolder: "Add Folder",
-    dropText: "Drop images or folders here",
+    dropText: "Drop files or folders here",
     orClick: "or click to select files",
     settings: "Settings",
     enableConvertLabel: "Convert Images",
@@ -296,6 +296,51 @@ const extensions = {
   "image/jxl": "jxl",
   "image/jpeg": "jpg",
   "image/png": "png",
+};
+
+// MIME タイプの判定
+const getContentTypeFromFilename = (filename, fallback = "application/octet-stream") => {
+  const ext = filename.split(".").pop().toLowerCase();
+  const mimeTypes = {
+    // 画像
+    jpg: "image/jpeg",
+    jpeg: "image/jpeg",
+    png: "image/png",
+    webp: "image/webp",
+    gif: "image/gif",
+    svg: "image/svg+xml",
+    jxl: "image/jxl",
+    avif: "image/avif",
+    bmp: "image/bmp",
+    ico: "image/x-icon",
+    // 動画
+    mp4: "video/mp4",
+    webm: "video/webm",
+    mov: "video/quicktime",
+    m4v: "video/mp4",
+    avi: "video/x-msvideo",
+    ogv: "video/ogg",
+    // 音声
+    mp3: "audio/mpeg",
+    wav: "audio/wav",
+    ogg: "audio/ogg",
+    m4a: "audio/mp4",
+    flac: "audio/flac",
+    aac: "audio/aac",
+    // 圧縮アーカイブ
+    zip: "application/zip",
+    "7z": "application/x-7z-compressed",
+    rar: "application/vnd.rar",
+    tar: "application/x-tar",
+    gz: "application/gzip",
+    // 文書・テキスト
+    pdf: "application/pdf",
+    txt: "text/plain; charset=utf-8",
+    md: "text/markdown; charset=utf-8",
+    json: "application/json; charset=utf-8",
+    csv: "text/csv; charset=utf-8",
+  };
+  return mimeTypes[ext] || fallback;
 };
 
 const defaultTemplates = {
@@ -2254,25 +2299,68 @@ async function checkRemoteFileWf(key, publicUrl) {
   return false;
 }
 
+// 許可する拡張子一覧
+const ALLOWED_EXT_LIST = new Set([
+  // 画像
+  "jpg", "jpeg", "png", "webp", "gif", "avif", "jxl", "bmp", "ico", "svg",
+  // 動画
+  "mp4", "webm", "ogv", "mov", "m4v", "avi",
+  // 音声
+  "mp3", "wav", "ogg", "m4a", "flac", "aac",
+  // 圧縮アーカイブ
+  "zip", "7z", "rar", "tar", "gz",
+  // 文書・テキスト
+  "pdf", "txt", "md", "json", "csv",
+]);
+
+// 危険な実行ファイル・スクリプト（明確に除外）
+const BLOCKED_EXT_LIST = new Set([
+  "exe", "bat", "cmd", "ps1", "sh", "msi", "com", "vbs", "html", "htm", "js", "mjs", "cjs", "php", "py"
+]);
+
+function isFileAcceptable(file) {
+  const ext = file.name.includes(".") ? file.name.split(".").pop().toLowerCase() : "";
+  if (BLOCKED_EXT_LIST.has(ext)) return false;
+  if (ALLOWED_EXT_LIST.has(ext)) return true;
+  if (file.type && (file.type.startsWith("image/") || file.type.startsWith("audio/") || file.type.startsWith("video/"))) {
+    return true;
+  }
+  return false;
+}
+
 function addFiles(files) {
+  let blockedCount = 0;
   const allowed = files.filter((file) => {
-    return file.type.startsWith("image/") || 
-           file.type.startsWith("audio/") || 
-           file.type.startsWith("video/") ||
-           file.name.endsWith(".mp3") ||
-           file.name.endsWith(".mp4");
+    const ok = isFileAcceptable(file);
+    if (!ok) blockedCount++;
+    return ok;
   });
+
+  if (blockedCount > 0) {
+    alert(`⚠️ 実行ファイルやスクリプトなどの危険なファイル形式（${blockedCount}件）は除外されました。`);
+  }
+
   state.files.push(...allowed);
-
-  // 🧬 ファイル追加時に非同期で ComfyUI メタデータを自動解析
-  allowed.forEach(f => {
-    detectComfyMetadata(f).then(meta => {
-      f.metaStatus = meta;
-      render();
-    });
-  });
-
+  invalidateConversionCache();
   render();
+
+  // 🧬 ファイル追加時に非同期で ComfyUI メタデータを自動解析（画像ファイルのみ）
+  allowed.forEach(f => {
+    const ext = f.name.includes(".") ? f.name.split(".").pop().toLowerCase() : "";
+    const isImage = (f.type && f.type.startsWith("image/")) || ["jpg", "jpeg", "png", "webp", "avif", "jxl"].includes(ext);
+    if (isImage) {
+      detectComfyMetadata(f).then(meta => {
+        f.metaStatus = meta;
+        render();
+      }).catch(err => {
+        console.warn("Meta parse error:", err);
+        f.metaStatus = { hasWorkflow: false, type: "none" };
+        render();
+      });
+    } else {
+      f.metaStatus = { hasWorkflow: false, type: "none" };
+    }
+  });
 }
 
 function setUiLock(locked) {
@@ -2370,77 +2458,81 @@ function render() {
     const dict = i18nDict[lang] || i18nDict.ja;
 
     state.files.forEach((file, index) => {
-      const result = state.results[index];
-      const item = document.createElement("article");
-      item.className = "file-item unified-file-card";
-      if (result) item.dataset.id = result.id;
-      
-      let thumbHtml = "";
-      const currentName = result ? result.name : file.name;
-      const ext = currentName.split('.').pop().toLowerCase();
-      const isVideo = (file.type && file.type.startsWith("video/")) || ["mp4", "webm", "ogv", "mov", "m4v"].includes(ext);
+      try {
+        const result = state.results[index];
+        const item = document.createElement("article");
+        item.className = "file-item unified-file-card";
+        if (result) item.dataset.id = result.id;
+        
+        let thumbHtml = "";
+        const currentName = result ? result.name : file.name;
+        const ext = currentName.split('.').pop().toLowerCase();
+        const isVideo = (file.type && file.type.startsWith("video/")) || ["mp4", "webm", "ogv", "mov", "m4v"].includes(ext);
 
-      if (result && result.previewUrl) {
-        thumbHtml = `<img class="thumb" alt="" src="${result.previewUrl}">`;
-      } else if (file.type.startsWith("image/")) {
-        thumbHtml = `<img class="thumb" alt="" src="${URL.createObjectURL(file)}">`;
-      } else if (isVideo) {
-        const videoSrc = result && result.proxyUrl ? result.proxyUrl : URL.createObjectURL(file);
-        thumbHtml = `<video class="thumb" src="${videoSrc}#t=0.5" preload="metadata" muted playsinline style="object-fit: cover; pointer-events: none;"></video>`;
-      } else {
-        thumbHtml = `<div class="thumb format-badge">${escapeHtml(ext.toUpperCase())}</div>`;
-      }
-
-      let metaHtml = "";
-
-      if (result) {
-        const saved = result.originalSize - result.size;
-        const savedRate = result.originalSize ? Math.round((saved / result.originalSize) * 100) : 0;
-
-        if (result.isNonImage) {
-          metaHtml = `${formatBytes(result.size)} · ${escapeHtml(dict.nonConverted)}`;
+        if (result && result.previewUrl) {
+          thumbHtml = `<img class="thumb" alt="" src="${result.previewUrl}">`;
+        } else if (file.type && file.type.startsWith("image/")) {
+          thumbHtml = `<img class="thumb" alt="" src="${URL.createObjectURL(file)}">`;
+        } else if (isVideo) {
+          const videoSrc = result && result.proxyUrl ? result.proxyUrl : URL.createObjectURL(file);
+          thumbHtml = `<video class="thumb" src="${videoSrc}#t=0.5" preload="metadata" muted playsinline style="object-fit: cover; pointer-events: none;"></video>`;
         } else {
-          let rateText = "";
-          if (savedRate > 0) {
-            const template = dict.rateReduced || "{rate}% 削減";
-            rateText = `<span style="color: #4caf50; font-weight: bold;">${escapeHtml(template.replace("{rate}", String(savedRate)))}</span>`;
-          } else if (savedRate < 0) {
-            const absRate = Math.abs(savedRate);
-            const template = dict.rateIncreased || "{rate}% 増加";
-            rateText = `<span style="color: #ff5252; font-weight: bold;">${escapeHtml(template.replace("{rate}", String(absRate)))}</span>`;
-          } else {
-            rateText = `<span style="color: var(--muted);">${escapeHtml(dict.rateUnchanged || "0% 変化なし")}</span>`;
-          }
-          metaHtml = `${formatBytes(result.originalSize)} ➔ <strong style="color: #fff;">${formatBytes(result.size)}</strong> (${rateText})`;
+          thumbHtml = `<div class="thumb format-badge">${escapeHtml(ext.toUpperCase() || "FILE")}</div>`;
         }
-      } else {
-        metaHtml = `${formatBytes(file.size)} · <span style="color: var(--muted);">待機中</span>`;
+
+        let metaHtml = "";
+
+        if (result) {
+          const saved = result.originalSize - result.size;
+          const savedRate = result.originalSize ? Math.round((saved / result.originalSize) * 100) : 0;
+
+          if (result.isNonImage) {
+            metaHtml = `${formatBytes(result.size)} · ${escapeHtml(dict.nonConverted)}`;
+          } else {
+            let rateText = "";
+            if (savedRate > 0) {
+              const template = dict.rateReduced || "{rate}% 削減";
+              rateText = `<span style="color: #4caf50; font-weight: bold;">${escapeHtml(template.replace("{rate}", String(savedRate)))}</span>`;
+            } else if (savedRate < 0) {
+              const absRate = Math.abs(savedRate);
+              const template = dict.rateIncreased || "{rate}% 増加";
+              rateText = `<span style="color: #ff5252; font-weight: bold;">${escapeHtml(template.replace("{rate}", String(absRate)))}</span>`;
+            } else {
+              rateText = `<span style="color: var(--muted);">${escapeHtml(dict.rateUnchanged || "0% 変化なし")}</span>`;
+            }
+            metaHtml = `${formatBytes(result.originalSize)} ➔ <strong style="color: #fff;">${formatBytes(result.size)}</strong> (${rateText})`;
+          }
+        } else {
+          metaHtml = `${formatBytes(file.size)} · <span style="color: var(--muted);">待機中</span>`;
+        }
+
+        const targetUrl = result ? (result.isUploaded && result.proxyUrl ? result.proxyUrl : result.url) : null;
+        const thumbWrapper = targetUrl
+          ? `<a href="${escapeHtml(targetUrl)}" target="_blank" rel="noopener noreferrer" class="thumb-link" title="表示">${thumbHtml}</a>`
+          : thumbHtml;
+
+        const hasPromptDetails = Boolean(file.metaStatus?.promptDetails?.prompt);
+        const promptBtnHtml = hasPromptDetails
+          ? `<button type="button" class="ghost-button copy-prompt-btn" data-index="${index}" style="height: 28px; font-size: 11px; padding: 0 8px; color: #fbbf24; border-color: rgba(251, 191, 36, 0.4); display: inline-flex; align-items: center; gap: 3px;" title="AIプロンプトをコピー">📝 ${escapeHtml(dict.copyPrompt || "プロンプトコピー")}</button>`
+          : "";
+
+        item.innerHTML = `
+          ${thumbWrapper}
+          <div class="item-info-col" style="flex: 1; min-width: 0;">
+            <div class="item-name" style="font-weight: 600; font-size: 13px;">${escapeHtml(currentName)}</div>
+            <div class="item-meta" style="font-size: 11px; margin-top: 2px;">${metaHtml}</div>
+            ${createComfyBadgeHtml(file, result)}
+          </div>
+          <div class="item-actions-col" style="display: flex; gap: 6px; align-items: center; flex-wrap: wrap;">
+            ${promptBtnHtml}
+            ${createCardActionHtml(file, result, index)}
+            <button type="button" class="ghost-button delete-button danger-button" data-index="${index}" aria-label="削除" title="一覧から削除" style="min-width: 28px; height: 28px; padding: 0 6px; font-size: 14px; line-height: 1;">&times;</button>
+          </div>
+        `;
+        fileList.append(item);
+      } catch (err) {
+        console.error("Card render error:", err);
       }
-
-      const targetUrl = result ? (result.isUploaded && result.proxyUrl ? result.proxyUrl : result.url) : null;
-      const thumbWrapper = targetUrl
-        ? `<a href="${escapeHtml(targetUrl)}" target="_blank" rel="noopener noreferrer" class="thumb-link" title="表示">${thumbHtml}</a>`
-        : thumbHtml;
-
-      const hasPromptDetails = Boolean(file.metaStatus?.promptDetails?.prompt);
-      const promptBtnHtml = hasPromptDetails
-        ? `<button type="button" class="ghost-button copy-prompt-btn" data-index="${index}" style="height: 28px; font-size: 11px; padding: 0 8px; color: #fbbf24; border-color: rgba(251, 191, 36, 0.4); display: inline-flex; align-items: center; gap: 3px;" title="AIプロンプトをコピー">📝 ${escapeHtml(dict.copyPrompt || "プロンプトコピー")}</button>`
-        : "";
-
-      item.innerHTML = `
-        ${thumbWrapper}
-        <div class="item-info-col" style="flex: 1; min-width: 0;">
-          <div class="item-name" style="font-weight: 600; font-size: 13px;">${escapeHtml(currentName)}</div>
-          <div class="item-meta" style="font-size: 11px; margin-top: 2px;">${metaHtml}</div>
-          ${createComfyBadgeHtml(file, result)}
-        </div>
-        <div class="item-actions-col" style="display: flex; gap: 6px; align-items: center; flex-wrap: wrap;">
-          ${promptBtnHtml}
-          ${createCardActionHtml(file, result, index)}
-          <button type="button" class="ghost-button delete-button danger-button" data-index="${index}" aria-label="削除" title="一覧から削除" style="min-width: 28px; height: 28px; padding: 0 6px; font-size: 14px; line-height: 1;">&times;</button>
-        </div>
-      `;
-      fileList.append(item);
     });
 
     const totalPrompts = state.files.filter(f => f.metaStatus?.promptDetails?.prompt).length;
@@ -2789,13 +2881,23 @@ async function uploadImage(result) {
   try {
     const arrayBuffer = await result.blob.arrayBuffer();
     const bytes = new Uint8Array(arrayBuffer);
-    const contentType = result.blob.type || "application/octet-stream";
+    let contentType = result.blob.type || "";
+    if (!contentType || contentType === "application/octet-stream") {
+      contentType = getContentTypeFromFilename(result.name);
+    }
+
+    const ext = result.name ? result.name.split('.').pop().toLowerCase() : "";
+    const isAttachment = ["zip", "7z", "rar", "tar", "gz"].includes(ext);
+    const contentDisposition = isAttachment
+      ? `attachment; filename="${encodeURIComponent(result.name)}"`
+      : "inline";
 
     const command = new PutObjectCommand({
       Bucket: bucketName,
       Key: result.name,
       Body: bytes,
       ContentType: contentType,
+      ContentDisposition: contentDisposition,
       Metadata: {
         size: String(result.size || bytes.length),
       },
