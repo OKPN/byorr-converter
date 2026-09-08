@@ -1,8 +1,8 @@
 // functions/_middleware.js
-// Cloudflare Pages Function Middleware: 静的ファイル 404 時のスマート中継フォールバック
+// Cloudflare Pages Function Middleware: 静的ファイル 404 時のスマート中継フォールバック (KV 連携)
 
 export async function onRequest(context) {
-  const { request } = context;
+  const { request, env } = context;
   const url = new URL(request.url);
   const pathname = url.pathname;
 
@@ -19,25 +19,44 @@ export async function onRequest(context) {
   }
 
   const filename = pathname.replace(/^\/+/, "");
-  // もし /i/ 自体が404だった場合は何もしない
-  if (filename.startsWith("i/")) {
+  // もし /i/ や /api/ 自体が404だった場合は何もしない
+  if (filename.startsWith("i/") || filename.startsWith("api/")) {
     return response;
   }
 
-  // 3. IPFS パブリックゲートウェイからファイル名、または IPFS ハッシュ探索
+  // 3. KV からファイル名に対応する IPFS CID を検索
+  let targetCid = null;
+  if (env && env.IPFS_KV) {
+    try {
+      targetCid = await env.IPFS_KV.get(filename);
+    } catch (kvErr) {
+      console.warn("IPFS_KV get error:", kvErr);
+    }
+  }
+
+  // ターゲットパス: KV に CID があればそれを使い、無ければファイル名自体を探索
+  const ipfsTarget = targetCid || filename;
+
+  // 4. IPFS パブリックゲートウェイからフェッチ
   const primaryBase = "https://ipfs.filebase.io/ipfs";
   const fallbackBase = "https://ipfs.io/ipfs";
 
   let upstreamResponse = null;
   try {
-    upstreamResponse = await fetch(`${primaryBase}/${filename}`, {
-      headers: { "User-Agent": "BYORR-Direct-Fallback/1.0" },
+    upstreamResponse = await fetch(${primaryBase}/, {
+      headers: {
+        "User-Agent": "BYORR-KV-Relay/1.0",
+        ...(request.headers.get("Range") ? { "Range": request.headers.get("Range") } : {}),
+      },
       cf: { cacheEverything: true, cacheTtl: 86400 * 30 },
     });
 
     if (!upstreamResponse.ok) {
-      upstreamResponse = await fetch(`${fallbackBase}/${filename}`, {
-        headers: { "User-Agent": "BYORR-Direct-Fallback/1.0" },
+      upstreamResponse = await fetch(${fallbackBase}/, {
+        headers: {
+          "User-Agent": "BYORR-KV-Relay/1.0",
+          ...(request.headers.get("Range") ? { "Range": request.headers.get("Range") } : {}),
+        },
         cf: { cacheEverything: true, cacheTtl: 86400 * 30 },
       });
     }
@@ -49,11 +68,11 @@ export async function onRequest(context) {
     return response;
   }
 
-  // 4. レスポンスヘッダー構築
+  // 5. レスポンスヘッダー構築
   const headers = new Headers(upstreamResponse.headers);
   headers.set("Access-Control-Allow-Origin", "*");
   headers.set("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
-  headers.set("Content-Disposition", `inline; filename="${encodeURIComponent(filename)}"`);
+  headers.set("Content-Disposition", inline; filename="");
   headers.set("X-Content-Type-Options", "nosniff");
   headers.set("Cache-Control", "public, max-age=31536000, immutable");
 
@@ -67,6 +86,7 @@ export async function onRequest(context) {
     avif: "image/avif",
     mp4: "video/mp4",
     webm: "video/webm",
+    zip: "application/zip",
   };
   const ext = extMatch[1].toLowerCase();
   if (mimeMap[ext]) {

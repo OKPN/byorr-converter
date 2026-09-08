@@ -1,0 +1,7 @@
+name = "byorr-converter"
+compatibility_date = "2026-09-01"
+pages_build_output_dir = "dist"
+
+[[kv_namespaces]]
+binding = "IPFS_KV"
+id = "ff45707014424ab3afac57fda8c305de"

@@ -606,6 +606,21 @@ function storeIpfsCid(key, cid) {
     map[key] = cid;
     localStorage.setItem("ipfsCidMap", JSON.stringify(map));
   } catch (e) {}
+  // Cloudflare KV へも非同期登録
+  registerKvCid(key, cid);
+}
+
+async function registerKvCid(key, cid) {
+  if (!key || !cid) return;
+  try {
+    await fetch("/api/ipfs-kv", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ key, cid }),
+    });
+  } catch (e) {
+    console.warn("Failed to register CID to KV:", e);
+  }
 }
 
 // --- 🌐 R2 公開・配信ドメイン管理 ---
@@ -3120,12 +3135,8 @@ async function uploadImage(result) {
         storeIpfsCid(result.name, ipfsCid);
       }
       const baseDomain = (getSelectedR2Domain() || (typeof window !== "undefined" ? window.location.origin : "")).replace(/\/$/, "");
-      if (ipfsCid) {
-        result.proxyUrl = `${baseDomain}/i/${ipfsCid}/${encodeURIComponent(result.name)}`;
-      } else {
-        result.proxyUrl = `https://ipfs.filebase.io/ipfs/${encodeURIComponent(result.name)}`;
-      }
-      console.log(`🪐 Filebase IPFS URL 生成完了: CID=${ipfsCid} -> ${result.proxyUrl}`);
+      result.proxyUrl = `${baseDomain}/${encodeURIComponent(result.name)}`;
+      console.log(`🪐 Filebase URL 生成完了 (KV連携): CID=${ipfsCid} -> ${result.proxyUrl}`);
     } else {
       result.proxyUrl = getPublicUrl(result.name);
     }
@@ -3312,9 +3323,9 @@ async function fetchAndRenderR2Files() {
       const isImage = ["jpg", "jpeg", "png", "webp", "gif", "avif"].includes(ext);
       
       let itemCid = isFilebase ? getStoredIpfsCid(item.Key) : null;
-      let publicUrl = isFilebase && itemCid
-        ? `${baseDomain}/i/${itemCid}/${encodeURIComponent(item.Key)}`
-        : (isFilebase ? `${baseDomain}/i/raw/${encodeURIComponent(item.Key)}` : getPublicUrl(item.Key));
+      let publicUrl = isFilebase
+        ? `${baseDomain}/${encodeURIComponent(item.Key)}`
+        : getPublicUrl(item.Key);
       const devUrl = isFilebase ? null : getDevUrl(item.Key);
 
       let thumbHtml = "";
@@ -3353,25 +3364,31 @@ async function fetchAndRenderR2Files() {
 
       r2FileList.append(article);
 
-      // Filebase でまだ CID がキャッシュにない場合、HeadObject から非同期解決してサムネとコピーURLを更新
-      if (isFilebase && !itemCid) {
-        s3.send(new HeadObjectCommand({ Bucket: bucketName, Key: item.Key })).then(headOutput => {
-          const hHeaders = headOutput?.$metadata?.httpHeaders || {};
-          const fetchedCid = hHeaders["x-amz-meta-cid"] ||
-                             hHeaders["x-amz-meta-ipfs-hash"] ||
-                             headOutput?.Metadata?.cid ||
-                             headOutput?.Metadata?.["ipfs-hash"];
-          if (fetchedCid) {
-            storeIpfsCid(item.Key, fetchedCid);
-            const resolvedUrl = `${baseDomain}/i/${fetchedCid}/${encodeURIComponent(item.Key)}`;
-            const linkEl = article.querySelector("a.thumb-link");
-            if (linkEl) linkEl.href = resolvedUrl;
-            const imgEl = article.querySelector("img.thumb");
-            if (imgEl) imgEl.src = resolvedUrl;
-            const copyBtn = article.querySelector(".copy-r2-url-btn");
-            if (copyBtn) copyBtn.dataset.url = resolvedUrl;
-          }
-        }).catch(e => console.warn("HeadObject lookup for file list item failed:", e));
+      // Filebase で CID がある場合は KV にも同期。まだない場合は HeadObject で取得して KV 登録
+      if (isFilebase) {
+        if (itemCid) {
+          registerKvCid(item.Key, itemCid);
+        } else {
+          s3.send(new HeadObjectCommand({ Bucket: bucketName, Key: item.Key })).then(headOutput => {
+            const hHeaders = headOutput?.$metadata?.httpHeaders || {};
+            const fetchedCid = hHeaders["x-amz-meta-cid"] ||
+                               hHeaders["x-amz-meta-ipfs-hash"] ||
+                               headOutput?.Metadata?.cid ||
+                               headOutput?.Metadata?.["ipfs-hash"];
+            if (fetchedCid) {
+              storeIpfsCid(item.Key, fetchedCid);
+              const nameRow = article.querySelector(".item-name-row");
+              if (nameRow && !nameRow.querySelector(".ipfs-badge")) {
+                const badge = document.createElement("span");
+                badge.className = "ipfs-badge";
+                badge.style.cssText = "font-size: 10px; padding: 1px 5px; border-radius: 4px; background: rgba(56,189,248,0.15); color: #38bdf8; border: 1px solid rgba(56,189,248,0.4);";
+                badge.title = `IPFS CID: ${fetchedCid}`;
+                badge.textContent = `🪐 IPFS: ${fetchedCid.slice(0, 8)}...`;
+                nameRow.appendChild(badge);
+              }
+            }
+          }).catch(e => console.warn("HeadObject lookup for file list item failed:", e));
+        }
       }
 
       // R2 ファイルのワークフロー有無を非同期で判定し、存在する場合のみバッジを表示
@@ -3405,16 +3422,16 @@ r2FileList?.addEventListener("click", async (e) => {
     const isFilebase = getStorageProvider() === "filebase";
     const baseDomain = (getSelectedR2Domain() || (typeof window !== "undefined" ? window.location.origin : "")).replace(/\/$/, "");
 
-    if (isFilebase && key && (!url || url.includes("/i/raw/"))) {
+    if (isFilebase && key) {
+      url = `${baseDomain}/${encodeURIComponent(key)}`;
+      target.dataset.url = url;
+
+      // KV に登録済みか確認し、未登録なら裏で同期
       const cachedCid = getStoredIpfsCid(key);
       if (cachedCid) {
-        url = `${baseDomain}/i/${cachedCid}/${encodeURIComponent(key)}`;
-        target.dataset.url = url;
+        registerKvCid(key, cachedCid);
       } else {
-        const origText = target.textContent;
-        target.textContent = "取得中...";
-        try {
-          const headOutput = await s3.send(new HeadObjectCommand({ Bucket: bucketName, Key: key }));
+        s3.send(new HeadObjectCommand({ Bucket: bucketName, Key: key })).then(headOutput => {
           const hHeaders = headOutput?.$metadata?.httpHeaders || {};
           const fetchedCid = hHeaders["x-amz-meta-cid"] ||
                              hHeaders["x-amz-meta-ipfs-hash"] ||
@@ -3422,18 +3439,8 @@ r2FileList?.addEventListener("click", async (e) => {
                              headOutput?.Metadata?.["ipfs-hash"];
           if (fetchedCid) {
             storeIpfsCid(key, fetchedCid);
-            url = `${baseDomain}/i/${fetchedCid}/${encodeURIComponent(key)}`;
-            target.dataset.url = url;
-            const linkEl = article.querySelector("a.thumb-link");
-            if (linkEl) linkEl.href = url;
-            const imgEl = article.querySelector("img.thumb");
-            if (imgEl) imgEl.src = url;
           }
-        } catch (e) {
-          console.warn("On-demand CID lookup failed:", e);
-        } finally {
-          target.textContent = origText;
-        }
+        }).catch(e => console.warn("Background CID lookup failed:", e));
       }
     }
 
