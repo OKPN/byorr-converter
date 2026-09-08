@@ -98,6 +98,7 @@ export async function onRequestPost(context) {
       mime: mime || "",
       lastModified: lastModified || Date.now(),
       registeredAt: Date.now(),
+      s3Key: body.s3Key || key,
     };
 
     // KV に登録 (value: cid, metadata)

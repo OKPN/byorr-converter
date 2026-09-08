@@ -646,13 +646,13 @@ function storeIpfsCid(key, cid) {
   registerKvCid(key, cid);
 }
 
-async function registerKvCid(key, cid, size = 0, mime = "") {
+async function registerKvCid(key, cid, size = 0, mime = "", s3Key = "") {
   if (!key || !cid) return;
   try {
     await fetch("/api/ipfs-kv", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ key, cid, size, mime }),
+      body: JSON.stringify({ key, cid, size, mime, s3Key: s3Key || key }),
     });
   } catch (e) {
     console.warn("Failed to register CID to KV:", e);
@@ -3459,33 +3459,96 @@ async function fetchAndRenderR2Files() {
       MaxKeys: 1000,
     });
     const response = await s3.send(command);
-    let contents = (response.Contents || []).map(item => ({
-      Key: item.Key,
-      Size: item.Size || 0,
-      LastModified: item.LastModified,
-      isFromS3: true,
-    }));
-
+    let contents = [];
     const baseDomain = (getSelectedR2Domain() || (typeof window !== "undefined" ? window.location.origin : "")).replace(/\/$/, "");
 
-    // Filebase の場合、KV に保存されているファイルもマージ（アンピン済みで容量0のファイルも表示）
     if (isFilebase) {
+      // 🪐 Filebase (IPFS) モード: S3実体とKV名札をスマートマッチング
+      const s3RawList = (response.Contents || []).map(item => ({
+        Key: item.Key,
+        Size: item.Size || 0,
+        LastModified: item.LastModified,
+      }));
+
+      const s3KeyToItem = new Map();
+      const s3CidToItem = new Map();
+      for (const s3Item of s3RawList) {
+        s3KeyToItem.set(s3Item.Key, s3Item);
+        const cid = getStoredIpfsCid(s3Item.Key);
+        if (cid) s3CidToItem.set(cid, s3Item);
+      }
+
+      let kvFiles = [];
       try {
-        const kvFiles = await fetchKvFiles();
-        const s3Keys = new Set(contents.map(c => c.Key));
-        for (const kvItem of kvFiles) {
-          if (!s3Keys.has(kvItem.name)) {
-            contents.push({
-              Key: kvItem.name,
-              Size: kvItem.metadata?.size || 0,
-              LastModified: kvItem.metadata?.lastModified ? new Date(kvItem.metadata.lastModified) : null,
-              isFromS3: false,
-            });
-          }
-        }
+        kvFiles = await fetchKvFiles();
       } catch (kvErr) {
         console.warn("fetchKvFiles merge error:", kvErr);
       }
+
+      const consumedS3Keys = new Set();
+
+      // 1. KV に登録されている名前（公開URL名）を最優先でリスト構築
+      for (const kvItem of kvFiles) {
+        const kvName = kvItem.name;
+        const kvCid = kvItem.metadata?.cid;
+        const recordedS3Key = kvItem.metadata?.s3Key;
+
+        let matchedS3 = null;
+        if (recordedS3Key && s3KeyToItem.has(recordedS3Key)) {
+          matchedS3 = s3KeyToItem.get(recordedS3Key);
+        } else if (s3KeyToItem.has(kvName)) {
+          matchedS3 = s3KeyToItem.get(kvName);
+        } else if (kvCid && s3CidToItem.has(kvCid)) {
+          matchedS3 = s3CidToItem.get(kvCid);
+        }
+
+        if (matchedS3) {
+          consumedS3Keys.add(matchedS3.Key);
+          contents.push({
+            Key: kvName,
+            s3Key: matchedS3.Key,
+            Size: matchedS3.Size || kvItem.metadata?.size || 0,
+            LastModified: matchedS3.LastModified || (kvItem.metadata?.lastModified ? new Date(kvItem.metadata.lastModified) : null),
+            isFromS3: true,
+            cid: kvCid || getStoredIpfsCid(matchedS3.Key),
+          });
+          if (kvCid) storeIpfsCid(kvName, kvCid);
+        } else {
+          // S3 に実体がない（アンピン後など）
+          contents.push({
+            Key: kvName,
+            s3Key: null,
+            Size: kvItem.metadata?.size || 0,
+            LastModified: kvItem.metadata?.lastModified ? new Date(kvItem.metadata.lastModified) : null,
+            isFromS3: false,
+            cid: kvCid,
+          });
+          if (kvCid) storeIpfsCid(kvName, kvCid);
+        }
+      }
+
+      // 2. S3 にあるが KV に未登録のアイテムを追加
+      for (const s3Item of s3RawList) {
+        if (!consumedS3Keys.has(s3Item.Key)) {
+          contents.push({
+            Key: s3Item.Key,
+            s3Key: s3Item.Key,
+            Size: s3Item.Size || 0,
+            LastModified: s3Item.LastModified,
+            isFromS3: true,
+            cid: getStoredIpfsCid(s3Item.Key),
+          });
+        }
+      }
+    } else {
+      // ⚡ Cloudflare R2 モード（直接 S3 のみ）
+      contents = (response.Contents || []).map(item => ({
+        Key: item.Key,
+        s3Key: item.Key,
+        Size: item.Size || 0,
+        LastModified: item.LastModified,
+        isFromS3: true,
+      }));
     }
 
     // 自動クリーンアップチェック (7日以上経過したファイルを削除)
@@ -3498,7 +3561,7 @@ async function fetchAndRenderR2Files() {
         if (!item.LastModified) return false;
         const diffDays = (now - new Date(item.LastModified)) / (1000 * 60 * 60 * 24);
         return diffDays >= 7;
-      }).map(item => ({ Key: item.Key }));
+      }).map(item => ({ Key: item.s3Key || item.Key }));
 
       if (oldKeys.length > 0) {
         try {
@@ -3538,12 +3601,13 @@ async function fetchAndRenderR2Files() {
       const article = document.createElement("article");
       article.className = "result-item";
       article.dataset.key = item.Key || "";
+      article.dataset.s3key = item.s3Key || item.Key || "";
 
       const ext = item.Key ? item.Key.split('.').pop().toLowerCase() : "";
       const isVideo = ["mp4", "webm", "ogv", "mov", "m4v"].includes(ext);
       const isImage = ["jpg", "jpeg", "png", "webp", "gif", "avif"].includes(ext);
       
-      let itemCid = isFilebase ? getStoredIpfsCid(item.Key) : null;
+      let itemCid = isFilebase ? (item.cid || getStoredIpfsCid(item.Key) || (item.s3Key ? getStoredIpfsCid(item.s3Key) : null)) : null;
       let publicUrl = isFilebase
         ? `${baseDomain}/${encodeURIComponent(item.Key)}`
         : getPublicUrl(item.Key);
@@ -3570,15 +3634,15 @@ async function fetchAndRenderR2Files() {
           actionButtonsHtml = `
             <button type="button" class="ghost-button copy-r2-url-btn" data-url="${escapeHtml(publicUrl)}">${escapeHtml(dict.copyUrl)}</button>
             <button type="button" class="ghost-button civitai-r2-post-btn" data-url="${escapeHtml(publicUrl)}" data-name="${escapeHtml(item.Key)}" style="color: #38bdf8; border-color: rgba(56, 189, 248, 0.4);" title="Civitai の投稿画面を開く">🎨 Civitai</button>
-            <button type="button" class="ghost-button unpin-file-btn" data-key="${escapeHtml(item.Key)}" style="color: #f59e0b; border-color: rgba(245,158,11,0.4);" title="Filebaseの容量を解放します（URLリンクはそのまま使えます）">容量解放</button>
-            <button type="button" class="ghost-button danger-button delete-r2-file-btn" data-key="${escapeHtml(item.Key)}" data-origin="1" title="アクセスを遮断し、KVおよびストレージから完全に削除します">リンク抹消</button>
+            <button type="button" class="ghost-button unpin-file-btn" data-key="${escapeHtml(item.Key)}" data-s3key="${escapeHtml(item.s3Key || item.Key)}" style="color: #f59e0b; border-color: rgba(245,158,11,0.4);" title="Filebaseの容量を解放します（URLリンクはそのまま使えます）">容量解放</button>
+            <button type="button" class="ghost-button danger-button delete-r2-file-btn" data-key="${escapeHtml(item.Key)}" data-s3key="${escapeHtml(item.s3Key || item.Key)}" data-origin="1" title="アクセスを遮断し、KVおよびストレージから完全に削除します">リンク抹消</button>
           `;
         } else {
           statusBadgeHtml = `<span style="font-size: 10px; padding: 1px 6px; border-radius: 4px; background: rgba(239, 68, 68, 0.15); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.4); font-weight: 600;" title="オリジンから削除済み。IPFS/CDNキャッシュにより一時的に表示されていますが、永続性は保証されません。">⚠️ IPFS残留中 (非保証)</span>`;
           actionButtonsHtml = `
             <button type="button" class="ghost-button copy-r2-url-btn" data-url="${escapeHtml(publicUrl)}">${escapeHtml(dict.copyUrl)}</button>
             <button type="button" class="ghost-button civitai-r2-post-btn" data-url="${escapeHtml(publicUrl)}" data-name="${escapeHtml(item.Key)}" style="color: #38bdf8; border-color: rgba(56, 189, 248, 0.4);" title="Civitai の投稿画面を開く">🎨 Civitai</button>
-            <button type="button" class="ghost-button danger-button delete-r2-file-btn" data-key="${escapeHtml(item.Key)}" data-origin="0" title="アクセスを遮断し、KVから完全に削除します">リンク抹消</button>
+            <button type="button" class="ghost-button danger-button delete-r2-file-btn" data-key="${escapeHtml(item.Key)}" data-s3key="${escapeHtml(item.s3Key || item.Key)}" data-origin="0" title="アクセスを遮断し、KVから完全に削除します">リンク抹消</button>
           `;
         }
       } else {
@@ -3591,7 +3655,7 @@ async function fetchAndRenderR2Files() {
       }
 
       const renameBtnHtml = isFilebase
-        ? `<button type="button" class="rename-file-btn" data-key="${escapeHtml(item.Key)}" title="ファイル名を変更" style="background: none; border: none; cursor: pointer; padding: 2px 4px; font-size: 14px; opacity: 0.8; transition: opacity 0.15s; line-height: 1;">✏️</button>`
+        ? `<button type="button" class="rename-file-btn" data-key="${escapeHtml(item.Key)}" data-s3key="${escapeHtml(item.s3Key || item.Key)}" title="ファイル名を変更" style="background: none; border: none; cursor: pointer; padding: 2px 4px; font-size: 14px; opacity: 0.8; transition: opacity 0.15s; line-height: 1;">✏️</button>`
         : "";
 
       article.innerHTML = `
@@ -3620,10 +3684,11 @@ async function fetchAndRenderR2Files() {
 
       // Filebase で S3 に実体がある場合、CID の確認と KV 同期
       if (isFilebase && item.isFromS3) {
+        const s3TargetKey = item.s3Key || item.Key;
         if (itemCid) {
-          registerKvCid(item.Key, itemCid, item.Size || 0);
+          registerKvCid(item.Key, itemCid, item.Size || 0, "", s3TargetKey);
         } else {
-          s3.send(new HeadObjectCommand({ Bucket: bucketName, Key: item.Key })).then(headOutput => {
+          s3.send(new HeadObjectCommand({ Bucket: bucketName, Key: s3TargetKey })).then(headOutput => {
             const hHeaders = headOutput?.$metadata?.httpHeaders || {};
             const fetchedCid = hHeaders["x-amz-meta-cid"] ||
                                hHeaders["x-amz-meta-ipfs-hash"] ||
@@ -3631,7 +3696,8 @@ async function fetchAndRenderR2Files() {
                                headOutput?.Metadata?.["ipfs-hash"];
             if (fetchedCid) {
               storeIpfsCid(item.Key, fetchedCid);
-              registerKvCid(item.Key, fetchedCid, item.Size || 0);
+              storeIpfsCid(s3TargetKey, fetchedCid);
+              registerKvCid(item.Key, fetchedCid, item.Size || 0, "", s3TargetKey);
             }
           }).catch(e => console.warn("HeadObject lookup for file list item failed:", e));
         }
@@ -3674,10 +3740,11 @@ r2FileList?.addEventListener("click", async (e) => {
 
       // KV に登録済みか確認し、未登録なら裏で同期
       const cachedCid = getStoredIpfsCid(key);
+      const s3Key = article?.dataset?.s3key || key;
       if (cachedCid) {
-        registerKvCid(key, cachedCid);
+        registerKvCid(key, cachedCid, 0, "", s3Key);
       } else if (s3 && bucketName) {
-        s3.send(new HeadObjectCommand({ Bucket: bucketName, Key: key })).then(headOutput => {
+        s3.send(new HeadObjectCommand({ Bucket: bucketName, Key: s3Key })).then(headOutput => {
           const hHeaders = headOutput?.$metadata?.httpHeaders || {};
           const fetchedCid = hHeaders["x-amz-meta-cid"] ||
                              hHeaders["x-amz-meta-ipfs-hash"] ||
@@ -3685,6 +3752,7 @@ r2FileList?.addEventListener("click", async (e) => {
                              headOutput?.Metadata?.["ipfs-hash"];
           if (fetchedCid) {
             storeIpfsCid(key, fetchedCid);
+            storeIpfsCid(s3Key, fetchedCid);
           }
         }).catch(err => console.warn("Background CID lookup failed:", err));
       }
@@ -3702,6 +3770,9 @@ r2FileList?.addEventListener("click", async (e) => {
 
     const row = btn.closest(".item-name-row");
     if (!row) return;
+
+    const article = btn.closest(".result-item");
+    const originalS3Key = btn.dataset.s3key || article?.dataset?.s3key || oldKey;
 
     const lastDotIndex = oldKey.lastIndexOf(".");
     const baseName = lastDotIndex > 0 ? oldKey.substring(0, lastDotIndex) : oldKey;
@@ -3750,7 +3821,7 @@ r2FileList?.addEventListener("click", async (e) => {
 
       const newKey = ext ? `${newBaseName}${ext}` : newBaseName;
 
-      let cid = getStoredIpfsCid(oldKey);
+      let cid = getStoredIpfsCid(oldKey) || getStoredIpfsCid(originalS3Key);
       let size = 0;
       let mime = "";
 
@@ -3776,8 +3847,8 @@ r2FileList?.addEventListener("click", async (e) => {
       saveBtn.textContent = "...";
 
       try {
-        // 1. 新キーで登録
-        await registerKvCid(newKey, cid, size, mime);
+        // 1. 新キーで登録（実体 S3 キー名 originalS3Key を引き継ぐ）
+        await registerKvCid(newKey, cid, size, mime, originalS3Key);
         storeIpfsCid(newKey, cid);
 
         // 2. 旧キーを削除
@@ -3815,12 +3886,13 @@ r2FileList?.addEventListener("click", async (e) => {
   // ⚡ 容量解放（アンピン）：Filebase S3 からのみ削除し、KVとURLは維持
   if (target.classList.contains("unpin-file-btn")) {
     const key = target.dataset.key;
+    const s3Key = target.dataset.s3key || key;
     if (!key || !confirm(`ファイル '${key}' を Filebase から削除して容量を解放しますか？\n\n・Filebase のストレージ容量が 0 になります（無料枠節約）。\n・IPFS/CDNキャッシュにより一時的に『残留』しますが、永続性は保証されません。`)) return;
 
     try {
       const command = new DeleteObjectCommand({
         Bucket: bucketName,
-        Key: key,
+        Key: s3Key,
       });
       await s3.send(command);
       await fetchAndRenderR2Files();
@@ -3833,6 +3905,7 @@ r2FileList?.addEventListener("click", async (e) => {
   // 🚫 リンク抹消（完全削除）：KV から削除して即座に 404 化し、S3 にあればそれも削除
   if (target.classList.contains("delete-r2-file-btn")) {
     const key = target.dataset.key;
+    const s3Key = target.dataset.s3key || key;
     const isFromOrigin = target.dataset.origin === "1";
 
     const confirmMsg = isFilebase
@@ -3845,10 +3918,10 @@ r2FileList?.addEventListener("click", async (e) => {
       if (isFilebase) {
         await deleteKvCid(key);
       }
-      if (isFromOrigin && s3 && bucketName) {
+      if (isFromOrigin && s3 && bucketName && s3Key) {
         const command = new DeleteObjectCommand({
           Bucket: bucketName,
-          Key: key,
+          Key: s3Key,
         });
         await s3.send(command);
       }
