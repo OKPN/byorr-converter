@@ -376,8 +376,10 @@ export async function onRequest(context) {
         headers.set("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
         headers.set("Content-Disposition", `inline; filename="${encodeURIComponent(filename)}"`);
         headers.set("X-Content-Type-Options", "nosniff");
-        const BROWSER_CACHE_SECONDS = 3600; // 閲覧者ブラウザは1時間
-        const CDN_CACHE_SECONDS = 3600;     // CDNレスポンスキャッシュも1時間（リンク抹消を即時反映するため）
+        const extLower = extMatch[1].toLowerCase();
+        const isVideo = (extLower === "mp4" || extLower === "webm");
+        const BROWSER_CACHE_SECONDS = isVideo ? 14400 : 3600; // 動画4時間 / 画像1時間
+        const CDN_CACHE_SECONDS = 3600;     // CDNレスポンスキャッシュは1時間（リンク抹消を即時反映するため）
         if (hasPassword) {
           headers.set("Cache-Control", `private, max-age=${BROWSER_CACHE_SECONDS}`);
           headers.set("Cloudflare-CDN-Cache-Control", "private, no-store");
@@ -460,9 +462,10 @@ export async function onRequest(context) {
   headers.set("Content-Disposition", `inline; filename="${encodeURIComponent(filename)}"`);
   headers.set("X-Content-Type-Options", "nosniff");
 
-  // 3層キャッシュ戦略: ブラウザ1時間 / CDNレスポンス1時間 / 上流フェッチ1年
-  const BROWSER_CACHE_SECONDS = 3600;  // 閲覧者ブラウザは1時間
-  const CDN_CACHE_SECONDS = 3600;      // CDNレスポンスも1時間（リンク抹消を最大1時間で反映）
+  // 3層キャッシュ戦略: ブラウザ(画像1時間/動画4時間) / CDNレスポンス1時間 / 上流フェッチ1年
+  const isVideo = (extMatch[1].toLowerCase() === "mp4" || extMatch[1].toLowerCase() === "webm");
+  const BROWSER_CACHE_SECONDS = isVideo ? 14400 : 3600;  // 動画4時間 / 画像1時間
+  const CDN_CACHE_SECONDS = 3600;      // CDNレスポンスは1時間（リンク抹消を最大1時間で反映）
   if (hasPassword) {
     headers.set("Cache-Control", `private, max-age=${BROWSER_CACHE_SECONDS}`);
     headers.set("Cloudflare-CDN-Cache-Control", "private, no-store");
