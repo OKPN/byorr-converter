@@ -156,7 +156,23 @@
 
             <!-- セクション 2: クラウドアップロード共有 (BYOC準拠の仕切りと閲覧パスワード) -->
             <div class="settings-section" style="border-top: 1px solid var(--border); padding-top: 16px;">
-              <div style="margin-bottom: 6px;">
+              <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 6px;">
+                <!-- 時限アップロード設定 (初期オフ) -->
+                <label class="field" style="margin: 0;">
+                  <span style="display: flex; align-items: center; gap: 6px;">
+                    <input type="checkbox" id="enableTtlCheck" style="width: 14px; height: 14px; cursor: pointer; accent-color: var(--accent); margin: 0;">
+                    <span data-i18n="retentionPeriod" style="cursor: pointer; font-size: 11.5px; font-weight: 600;">⏳ 有効期間 (時限)</span>
+                  </span>
+                  <select id="tempTtlSelect" disabled style="height: 36px; font-size: 12px; opacity: 0.5; transition: opacity 0.2s;">
+                    <option value="3600" data-i18n="ttl1h">1時間 (1時間後消滅)</option>
+                    <option value="43200" data-i18n="ttl12h">12時間 (12時間後消滅)</option>
+                    <option value="86400" data-i18n="ttl1d">1日間 (24時間後消滅)</option>
+                    <option value="259200" selected data-i18n="ttl3d">3日間 (72時間後消滅)</option>
+                    <option value="604800" data-i18n="ttl7d">7日間 (168時間後消滅)</option>
+                  </select>
+                </label>
+
+                <!-- 閲覧パスワード -->
                 <label class="field" style="margin: 0;">
                   <span style="display: flex; justify-content: space-between; align-items: center;">
                     <span data-i18n="tempPasswordLabel">🔑 閲覧パスワード</span>

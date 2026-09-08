@@ -84,7 +84,7 @@ export async function onRequestPost(context) {
 
   try {
     const body = await request.json();
-    const { key, cid, size, mime, lastModified, password, dataBase64 } = body;
+    const { key, cid, size, mime, lastModified, password, dataBase64, ttl, expiresAt } = body;
 
     if (!key) {
       return new Response(JSON.stringify({ error: "Missing 'key' in request body" }), {
@@ -146,13 +146,15 @@ export async function onRequestPost(context) {
           binBytes[i] = binStr.charCodeAt(i);
         }
         blobKey = "blob_" + key;
-        await env.IPFS_KV.put(blobKey, binBytes.buffer, {
-          metadata: { mime: mime || "application/octet-stream" },
-        });
+        const blobOptions = { metadata: { mime: mime || "application/octet-stream" } };
+        if (ttl && Number(ttl) > 0) blobOptions.expirationTtl = Math.max(60, Number(ttl));
+        await env.IPFS_KV.put(blobKey, binBytes.buffer, blobOptions);
       } catch (blobErr) {
         console.warn("Failed to store dataBase64 to KV:", blobErr);
       }
     }
+
+    const calculatedExpiresAt = expiresAt || (ttl && Number(ttl) > 0 ? Date.now() + Number(ttl) * 1000 : null);
 
     const metadata = {
       cid: safeCid,
@@ -161,12 +163,17 @@ export async function onRequestPost(context) {
       lastModified: lastModified || Date.now(),
       registeredAt: Date.now(),
       s3Key: body.s3Key || key,
+      ...(calculatedExpiresAt ? { expiresAt: calculatedExpiresAt, ttl: Number(ttl) } : {}),
       ...(blobKey ? { blobKey } : {}),
       ...passwordMeta,
     };
 
-    // KV に登録 (value: safeCid, metadata)
-    await env.IPFS_KV.put(key, safeCid, { metadata });
+    // KV に登録 (value: safeCid, metadata, expirationTtl)
+    const putOptions = { metadata };
+    if (ttl && Number(ttl) > 0) {
+      putOptions.expirationTtl = Math.max(60, Number(ttl));
+    }
+    await env.IPFS_KV.put(key, safeCid, putOptions);
 
     return new Response(JSON.stringify({ success: true, key, cid: safeCid, metadata }), {
       status: 200,

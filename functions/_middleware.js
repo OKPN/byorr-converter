@@ -306,6 +306,11 @@ export async function onRequest(context) {
     }
   }
 
+  // ⏳ 時限アップロードの有効期限チェック（期限切れは即座に404）
+  if (meta.expiresAt && Date.now() > Number(meta.expiresAt)) {
+    return renderNotFoundResponse(request);
+  }
+
   // 🔒 パスワード保護の検証ゲート
   const hasPassword = Boolean(meta.password || meta.passwordHash);
   if (hasPassword) {
@@ -371,11 +376,15 @@ export async function onRequest(context) {
         headers.set("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
         headers.set("Content-Disposition", `inline; filename="${encodeURIComponent(filename)}"`);
         headers.set("X-Content-Type-Options", "nosniff");
+        const ONE_HOUR_SECONDS = 3600;
         if (hasPassword) {
-          headers.set("Cache-Control", "private, no-cache, no-store");
-          headers.set("Vary", "Cookie");
+          headers.set("Cache-Control", `private, max-age=${ONE_HOUR_SECONDS}`);
+          headers.set("Cloudflare-CDN-Cache-Control", "private, no-store");
+          headers.set("Vary", "Cookie, Accept-Encoding");
         } else {
-          headers.set("Cache-Control", "public, max-age=31536000, immutable");
+          headers.set("Cache-Control", `public, max-age=${ONE_HOUR_SECONDS}`);
+          headers.set("Cloudflare-CDN-Cache-Control", `public, max-age=${ONE_HOUR_SECONDS}`);
+          headers.set("Vary", "Accept-Encoding");
         }
         headers.set("Content-Length", String(directData.byteLength));
         const mimeMap = {
@@ -440,11 +449,15 @@ export async function onRequest(context) {
   headers.set("Content-Disposition", `inline; filename="${encodeURIComponent(filename)}"`);
   headers.set("X-Content-Type-Options", "nosniff");
 
+  const ONE_HOUR_SECONDS = 3600;
   if (hasPassword) {
-    headers.set("Cache-Control", "private, no-cache, no-store");
-    headers.set("Vary", "Cookie");
+    headers.set("Cache-Control", `private, max-age=${ONE_HOUR_SECONDS}`);
+    headers.set("Cloudflare-CDN-Cache-Control", "private, no-store");
+    headers.set("Vary", "Cookie, Accept-Encoding");
   } else {
-    headers.set("Cache-Control", "public, max-age=31536000, immutable");
+    headers.set("Cache-Control", `public, max-age=${ONE_HOUR_SECONDS}`);
+    headers.set("Cloudflare-CDN-Cache-Control", `public, max-age=${ONE_HOUR_SECONDS}`);
+    headers.set("Vary", "Accept-Encoding");
   }
 
   const contentLength = upstreamResponse.headers.get("content-length");

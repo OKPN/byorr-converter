@@ -78,6 +78,12 @@ const i18nDict = {
     dataSyncHeading: "📦 設定の引き継ぎ & スマホ共有",
     dataSyncDesc: "Civitai ウォッチリスト、Cloudflare R2 接続情報、画像変換設定を別の端末やスマホへ安全に引き継ぎます。",
     btnClearAllData: "🗑️ 全クリア",
+    retentionPeriod: "⏳ 有効期間 (時限)",
+    ttl1h: "1時間 (1時間後消滅)",
+    ttl12h: "12時間 (12時間後消滅)",
+    ttl1d: "1日間 (24時間後消滅)",
+    ttl3d: "3日間 (72時間後消滅)",
+    ttl7d: "7日間 (168時間後消滅)",
     tempPasswordLabel: "🔑 閲覧パスワード",
     tempPasswordPlaceholder: "合言葉を設定",
     optionalText: "(任意)",
@@ -239,6 +245,12 @@ const i18nDict = {
     dataSyncHeading: "📦 Settings Sync & Mobile Sharing",
     dataSyncDesc: "Securely sync Civitai creators watch list, Cloudflare R2 credentials, and converter settings to mobile or other devices.",
     btnClearAllData: "🗑️ Clear All",
+    retentionPeriod: "⏳ Retention (TTL)",
+    ttl1h: "1 Hour (Auto-expire)",
+    ttl12h: "12 Hours (Auto-expire)",
+    ttl1d: "1 Day (Auto-expire)",
+    ttl3d: "3 Days (Auto-expire)",
+    ttl7d: "7 Days (Auto-expire)",
     tempPasswordLabel: "🔑 Access Password",
     tempPasswordPlaceholder: "Set password phrase",
     optionalText: "(Optional)",
@@ -395,6 +407,8 @@ const enableConvertCheck = document.querySelector("#enableConvertCheck");
 const convertSettingsArea = document.querySelector("#convertSettingsArea");
 const enableRenameCheck = document.querySelector("#enableRenameCheck");
 const renameSettingsArea = document.querySelector("#renameSettingsArea");
+const enableTtlCheck = document.querySelector("#enableTtlCheck");
+const tempTtlSelect = document.querySelector("#tempTtlSelect");
 const formatSelect = document.querySelector("#formatSelect");
 const qualityRange = document.querySelector("#qualityRange");
 const qualityOutput = document.querySelector("#qualityOutput");
@@ -685,10 +699,19 @@ function blobToBase64(blobOrBytes) {
   });
 }
 
-async function registerKvCid(key, cid = "", size = 0, mime = "", s3Key = "", password = "", blobOrBytes = null) {
+async function registerKvCid(key, cid = "", size = 0, mime = "", s3Key = "", password = "", blobOrBytes = null, ttl = 0, expiresAt = null) {
   if (!key) return;
   try {
     const payload = { key, cid: cid || "", size, mime, s3Key: s3Key || key };
+    if (ttl && ttl > 0) {
+      payload.ttl = ttl;
+      payload.expiresAt = expiresAt || (Date.now() + ttl * 1000);
+      try {
+        const ttlMap = JSON.parse(localStorage.getItem("fileTtlMap") || "{}");
+        ttlMap[key] = { ttl, expiresAt: payload.expiresAt };
+        localStorage.setItem("fileTtlMap", JSON.stringify(ttlMap));
+      } catch (e) {}
+    }
     if (password && typeof password === "string" && password.trim().length > 0) {
       payload.password = password.trim();
       // パスワード保護ファイル（25MB以下）は KV に実データも保存して即時保護配信
@@ -1953,6 +1976,13 @@ enableZipCheck?.addEventListener("change", () => {
   const isChecked = enableZipCheck.checked;
   localStorage.setItem("enableZip", String(isChecked));
   render();
+});
+
+enableTtlCheck?.addEventListener("change", () => {
+  if (tempTtlSelect) {
+    tempTtlSelect.disabled = !enableTtlCheck.checked;
+    tempTtlSelect.style.opacity = enableTtlCheck.checked ? "1" : "0.5";
+  }
 });
 
 qualityRange?.addEventListener("input", () => {
@@ -3425,6 +3455,12 @@ async function uploadImage(result, targetProvider = "r2", customPassword = null)
       ? customPassword
       : (pwdInput ? pwdInput.value.trim() : "");
 
+    const ttlCheck = document.querySelector("#enableTtlCheck");
+    const ttlSelect = document.querySelector("#tempTtlSelect");
+    const isTtlEnabled = Boolean(ttlCheck?.checked);
+    const ttlSeconds = isTtlEnabled && ttlSelect ? Number(ttlSelect.value || 0) : 0;
+    const expiresAt = ttlSeconds > 0 ? (Date.now() + ttlSeconds * 1000) : null;
+
     const arrayBuffer = await result.blob.arrayBuffer();
     const bytes = new Uint8Array(arrayBuffer);
     let contentType = result.blob.type || "";
@@ -3443,15 +3479,21 @@ async function uploadImage(result, targetProvider = "r2", customPassword = null)
       await ensureStorageCapacityFilebase(s3, bucketName, bytes.length);
     }
 
+    const s3Metadata = {
+      size: String(result.size || bytes.length),
+    };
+    if (expiresAt) {
+      s3Metadata["expires-at"] = String(expiresAt);
+      s3Metadata["ttl"] = String(ttlSeconds);
+    }
+
     const command = new PutObjectCommand({
       Bucket: bucketName,
       Key: result.name,
       Body: bytes,
       ContentType: contentType,
       ContentDisposition: contentDisposition,
-      Metadata: {
-        size: String(result.size || bytes.length),
-      },
+      Metadata: s3Metadata,
     });
 
     const putOutput = await s3.send(command);
@@ -3486,6 +3528,8 @@ async function uploadImage(result, targetProvider = "r2", customPassword = null)
     result.storageKey = result.name;
     result.password = password;
     result.hasPassword = Boolean(password);
+    result.ttl = ttlSeconds;
+    result.expiresAt = expiresAt;
 
     const baseDomain = (getSelectedR2Domain() || (typeof window !== "undefined" ? window.location.origin : "")).replace(/\/$/, "");
 
@@ -3495,13 +3539,13 @@ async function uploadImage(result, targetProvider = "r2", customPassword = null)
         storeIpfsCid(result.name, ipfsCid);
       }
       // CID の有無に関わらず、KV にメタデータ（パスワード含む）を確実に登録
-      await registerKvCid(result.name, ipfsCid || "", result.size || bytes.length, contentType, result.name, password, result.blob || bytes);
+      await registerKvCid(result.name, ipfsCid || "", result.size || bytes.length, contentType, result.name, password, result.blob || bytes, ttlSeconds, expiresAt);
       result.proxyUrl = `${baseDomain}/${encodeURIComponent(result.name)}`;
       console.log(`🪐 Filebase URL 生成完了 (KV連携): CID=${ipfsCid} -> ${result.proxyUrl}`);
     } else {
-      // ⚡ Cloudflare R2: パスワード付きの場合は KV に保護メタデータ＆実体を登録
-      if (password) {
-        await registerKvCid(result.name, "", result.size || bytes.length, contentType, result.name, password, result.blob || bytes);
+      // ⚡ Cloudflare R2: パスワードまたは時限付きの場合は KV に保護メタデータ＆実体を登録
+      if (password || ttlSeconds > 0) {
+        await registerKvCid(result.name, "", result.size || bytes.length, contentType, result.name, password, result.blob || bytes, ttlSeconds, expiresAt);
         result.proxyUrl = `${baseDomain}/${encodeURIComponent(result.name)}`;
       } else {
         result.proxyUrl = getPublicUrl(result.name);
@@ -3766,6 +3810,8 @@ async function fetchAndRenderR2Files() {
             cid: kvCid || getStoredIpfsCid(matchedS3.Key),
             password: kvItem.metadata?.password || null,
             passwordHash: kvItem.metadata?.passwordHash || null,
+            expiresAt: kvItem.metadata?.expiresAt || null,
+            ttl: kvItem.metadata?.ttl || 0,
             metadata: kvItem.metadata || {},
           });
           if (kvCid) {
@@ -3783,6 +3829,8 @@ async function fetchAndRenderR2Files() {
             cid: kvCid,
             password: kvItem.metadata?.password || null,
             passwordHash: kvItem.metadata?.passwordHash || null,
+            expiresAt: kvItem.metadata?.expiresAt || null,
+            ttl: kvItem.metadata?.ttl || 0,
             metadata: kvItem.metadata || {},
           });
           if (kvCid) storeIpfsCid(kvName, kvCid);
@@ -3825,11 +3873,40 @@ async function fetchAndRenderR2Files() {
           isFromS3: true,
           password: meta.password || null,
           passwordHash: meta.passwordHash || null,
+          expiresAt: meta.expiresAt || null,
+          ttl: meta.ttl || 0,
           metadata: meta,
         };
       });
     }
 
+    // ⏳ 時限アップロードのファジー自動削除（期限切れファイルをバックグラウンドで自動抹消）
+    if (contents.length > 0) {
+      const nowMs = Date.now();
+      const expiredItems = contents.filter(item => item.expiresAt && nowMs > Number(item.expiresAt));
+      if (expiredItems.length > 0) {
+        console.log("⏳ 期限切れファイルを検知 (" + expiredItems.length + "件) -> 自動リンク抹消開始", expiredItems.map(i => i.Key));
+        (async () => {
+          for (const expItem of expiredItems) {
+            try {
+              await deleteKvCid(expItem.Key);
+              if (expItem.isFromS3 && s3 && bucketName && (expItem.s3Key || expItem.Key)) {
+                const delCmd = new DeleteObjectCommand({
+                  Bucket: bucketName,
+                  Key: expItem.s3Key || expItem.Key,
+                });
+                await s3.send(delCmd);
+              }
+            } catch (delErr) {
+              console.warn("Auto-expiry cleanup failed for " + expItem.Key + ":", delErr);
+            }
+          }
+        })();
+        // 即座に一覧の見た目からも期限切れファイルを除外
+        const expiredKeySet = new Set(expiredItems.map(i => i.Key));
+        contents = contents.filter(i => !expiredKeySet.has(i.Key));
+      }
+    }
     // 自動クリーンアップチェック (7日以上経過したファイルを削除)
     const isAutoCleanup = localStorage.getItem("autoCleanup") === "true";
     if (isAutoCleanup && contents.length > 0) {
@@ -3912,6 +3989,20 @@ async function fetchAndRenderR2Files() {
         ? `<span class="password-badge" style="background: rgba(99, 102, 241, 0.2); color: #a5b4fc; border: 1px solid rgba(99, 102, 241, 0.5); font-size: 11px; padding: 2px 7px; border-radius: 4px; font-weight: 700; display: inline-flex; align-items: center; gap: 4px;" title="閲覧パスワードが設定されています">🔒 ${plainPwd ? `合言葉: ${escapeHtml(plainPwd)}` : "パスワード保護"}</span>`
         : "";
 
+      let ttlBadgeHtml = "";
+      if (item.expiresAt) {
+        const msRemaining = Number(item.expiresAt) - Date.now();
+        if (msRemaining <= 0) {
+          ttlBadgeHtml = '<span style="background: rgba(239, 68, 68, 0.2); color: #fca5a5; border: 1px solid rgba(239, 68, 68, 0.5); font-size: 11px; padding: 2px 7px; border-radius: 4px; font-weight: 700; display: inline-flex; align-items: center; gap: 4px;" title="有効期限が切れています">⚠️ 期限切れ</span>';
+        } else {
+          const hoursRemaining = Math.max(1, Math.ceil(msRemaining / (1000 * 3600)));
+          const days = Math.floor(hoursRemaining / 24);
+          const remHours = hoursRemaining % 24;
+          const timeText = days > 0 ? `${days}日${remHours > 0 ? " " + remHours + "時間" : ""}` : `${hoursRemaining}時間`;
+          ttlBadgeHtml = `<span style="background: rgba(245, 158, 11, 0.2); color: #fcd34d; border: 1px solid rgba(245, 158, 11, 0.5); font-size: 11px; padding: 2px 7px; border-radius: 4px; font-weight: 700; display: inline-flex; align-items: center; gap: 4px;" title="設定された期限が過ぎると自動消滅します">⏳ 残り ${timeText}</span>`;
+        }
+      }
+
       let thumbHtml = "";
       if (hasPassword) {
         // パスワード保護ファイルは直接読み込むと未認証で404/認証フォームになるため、保護アイコンプレースホルダーを表示
@@ -3977,6 +4068,7 @@ async function fetchAndRenderR2Files() {
             <span style="color: #64748b; font-size: 11px; white-space: nowrap;">${formatBytes(item.Size || 0)}</span>
             ${statusBadgeHtml}
             ${pwdBadgeHtml}
+            ${ttlBadgeHtml}
             <span class="r2-wf-badge-placeholder" data-key="${escapeHtml(item.Key)}"></span>
           </div>
           <div class="item-meta" style="color: var(--muted); margin-top: 4px; font-size: 11px;">
