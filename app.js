@@ -3470,26 +3470,6 @@ async function fetchAndRenderR2Files() {
         LastModified: item.LastModified,
       }));
 
-      // S3 アイテムのうち CID がローカル未キャッシュのものについて HeadObject で事前解決
-      const uncachedS3Items = s3RawList.filter(item => !getStoredIpfsCid(item.Key));
-      if (uncachedS3Items.length > 0) {
-        await Promise.all(uncachedS3Items.slice(0, 30).map(async (s3Item) => {
-          try {
-            const headOutput = await s3.send(new HeadObjectCommand({ Bucket: bucketName, Key: s3Item.Key }));
-            const hHeaders = headOutput?.$metadata?.httpHeaders || {};
-            const fetchedCid = hHeaders["x-amz-meta-cid"] ||
-                               hHeaders["x-amz-meta-ipfs-hash"] ||
-                               headOutput?.Metadata?.cid ||
-                               headOutput?.Metadata?.["ipfs-hash"];
-            if (fetchedCid) {
-              storeIpfsCid(s3Item.Key, fetchedCid);
-            }
-          } catch (e) {
-            console.warn(`HeadObject lookup for ${s3Item.Key} failed:`, e);
-          }
-        }));
-      }
-
       const s3KeyToItem = new Map();
       const s3CidToItem = new Map();
       for (const s3Item of s3RawList) {
@@ -3505,12 +3485,39 @@ async function fetchAndRenderR2Files() {
         console.warn("fetchKvFiles merge error:", kvErr);
       }
 
+      // KV アイテムの CID 補完と S3 実体キーの紐付け学習
+      for (const kvItem of kvFiles) {
+        if (!kvItem.metadata) kvItem.metadata = {};
+        if (!kvItem.metadata.cid) {
+          kvItem.metadata.cid = getStoredIpfsCid(kvItem.name);
+        }
+        const recordedS3Key = kvItem.metadata.s3Key;
+        const cid = kvItem.metadata.cid;
+        if (recordedS3Key && cid) {
+          storeIpfsCid(recordedS3Key, cid);
+          if (s3KeyToItem.has(recordedS3Key)) {
+            s3CidToItem.set(cid, s3KeyToItem.get(recordedS3Key));
+          }
+        }
+      }
+
+      // S3 に1ファイルのみ存在し、KVエントリがある場合の自動補完
+      if (s3RawList.length === 1 && kvFiles.length > 0) {
+        const soleS3 = s3RawList[0];
+        const latestKv = kvFiles[0];
+        const cid = latestKv.metadata?.cid || getStoredIpfsCid(latestKv.name);
+        if (cid) {
+          storeIpfsCid(soleS3.Key, cid);
+          s3CidToItem.set(cid, soleS3);
+        }
+      }
+
       const consumedS3Keys = new Set();
 
       // 1. KV に登録されている名前（公開URL名）を最優先でリスト構築
       for (const kvItem of kvFiles) {
         const kvName = kvItem.name;
-        const kvCid = kvItem.metadata?.cid;
+        const kvCid = kvItem.metadata?.cid || getStoredIpfsCid(kvName);
         const recordedS3Key = kvItem.metadata?.s3Key;
 
         let matchedS3 = null;
@@ -3520,9 +3527,17 @@ async function fetchAndRenderR2Files() {
           matchedS3 = s3KeyToItem.get(kvName);
         } else if (kvCid && s3CidToItem.has(kvCid)) {
           matchedS3 = s3CidToItem.get(kvCid);
+        } else if (s3RawList.length === 1) {
+          matchedS3 = s3RawList[0];
         }
 
         if (matchedS3) {
+          // 同一 S3 実体にすでに新しい KV が紐付いている場合、古いリネーム残骸を自動整理
+          if (consumedS3Keys.has(matchedS3.Key)) {
+            deleteKvCid(kvName);
+            continue;
+          }
+
           consumedS3Keys.add(matchedS3.Key);
           contents.push({
             Key: kvName,
@@ -3532,9 +3547,12 @@ async function fetchAndRenderR2Files() {
             isFromS3: true,
             cid: kvCid || getStoredIpfsCid(matchedS3.Key),
           });
-          if (kvCid) storeIpfsCid(kvName, kvCid);
+          if (kvCid) {
+            storeIpfsCid(kvName, kvCid);
+            storeIpfsCid(matchedS3.Key, kvCid);
+          }
           // KV側で s3Key が未記録なら次回以降のために自動修復
-          if (!recordedS3Key && matchedS3.Key !== kvName) {
+          if (!recordedS3Key || recordedS3Key !== matchedS3.Key) {
             registerKvCid(kvName, kvCid, matchedS3.Size || 0, kvItem.metadata?.mime || "", matchedS3.Key);
           }
         } else {
@@ -3626,6 +3644,8 @@ async function fetchAndRenderR2Files() {
       article.className = "result-item";
       article.dataset.key = item.Key || "";
       article.dataset.s3key = item.s3Key || item.Key || "";
+      article.dataset.size = String(item.Size || 0);
+      article.dataset.cid = itemCid || "";
 
       const ext = item.Key ? item.Key.split('.').pop().toLowerCase() : "";
       const isVideo = ["mp4", "webm", "ogv", "mov", "m4v"].includes(ext);
@@ -3679,7 +3699,7 @@ async function fetchAndRenderR2Files() {
       }
 
       const renameBtnHtml = isFilebase
-        ? `<button type="button" class="rename-file-btn" data-key="${escapeHtml(item.Key)}" data-s3key="${escapeHtml(item.s3Key || item.Key)}" title="ファイル名を変更" style="background: none; border: none; cursor: pointer; padding: 2px 4px; font-size: 14px; opacity: 0.8; transition: opacity 0.15s; line-height: 1;">✏️</button>`
+        ? `<button type="button" class="rename-file-btn" data-key="${escapeHtml(item.Key)}" data-s3key="${escapeHtml(item.s3Key || item.Key)}" data-size="${item.Size || 0}" data-cid="${escapeHtml(itemCid || "")}" title="ファイル名を変更" style="background: none; border: none; cursor: pointer; padding: 2px 4px; font-size: 14px; opacity: 0.8; transition: opacity 0.15s; line-height: 1;">✏️</button>`
         : "";
 
       article.innerHTML = `
@@ -3845,8 +3865,9 @@ r2FileList?.addEventListener("click", async (e) => {
 
       const newKey = ext ? `${newBaseName}${ext}` : newBaseName;
 
-      let cid = getStoredIpfsCid(oldKey) || getStoredIpfsCid(originalS3Key);
-      let size = 0;
+      const currentSize = parseInt(btn.dataset.size || article?.dataset?.size || "0", 10);
+      let cid = btn.dataset.cid || article?.dataset?.cid || getStoredIpfsCid(oldKey) || getStoredIpfsCid(originalS3Key);
+      let size = currentSize;
       let mime = "";
 
       try {
@@ -3854,7 +3875,7 @@ r2FileList?.addEventListener("click", async (e) => {
         const currentKv = kvFiles.find(f => f.name === oldKey);
         if (currentKv) {
           if (!cid) cid = currentKv.metadata?.cid;
-          size = currentKv.metadata?.size || 0;
+          if (!size) size = currentKv.metadata?.size || 0;
           mime = currentKv.metadata?.mime || "";
         }
       } catch (err) {
@@ -3874,14 +3895,17 @@ r2FileList?.addEventListener("click", async (e) => {
         // 1. 新キーで登録（実体 S3 キー名 originalS3Key を引き継ぐ）
         await registerKvCid(newKey, cid, size, mime, originalS3Key);
         storeIpfsCid(newKey, cid);
+        storeIpfsCid(originalS3Key, cid);
 
-        // 2. 旧キーを削除
-        await deleteKvCid(oldKey);
-        try {
-          const map = JSON.parse(localStorage.getItem("ipfsCidMap") || "{}");
-          delete map[oldKey];
-          localStorage.setItem("ipfsCidMap", JSON.stringify(map));
-        } catch (e) {}
+        // 2. 旧キーが S3 実体名と異なる場合のみ KV から削除（実体キーのCIDは消さない）
+        if (oldKey !== originalS3Key) {
+          await deleteKvCid(oldKey);
+          try {
+            const map = JSON.parse(localStorage.getItem("ipfsCidMap") || "{}");
+            delete map[oldKey];
+            localStorage.setItem("ipfsCidMap", JSON.stringify(map));
+          } catch (e) {}
+        }
 
         await fetchAndRenderR2Files();
       } catch (err) {

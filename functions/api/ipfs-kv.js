@@ -94,6 +94,7 @@ export async function onRequestPost(context) {
     }
 
     const metadata = {
+      cid: cid,
       size: size || 0,
       mime: mime || "",
       lastModified: lastModified || Date.now(),
