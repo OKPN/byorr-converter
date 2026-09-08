@@ -416,7 +416,7 @@ export async function onRequest(context) {
     try {
       upstreamResponse = await fetch(`${primaryBase}/${candidate}`, {
         headers: {
-          "User-Agent": "BYORR-KV-Relay/1.0",
+          "User-Agent": "Cividge-KV-Relay/1.0",
           ...(request.headers.get("Range") ? { "Range": request.headers.get("Range") } : {}),
         },
         cf: { cacheEverything: !hasPassword, cacheTtl: hasPassword ? 0 : 86400 * 35 },
@@ -425,7 +425,7 @@ export async function onRequest(context) {
       if (!upstreamResponse.ok) {
         upstreamResponse = await fetch(`${fallbackBase}/${candidate}`, {
           headers: {
-            "User-Agent": "BYORR-KV-Relay/1.0",
+            "User-Agent": "Cividge-KV-Relay/1.0",
             ...(request.headers.get("Range") ? { "Range": request.headers.get("Range") } : {}),
           },
           cf: { cacheEverything: !hasPassword, cacheTtl: hasPassword ? 0 : 86400 * 35 },

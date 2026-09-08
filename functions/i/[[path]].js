@@ -56,7 +56,7 @@ export async function onRequest(context) {
   async function fetchGateway(baseUrl, path) {
     return await fetch(`${baseUrl}/${path}`, {
       headers: {
-        "User-Agent": "BYORR-IPFS-Relay/1.0",
+        "User-Agent": "Cividge-IPFS-Relay/1.0",
         ...(request.headers.get("Range") ? { "Range": request.headers.get("Range") } : {}),
       },
       cf: {

@@ -1,11 +1,11 @@
 {
-  "name": "BYORR Converter",
-  "short_name": "BYORR Converter",
+  "name": "Cividge",
+  "short_name": "Cividge",
   "start_url": "./",
   "display": "standalone",
   "background_color": "#202227",
   "theme_color": "#202227",
-  "description": "Bring Your Own R2 Image Converter & Storage Manager",
+  "description": "Cividge - Image Converter & Cloud Storage Manager for AI Creators",
   "icons": [
     {
       "src": "icon-192.png",
