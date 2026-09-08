@@ -158,8 +158,24 @@
             <!-- 安全な Cloudflare R2 接続情報アコーディオン -->
             <div style="padding: 0 18px 18px;">
               <details class="settings-accordion cf-settings-accordion" id="cfSettingsAccordion">
-                <summary data-i18n="cfTitle">☁️ Cloudflare R2 接続設定 (S3 API)</summary>
+                <summary data-i18n="cfTitle">☁️ ストレージ接続設定 (S3 / IPFS)</summary>
                 <div class="settings-content" style="padding: 14px 0 4px; display: flex; flex-direction: column; gap: 12px;">
+
+                  <!-- ストレージ方式切り替え -->
+                  <div style="padding: 10px 12px; background: rgba(255,255,255,0.03); border: 1px solid var(--border); border-radius: 8px;">
+                    <div style="font-size: 11px; font-weight: bold; color: var(--muted); margin-bottom: 6px;">接続先ストレージ方式:</div>
+                    <div style="display: flex; gap: 14px; flex-wrap: wrap;">
+                      <label style="display: flex; align-items: center; gap: 5px; font-size: 12px; cursor: pointer; color: var(--text);">
+                        <input type="radio" name="storageProvider" value="r2" checked id="providerR2">
+                        <span>Cloudflare R2 (自分専用・高機能)</span>
+                      </label>
+                      <label style="display: flex; align-items: center; gap: 5px; font-size: 12px; cursor: pointer; color: #38bdf8;">
+                        <input type="radio" name="storageProvider" value="filebase" id="providerFilebase">
+                        <span>🪐 Filebase (IPFS分散・容量ゼロ・Pages直リン)</span>
+                      </label>
+                    </div>
+                  </div>
+
                   <!-- STEP 1: 画像公開・配信URL設定 (複数登録・プルダウン切替) -->
                   <div class="setup-step-box" style="padding: 12px; border: 1px solid rgba(255, 122, 26, 0.4); border-radius: 8px; background: rgba(255, 122, 26, 0.05);">
                     <div style="font-size: 13px; font-weight: bold; color: var(--accent); margin-bottom: 8px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 4px;">
@@ -222,6 +238,7 @@
                   </div>
                   <div style="display: flex; gap: 6px; margin-top: 4px; flex-wrap: wrap;">
                     <button class="primary-button" id="cfSaveButton" type="button" style="flex: 1; min-width: 90px;" data-i18n="btnSave">保存する</button>
+                    <button class="ghost-button" id="filebaseCorsButton" type="button" style="display: none; font-size: 11px; padding: 0 10px; color: #38bdf8; border-color: rgba(56, 189, 248, 0.4);" title="FilebaseバケットにIPFS CID読み取り用CORS設定をワンクリック適用">⚙️ CORS自動設定</button>
                     <a href="https://dash.cloudflare.com/" target="_blank" rel="noopener noreferrer" class="ghost-button" id="cfDashboardLink" style="display: inline-flex; align-items: center; font-size: 12px; text-decoration: none;">Cloudflare ↗</a>
                     <button class="ghost-button danger-button" id="cfClearButton" type="button" data-i18n="btnClear">クリア</button>
                   </div>

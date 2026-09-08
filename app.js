@@ -25,6 +25,8 @@ import {
   DeleteObjectCommand,
   DeleteObjectsCommand,
   CopyObjectCommand,
+  HeadObjectCommand,
+  PutBucketCorsCommand,
 } from "@aws-sdk/client-s3";
 
 // --- 多言語 (i18n) 辞書 ---
@@ -402,6 +404,10 @@ const cfShareQrButton = document.querySelector("#cfShareQrButton");
 const cfBackupUrlButton = document.querySelector("#cfBackupUrlButton");
 const topbarSyncButton = document.querySelector("#topbarSyncButton");
 const globalClearButton = document.querySelector("#globalClearButton");
+const providerR2 = document.querySelector("#providerR2");
+const providerFilebase = document.querySelector("#providerFilebase");
+const filebaseCorsButton = document.querySelector("#filebaseCorsButton");
+const cfDashboardLink = document.querySelector("#cfDashboardLink");
 
 // 🎨 Civitai ギャラリー要素
 const civitaiUserSelect = document.querySelector("#civitaiUserSelect");
@@ -493,11 +499,31 @@ langSelect?.addEventListener("change", (e) => {
 // --- S3 クライアント生成ヘルパー ---
 let s3ClientInstance = null;
 
+function getStorageProvider() {
+  return localStorage.getItem("storageProvider") || "r2";
+}
+
 function getS3Client() {
-  const accountId = (localStorage.getItem("r2AccountId") || r2AccountId?.value || "").trim();
+  const provider = getStorageProvider();
   const accessKeyId = (localStorage.getItem("r2AccessKeyId") || r2AccessKeyId?.value || "").trim();
   const secretAccessKey = (localStorage.getItem("r2SecretAccessKey") || r2SecretAccessKey?.value || "").trim();
 
+  if (provider === "filebase") {
+    if (!accessKeyId || !secretAccessKey) return null;
+    s3ClientInstance = new S3Client({
+      region: "us-east-1",
+      endpoint: "https://s3.filebase.io",
+      forcePathStyle: true,
+      credentials: {
+        accessKeyId,
+        secretAccessKey,
+      },
+    });
+    return s3ClientInstance;
+  }
+
+  // デフォルト: Cloudflare R2
+  const accountId = (localStorage.getItem("r2AccountId") || r2AccountId?.value || "").trim();
   if (!accountId || !accessKeyId || !secretAccessKey) return null;
 
   s3ClientInstance = new S3Client({
@@ -509,6 +535,57 @@ function getS3Client() {
     },
   });
   return s3ClientInstance;
+}
+
+// Filebase S3 バケットの CORS 自動設定 (CID 読み取りヘッダー公開)
+async function configureFilebaseCors() {
+  const s3 = getS3Client();
+  const bucketName = (localStorage.getItem("r2BucketName") || r2BucketName?.value || "").trim();
+
+  if (!s3 || !bucketName) {
+    alert("⚠️ Filebaseのバケット名、Access Key、Secret Keyを入力してから実行してください。");
+    return;
+  }
+
+  const btn = filebaseCorsButton;
+  const origText = btn ? btn.textContent : "";
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "⚙️ 設定中...";
+  }
+
+  try {
+    const corsCommand = new PutBucketCorsCommand({
+      Bucket: bucketName,
+      CORSConfiguration: {
+        CORSRules: [
+          {
+            AllowedOrigins: ["*"],
+            AllowedMethods: ["GET", "PUT", "POST", "HEAD", "DELETE"],
+            AllowedHeaders: ["*"],
+            ExposeHeaders: [
+              "ETag",
+              "x-amz-meta-cid",
+              "x-amz-meta-ipfs-hash",
+              "x-amz-meta-size",
+              "x-amz-meta-original-size",
+            ],
+            MaxAgeSeconds: 3600,
+          },
+        ],
+      },
+    });
+    await s3.send(corsCommand);
+    alert(`✅ Filebaseバケット「${bucketName}」にIPFS CID公開用CORS設定を適用しました！\nこれでブラウザからIPFS CIDが正常に取得できます。`);
+  } catch (err) {
+    console.error("CORS設定失敗:", err);
+    alert(`❌ CORS設定の適用に失敗しました:\n${err.message}`);
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = origText;
+    }
+  }
 }
 
 // --- 🌐 R2 公開・配信ドメイン管理 ---
@@ -582,13 +659,40 @@ function renderR2DomainSelect() {
   });
 }
 
-// --- R2 設定状態の更新 (STEP 1のURL必須ルールを堅持) ---
+// --- R2 / Filebase IPFS 設定状態の更新 (STEP 1のURL必須ルールを堅持) ---
 function updateR2Status() {
+  const provider = getStorageProvider();
+  const isFilebase = provider === "filebase";
+
   const accountId = (localStorage.getItem("r2AccountId") || r2AccountId?.value || "").trim();
   const bucketName = (localStorage.getItem("r2BucketName") || r2BucketName?.value || "").trim();
   const accessKeyId = (localStorage.getItem("r2AccessKeyId") || r2AccessKeyId?.value || "").trim();
   const secretAccessKey = (localStorage.getItem("r2SecretAccessKey") || r2SecretAccessKey?.value || "").trim();
-  
+
+  // Filebase 選択時は Account ID の入力欄を非表示、CORSボタン表示、リンク先をFilebaseに変更
+  const accountField = r2AccountId ? r2AccountId.closest(".field") : null;
+  if (accountField) {
+    accountField.style.display = isFilebase ? "none" : "";
+  }
+  if (filebaseCorsButton) {
+    filebaseCorsButton.style.display = isFilebase ? "inline-block" : "none";
+  }
+  if (cfDashboardLink) {
+    cfDashboardLink.textContent = isFilebase ? "Filebase ↗" : "Cloudflare ↗";
+    cfDashboardLink.href = isFilebase ? "https://console.filebase.com/" : "https://dash.cloudflare.com/";
+  }
+
+  // Filebase 選択時かつ配信ドメインが未登録の場合、現在の Pages オリジンを自動候補追加
+  if (isFilebase && typeof window !== "undefined" && window.location?.origin && !window.location.origin.startsWith("file://")) {
+    const list = getR2DomainList();
+    if (list.length === 0) {
+      const curOrigin = window.location.origin;
+      list.push(curOrigin);
+      saveR2DomainList(list);
+      renderR2DomainSelect(curOrigin);
+    }
+  }
+
   // 🔒 STEP 1: 配信ドメインが1件以上存在し、有効に選択されていること
   const selectedDomain = getSelectedR2Domain();
   const isStep1Ok = Boolean(selectedDomain && selectedDomain.trim());
@@ -596,7 +700,9 @@ function updateR2Status() {
   // 🔒 STEP 2 のロック制御 (STEP 1 未設定時は完全ブロック)
   const step2Box = document.querySelector("#r2KeysStepContainer");
   const step2Notice = document.querySelector("#step2Notice");
-  const step2Inputs = [r2AccountId, r2BucketName, r2AccessKeyId, r2SecretAccessKey];
+  const step2Inputs = isFilebase
+    ? [r2BucketName, r2AccessKeyId, r2SecretAccessKey]
+    : [r2AccountId, r2BucketName, r2AccessKeyId, r2SecretAccessKey];
 
   if (step2Box) {
     step2Box.style.opacity = isStep1Ok ? "1" : "0.5";
@@ -612,13 +718,16 @@ function updateR2Status() {
     if (input) input.disabled = !isStep1Ok;
   });
 
-  const isConfigured = Boolean(accountId && bucketName && accessKeyId && secretAccessKey && isStep1Ok);
+  const isConfigured = isFilebase
+    ? Boolean(bucketName && accessKeyId && secretAccessKey && isStep1Ok)
+    : Boolean(accountId && bucketName && accessKeyId && secretAccessKey && isStep1Ok);
 
   if (cfStatus) {
+    const providerLabel = isFilebase ? "Filebase IPFS" : "R2";
     if (isConfigured) {
-      cfStatus.innerHTML = `<span style="color: #4caf50;">✅ R2 接続設定済み (${escapeHtml(bucketName)})</span>`;
+      cfStatus.innerHTML = `<span style="color: #4caf50;">✅ ${providerLabel} 接続設定済み (${escapeHtml(bucketName)})</span>`;
     } else {
-      cfStatus.innerHTML = `<span style="color: var(--danger);">⚠️ R2 接続設定を完了してください</span>`;
+      cfStatus.innerHTML = `<span style="color: var(--danger);">⚠️ ${providerLabel} 接続設定を完了してください</span>`;
     }
   }
 
@@ -1034,6 +1143,13 @@ function createCivitaiStatsHtml(stats) {
 
 // --- 設定の読み込みと初期化 ---
 function loadSettings() {
+  const savedProvider = localStorage.getItem("storageProvider") || "r2";
+  if (savedProvider === "filebase") {
+    if (providerFilebase) providerFilebase.checked = true;
+  } else {
+    if (providerR2) providerR2.checked = true;
+  }
+
   const savedAccount   = localStorage.getItem("r2AccountId") || "";
   const savedBucket    = localStorage.getItem("r2BucketName") || "";
   const savedKeyId     = localStorage.getItem("r2AccessKeyId") || "";
@@ -1336,6 +1452,9 @@ fetchAndRenderCivitaiGallery();
 let r2AutoFetchTimer = null;
 
 function saveR2SettingsAuto() {
+  const provider = getStorageProvider();
+  s3ClientInstance = null; // 設定変更時はインスタンスを再生成
+
   let rawAccount = r2AccountId?.value?.trim() || "";
   // S3 API URL（https://<account_id>.r2.cloudflarestorage.com）が貼られた場合は自動抽出
   if (rawAccount.includes(".r2.cloudflarestorage.com")) {
@@ -1350,10 +1469,10 @@ function saveR2SettingsAuto() {
   const bucketName = r2BucketName?.value?.trim() || "";
   const accessKeyId = r2AccessKeyId?.value?.trim() || "";
   const secretAccessKey = r2SecretAccessKey?.value?.trim() || "";
-  const publicDomain = r2PublicDomain?.value?.trim() || "";
-  const devDomain = r2DevDomain?.value?.trim() || "";
 
-  if (accountId) localStorage.setItem("r2AccountId", accountId);
+  if (provider === "r2" && accountId) {
+    localStorage.setItem("r2AccountId", accountId);
+  }
   if (bucketName) localStorage.setItem("r2BucketName", bucketName);
   if (accessKeyId) localStorage.setItem("r2AccessKeyId", accessKeyId);
   if (secretAccessKey) localStorage.setItem("r2SecretAccessKey", secretAccessKey);
@@ -1368,6 +1487,26 @@ function saveR2SettingsAuto() {
     }, 400);
   }
 };
+
+providerR2?.addEventListener("change", () => {
+  if (providerR2.checked) {
+    localStorage.setItem("storageProvider", "r2");
+    s3ClientInstance = null;
+    updateR2Status();
+    render();
+  }
+});
+
+providerFilebase?.addEventListener("change", () => {
+  if (providerFilebase.checked) {
+    localStorage.setItem("storageProvider", "filebase");
+    s3ClientInstance = null;
+    updateR2Status();
+    render();
+  }
+});
+
+filebaseCorsButton?.addEventListener("click", configureFilebaseCors);
 
 r2AccountId?.addEventListener("input", saveR2SettingsAuto);
 r2BucketName?.addEventListener("input", saveR2SettingsAuto);
@@ -2520,7 +2659,10 @@ function render() {
           ${thumbWrapper}
           <div class="item-info-col" style="flex: 1; min-width: 0;">
             <div class="item-name" style="font-weight: 600; font-size: 13px;">${escapeHtml(currentName)}</div>
-            <div class="item-meta" style="font-size: 11px; margin-top: 2px;">${metaHtml}</div>
+            <div class="item-meta" style="font-size: 11px; margin-top: 2px;">
+              ${metaHtml}
+              ${result?.ipfsCid ? `<span style="display: inline-block; margin-left: 6px; padding: 1px 6px; background: rgba(56, 189, 248, 0.15); border: 1px solid rgba(56, 189, 248, 0.4); border-radius: 4px; color: #38bdf8; font-size: 10px;" title="IPFS CID: ${escapeHtml(result.ipfsCid)}">🪐 IPFS: ${escapeHtml(result.ipfsCid.slice(0, 10))}...</span>` : ""}
+            </div>
             ${createComfyBadgeHtml(file, result)}
           </div>
           <div class="item-actions-col" style="display: flex; gap: 6px; align-items: center; flex-wrap: wrap;">
@@ -2903,11 +3045,49 @@ async function uploadImage(result) {
       },
     });
 
-    await s3.send(command);
+    const putOutput = await s3.send(command);
+
+    const provider = getStorageProvider();
+    let ipfsCid = null;
+
+    if (provider === "filebase") {
+      // PutObject レスポンスヘッダーから CID を探索
+      const headers = putOutput?.$metadata?.httpHeaders || {};
+      ipfsCid = headers["x-amz-meta-cid"] || headers["x-amz-meta-ipfs-hash"];
+
+      // レスポンスヘッダーに無ければ HeadObject を試行
+      if (!ipfsCid) {
+        try {
+          const headOutput = await s3.send(new HeadObjectCommand({
+            Bucket: bucketName,
+            Key: result.name,
+          }));
+          const hHeaders = headOutput?.$metadata?.httpHeaders || {};
+          ipfsCid = hHeaders["x-amz-meta-cid"] ||
+                    hHeaders["x-amz-meta-ipfs-hash"] ||
+                    headOutput?.Metadata?.cid ||
+                    headOutput?.Metadata?.["ipfs-hash"];
+        } catch (hErr) {
+          console.warn("HeadObject CID lookup fallback failed:", hErr);
+        }
+      }
+    }
 
     result.isUploaded = true;
-    result.proxyUrl = getPublicUrl(result.name);
     result.storageKey = result.name;
+
+    if (ipfsCid) {
+      result.ipfsCid = ipfsCid;
+      const baseDomain = getSelectedR2Domain();
+      if (baseDomain) {
+        result.proxyUrl = `${baseDomain.replace(/\/$/, "")}/i/${ipfsCid}/${encodeURIComponent(result.name)}`;
+      } else {
+        result.proxyUrl = `https://cloudflare-ipfs.com/ipfs/${ipfsCid}`;
+      }
+      console.log(`🪐 Filebase IPFS CID 取得成功: ${ipfsCid} -> ${result.proxyUrl}`);
+    } else {
+      result.proxyUrl = getPublicUrl(result.name);
+    }
 
     paletteFiles.unshift({ key: result.name, url: result.proxyUrl });
     renderUrlPalette();
