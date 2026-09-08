@@ -26,7 +26,7 @@ export async function onRequest(context) {
 
   // 1. IPFS ターゲット URL の構築
   const targetPath = subPath ? `${cid}/${subPath}` : cid;
-  const primaryGateway = `https://cloudflare-ipfs.com/ipfs/${targetPath}`;
+  const primaryGateway = `https://ipfs.filebase.io/ipfs/${targetPath}`;
   const fallbackGateway = `https://ipfs.io/ipfs/${targetPath}`;
 
   // 拡張子に応じた Content-Disposition と Content-Type の決定
@@ -37,7 +37,7 @@ export async function onRequest(context) {
     ? `attachment; filename="${encodeURIComponent(filename)}"`
     : "inline";
 
-  // 2. Cloudflare IPFS ゲートウェイへ fetch（エッジキャッシュ有効化）
+  // 2. IPFS ゲートウェイへ fetch（エッジキャッシュ有効化）
   let upstreamResponse = null;
   try {
     upstreamResponse = await fetch(primaryGateway, {
@@ -51,8 +51,8 @@ export async function onRequest(context) {
       },
     });
 
-    // 504 Gateway Timeout や 502 Bad Gateway の場合は公式ゲートウェイへフォールバック
-    if (!upstreamResponse.ok && (upstreamResponse.status === 504 || upstreamResponse.status === 502)) {
+    // 失敗時は公式ゲートウェイへフォールバック
+    if (!upstreamResponse.ok) {
       upstreamResponse = await fetch(fallbackGateway, {
         headers: { "User-Agent": "BYORR-IPFS-Relay/1.0" },
         cf: {
