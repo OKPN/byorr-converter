@@ -2483,23 +2483,31 @@ function createComfyBadgeHtml(file, result) {
   if (!meta) return '<div style="font-size: 10px; color: var(--muted); margin-top: 3px;">🔍 メタデータ解析中...</div>';
 
   const isConvertOn = enableConvertCheck?.checked ?? true;
+
   let badge = "";
   if (meta.hasWorkflow) {
     badge = `
       <span class="meta-badge" style="background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.4); font-size: 10.5px; padding: 2px 6px; border-radius: 4px; font-weight: 600; display: inline-flex; align-items: center; gap: 4px;" title="ComfyUIのワークフロー（ノード接続・配置情報）が完全な形で含まれています。ComfyUI画面にドロップすると完全再現可能です。">
-        <span>🧬 ComfyUI ワークフロー完全内包${meta.nodeCount ? ` (${meta.nodeCount}ノード)` : ""}</span>
+        <span>🧬 ComfyUI ワークフロー完全内包</span>
+        ${meta.nodeCount ? `<span style="font-size: 9.5px; opacity: 0.85;">(${meta.nodeCount}ノード)</span>` : ""}
       </span>
     `;
   } else if (meta.hasPrompt) {
     badge = `
-      <span class="meta-badge" style="background: rgba(245, 158, 11, 0.15); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.4); font-size: 10.5px; padding: 2px 6px; border-radius: 4px; font-weight: 600;" title="ComfyUIプロンプト/API入力設定が含まれています。">
+      <span class="meta-badge" style="background: rgba(245, 158, 11, 0.15); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.4); font-size: 10.5px; padding: 2px 6px; border-radius: 4px; font-weight: 600;" title="ComfyUIのプロンプト/API情報が含まれています。">
         📝 ComfyUI プロンプト情報あり
       </span>
     `;
   } else if (meta.hasA1111) {
     badge = `
-      <span class="meta-badge" style="background: rgba(139, 92, 246, 0.15); color: #a78bfa; border: 1px solid rgba(139, 92, 246, 0.4); font-size: 10.5px; padding: 2px 6px; border-radius: 4px; font-weight: 600;" title="Stable Diffusion WebUI (A1111) 生成パラメータが含まれています。">
-        🎨 A1111 生成情報あり
+      <span class="meta-badge" style="background: rgba(56, 189, 248, 0.15); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.4); font-size: 10.5px; padding: 2px 6px; border-radius: 4px; font-weight: 600;" title="WebUI (A1111) 生成パラメータが含まれています。">
+        📋 WebUI (A1111) 生成情報あり
+      </span>
+    `;
+  } else {
+    badge = `
+      <span class="meta-badge" style="background: rgba(255, 255, 255, 0.05); color: var(--muted); border: 1px solid var(--border); font-size: 10px; padding: 1px 5px; border-radius: 4px;" title="ワークフローメタデータは検出されませんでした（Exif削除済みまたは非AI画像）。">
+        ⚪ ワークフローなし
       </span>
     `;
   }
@@ -2515,14 +2523,7 @@ function createComfyBadgeHtml(file, result) {
     }
   }
 
-  if (!badge && !statusNotice) return "";
-
-  return `
-    <div class="comfy-meta-row" style="margin-top: 4px; display: flex; align-items: center; flex-wrap: wrap; gap: 6px;">
-      ${badge}
-      ${statusNotice}
-    </div>
-  `;
+  return `<div class="comfy-meta-row" style="margin-top: 3px; display: flex; align-items: center; gap: 4px; flex-wrap: wrap;">${badge}${statusNotice}</div>`;
 }
 
 async function checkRemoteFileWf(key, publicUrl) {
@@ -2762,15 +2763,10 @@ function render() {
           metaHtml = `${formatBytes(file.size)} · <span style="color: var(--muted);">${escapeHtml(dict.statusWaiting || "待機中")}</span>`;
         }
 
-        let wfBadgeHtml = "";
-        if (file.metaStatus && file.metaStatus.hasWorkflow) {
-          wfBadgeHtml = `<span class="meta-badge" style="background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.4); font-size: 10px; padding: 1px 6px; border-radius: 4px; font-weight: 600;" title="ComfyUIワークフローまたはプロンプトが含まれています。変換後も安全に保持されます。">🧬 ワークフロー保持</span>`;
-        }
-
-        let promptBtnHtml = "";
-        if (file.metaStatus && file.metaStatus.promptDetails && file.metaStatus.promptDetails.prompt) {
-          promptBtnHtml = `<button type="button" class="ghost-button copy-prompt-btn" data-index="${index}" style="font-size: 11px; padding: 0 8px; height: 28px; color: #a78bfa; border-color: rgba(167, 139, 250, 0.4);" title="プロンプト（生成情報）をコピー">${escapeHtml(dict.civitaiPrompt || "📝 プロンプト")}</button>`;
-        }
+        const hasPromptDetails = Boolean(file.metaStatus?.promptDetails?.prompt);
+        const promptBtnHtml = hasPromptDetails
+          ? `<button type="button" class="ghost-button copy-prompt-btn" data-index="${index}" style="height: 28px; font-size: 11px; padding: 0 8px; color: #fbbf24; border-color: rgba(251, 191, 36, 0.4); display: inline-flex; align-items: center; gap: 3px;" title="AIプロンプトをコピー">📝 ${escapeHtml(dict.copyPrompt || "プロンプトコピー")}</button>`
+          : "";
 
         item.innerHTML = `
           <div class="card-thumb-area">
@@ -2779,11 +2775,11 @@ function render() {
           <div class="card-main-area">
             <div class="card-title-row">
               <span class="file-name" title="${escapeHtml(displayName)}">${escapeHtml(displayName)}</span>
-              ${wfBadgeHtml}
             </div>
             <div class="card-meta-row">
               ${metaHtml}
             </div>
+            ${createComfyBadgeHtml(file, result)}
           </div>
           <div class="card-actions-area">
             ${promptBtnHtml}
