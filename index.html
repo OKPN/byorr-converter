@@ -144,12 +144,18 @@
             </div>
 
             <!-- アクションボタン群 -->
+            <!-- セクション 1: ローカル保存 -->
             <div class="action-buttons-group" style="border-top: 1px solid var(--border);">
               <label class="check-label-row" style="margin-bottom: 4px;">
                 <input type="checkbox" id="enableZipCheck">
                 <span style="font-size: 12px; font-weight: 600; color: #c7d2fe;" data-i18n="zipOptionLabel">🗜️ ZIP形式でまとめて保存する</span>
               </label>
 
+              <button class="primary-button" id="convertDownloadButton" type="button" disabled data-i18n="btnDownload">📥 ダウンロード</button>
+            </div>
+
+            <!-- セクション 2: クラウドアップロード共有 (BYOC準拠の仕切りと閲覧パスワード) -->
+            <div class="settings-section" style="border-top: 1px solid var(--border); padding-top: 16px;">
               <div style="margin-bottom: 6px;">
                 <label class="field" style="margin: 0;">
                   <span style="display: flex; justify-content: space-between; align-items: center;">
@@ -160,11 +166,11 @@
                 </label>
               </div>
 
-              <button class="primary-button" id="convertDownloadButton" type="button" disabled data-i18n="btnDownload">📥 ダウンロード</button>
-
-              <div style="display: flex; gap: 8px; width: 100%;">
-                <button class="primary-button upload-primary-cta" id="convertUploadR2Button" type="button" disabled data-i18n="btnUploadR2" style="flex: 1; margin: 0; background: linear-gradient(135deg, #ea580c, #c2410c); border-color: #f97316;" title="変換した画像をCloudflare R2へ一括保存">⚡ R2へ保存</button>
-                <button class="primary-button upload-primary-cta" id="convertUploadFilebaseButton" type="button" disabled data-i18n="btnUploadFilebase" style="flex: 1; margin: 0; background: linear-gradient(135deg, #0284c7, #0369a1); border-color: #38bdf8;" title="変換した画像をFilebase (IPFS)へ一括保存">🪐 Filebaseへ保存</button>
+              <div class="action-buttons-group" style="padding: 0; margin-top: 4px;">
+                <div style="display: flex; gap: 8px; width: 100%;">
+                  <button class="primary-button upload-primary-cta" id="convertUploadR2Button" type="button" disabled data-i18n="btnUploadR2" style="flex: 1; margin: 0; background: linear-gradient(135deg, #ea580c, #c2410c); border-color: #f97316;" title="変換した画像をCloudflare R2へ一括保存">⚡ R2へ保存</button>
+                  <button class="primary-button upload-primary-cta" id="convertUploadFilebaseButton" type="button" disabled data-i18n="btnUploadFilebase" style="flex: 1; margin: 0; background: linear-gradient(135deg, #0284c7, #0369a1); border-color: #38bdf8;" title="変換した画像をFilebase (IPFS)へ一括保存">🪐 Filebaseへ保存</button>
+                </div>
               </div>
             </div>
 
