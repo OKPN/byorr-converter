@@ -3527,17 +3527,9 @@ async function fetchAndRenderR2Files() {
           matchedS3 = s3KeyToItem.get(kvName);
         } else if (kvCid && s3CidToItem.has(kvCid)) {
           matchedS3 = s3CidToItem.get(kvCid);
-        } else if (s3RawList.length === 1) {
-          matchedS3 = s3RawList[0];
         }
 
         if (matchedS3) {
-          // 同一 S3 実体にすでに新しい KV が紐付いている場合、古いリネーム残骸を自動整理
-          if (consumedS3Keys.has(matchedS3.Key)) {
-            deleteKvCid(kvName);
-            continue;
-          }
-
           consumedS3Keys.add(matchedS3.Key);
           contents.push({
             Key: kvName,
@@ -3550,10 +3542,6 @@ async function fetchAndRenderR2Files() {
           if (kvCid) {
             storeIpfsCid(kvName, kvCid);
             storeIpfsCid(matchedS3.Key, kvCid);
-          }
-          // KV側で s3Key が未記録なら次回以降のために自動修復
-          if (!recordedS3Key || recordedS3Key !== matchedS3.Key) {
-            registerKvCid(kvName, kvCid, matchedS3.Size || 0, kvItem.metadata?.mime || "", matchedS3.Key);
           }
         } else {
           // S3 に実体がない（アンピン後など）
@@ -3727,27 +3715,6 @@ async function fetchAndRenderR2Files() {
 
       r2FileList.append(article);
 
-      // Filebase で S3 に実体がある場合、CID の確認と KV 同期
-      if (isFilebase && item.isFromS3) {
-        const s3TargetKey = item.s3Key || item.Key;
-        if (itemCid) {
-          registerKvCid(item.Key, itemCid, item.Size || 0, "", s3TargetKey);
-        } else {
-          s3.send(new HeadObjectCommand({ Bucket: bucketName, Key: s3TargetKey })).then(headOutput => {
-            const hHeaders = headOutput?.$metadata?.httpHeaders || {};
-            const fetchedCid = hHeaders["x-amz-meta-cid"] ||
-                               hHeaders["x-amz-meta-ipfs-hash"] ||
-                               headOutput?.Metadata?.cid ||
-                               headOutput?.Metadata?.["ipfs-hash"];
-            if (fetchedCid) {
-              storeIpfsCid(item.Key, fetchedCid);
-              storeIpfsCid(s3TargetKey, fetchedCid);
-              registerKvCid(item.Key, fetchedCid, item.Size || 0, "", s3TargetKey);
-            }
-          }).catch(e => console.warn("HeadObject lookup for file list item failed:", e));
-        }
-      }
-
       // R2 ファイルのワークフロー有無を非同期で判定し、存在する場合のみバッジを表示
       checkRemoteFileWf(item.Key, publicUrl).then(hasWf => {
         if (hasWf) {
@@ -3898,15 +3865,17 @@ r2FileList?.addEventListener("click", async (e) => {
         storeIpfsCid(newKey, cid);
         storeIpfsCid(originalS3Key, cid);
 
-        // 2. 旧キーが S3 実体名と異なる場合のみ KV から削除（実体キーのCIDは消さない）
-        if (oldKey !== originalS3Key) {
-          await deleteKvCid(oldKey);
-          try {
-            const map = JSON.parse(localStorage.getItem("ipfsCidMap") || "{}");
+        // 2. 旧キーを KV から削除（KVの旧エイリアスを消す。S3実体オブジェクトは消さない）
+        await deleteKvCid(oldKey);
+        try {
+          const map = JSON.parse(localStorage.getItem("ipfsCidMap") || "{}");
+          if (oldKey !== originalS3Key) {
             delete map[oldKey];
-            localStorage.setItem("ipfsCidMap", JSON.stringify(map));
-          } catch (e) {}
-        }
+          }
+          map[originalS3Key] = cid;
+          map[newKey] = cid;
+          localStorage.setItem("ipfsCidMap", JSON.stringify(map));
+        } catch (e) {}
 
         await fetchAndRenderR2Files();
       } catch (err) {
