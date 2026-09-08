@@ -43,7 +43,7 @@ export async function onRequest(context) {
 
   let upstreamResponse = null;
   try {
-    upstreamResponse = await fetch(${primaryBase}/, {
+    upstreamResponse = await fetch(`${primaryBase}/${ipfsTarget}`, {
       headers: {
         "User-Agent": "BYORR-KV-Relay/1.0",
         ...(request.headers.get("Range") ? { "Range": request.headers.get("Range") } : {}),
@@ -52,7 +52,7 @@ export async function onRequest(context) {
     });
 
     if (!upstreamResponse.ok) {
-      upstreamResponse = await fetch(${fallbackBase}/, {
+      upstreamResponse = await fetch(`${fallbackBase}/${ipfsTarget}`, {
         headers: {
           "User-Agent": "BYORR-KV-Relay/1.0",
           ...(request.headers.get("Range") ? { "Range": request.headers.get("Range") } : {}),
@@ -72,7 +72,7 @@ export async function onRequest(context) {
   const headers = new Headers(upstreamResponse.headers);
   headers.set("Access-Control-Allow-Origin", "*");
   headers.set("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
-  headers.set("Content-Disposition", inline; filename="");
+  headers.set("Content-Disposition", `inline; filename="${encodeURIComponent(filename)}"`);
   headers.set("X-Content-Type-Options", "nosniff");
   headers.set("Cache-Control", "public, max-age=31536000, immutable");
 
