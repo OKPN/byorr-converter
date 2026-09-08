@@ -78,6 +78,17 @@ const i18nDict = {
     dataSyncHeading: "📦 設定の引き継ぎ & スマホ共有",
     dataSyncDesc: "Civitai ウォッチリスト、Cloudflare R2 接続情報、画像変換設定を別の端末やスマホへ安全に引き継ぎます。",
     btnClearAllData: "🗑️ 全クリア",
+    tempPasswordLabel: "🔑 閲覧パスワード",
+    tempPasswordPlaceholder: "合言葉を設定",
+    optionalText: "(任意)",
+    quickUploadHeading: "🚀 外部投稿 / Windows「送る」連携",
+    uploadApiUrl: "投稿API エンドポイント URL",
+    btnCopyUrl: "📋 URLをコピー",
+    btnCopyCurl: "💻 curl例をコピー",
+    btnDownloadSendTo: "📥 Windows「送る」登録バッチ",
+    uploadApiNote: "※ 本APIで投稿されたファイルは Filebase(IPFS) または R2 に保存され、短縮URLが発行されます。",
+    sendToUninstallNote: "※「送る」から解除・削除したい場合: <code>Win + R</code> ➜ <code>shell:sendto</code> で開くフォルダからバッチを削除してください。",
+    passwordBadge: "🔒 パスワード保護",
     qrModalTitle: "📱 スマホ/別端末でスキャン",
     qrModalSub: "スマホのカメラ等で下記QRコードを読み取ると、Civitaiウォッチリストや接続設定が安全に直接引き継がれます。",
     civitaiGalleryHeading: "🎨 Civitai ギャラリー & クリエイターウォッチ",
@@ -228,6 +239,17 @@ const i18nDict = {
     dataSyncHeading: "📦 Settings Sync & Mobile Sharing",
     dataSyncDesc: "Securely sync Civitai creators watch list, Cloudflare R2 credentials, and converter settings to mobile or other devices.",
     btnClearAllData: "🗑️ Clear All",
+    tempPasswordLabel: "🔑 Access Password",
+    tempPasswordPlaceholder: "Set password phrase",
+    optionalText: "(Optional)",
+    quickUploadHeading: "🚀 Quick Upload / Windows 'Send To'",
+    uploadApiUrl: "Upload API Endpoint URL",
+    btnCopyUrl: "📋 Copy URL",
+    btnCopyCurl: "💻 Copy curl",
+    btnDownloadSendTo: "📥 Windows 'Send To' Batch",
+    uploadApiNote: "※ Files uploaded via this API are stored in Filebase (IPFS) or R2 with a short URL.",
+    sendToUninstallNote: "※ To remove from 'Send To': Press <code>Win + R</code> ➜ type <code>shell:sendto</code> and delete the batch file.",
+    passwordBadge: "🔒 Password Protected",
     qrModalTitle: "📱 Scan with Mobile / Other Device",
     qrModalSub: "Scan this QR code with your mobile camera to securely transfer your Civitai watch list, connection settings, and preferences.",
     civitaiGalleryHeading: "🎨 Civitai Gallery & Watcher",
@@ -647,13 +669,17 @@ function storeIpfsCid(key, cid) {
   registerKvCid(key, cid);
 }
 
-async function registerKvCid(key, cid, size = 0, mime = "", s3Key = "") {
+async function registerKvCid(key, cid, size = 0, mime = "", s3Key = "", password = "") {
   if (!key || !cid) return;
   try {
+    const payload = { key, cid, size, mime, s3Key: s3Key || key };
+    if (password && typeof password === "string" && password.trim().length > 0) {
+      payload.password = password.trim();
+    }
     await fetch("/api/ipfs-kv", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ key, cid, size, mime, s3Key: s3Key || key }),
+      body: JSON.stringify(payload),
     });
   } catch (e) {
     console.warn("Failed to register CID to KV:", e);
@@ -2803,11 +2829,16 @@ function createCardActionHtml(file, result, index) {
       ? `<span style="font-size: 10px; font-weight: 700; color: #38bdf8; background: rgba(56, 189, 248, 0.15); border: 1px solid rgba(56, 189, 248, 0.4); padding: 2px 6px; border-radius: 4px;">🪐 IPFS</span>`
       : `<span style="font-size: 10px; font-weight: 700; color: #fb923c; background: rgba(249, 115, 22, 0.15); border: 1px solid rgba(249, 115, 22, 0.4); padding: 2px 6px; border-radius: 4px;">⚡ R2</span>`;
 
+    const pwdBadge = result.hasPassword
+      ? `<span class="password-badge" style="font-size: 10px; font-weight: 600; color: #818cf8; background: rgba(99, 102, 241, 0.15); border: 1px solid rgba(99, 102, 241, 0.3); padding: 2px 6px; border-radius: 4px;">🔒 ${result.password ? `パスワード: ${escapeHtml(result.password)}` : "パスワード保護"}</span>`
+      : "";
+
     return `
       ${badgeHtml}
+      ${pwdBadge}
       <input type="text" class="url-output" value="${escapeHtml(result.proxyUrl)}" readonly style="flex: 1; min-width: 200px; max-width: 400px; font-size: 11px; height: 28px; padding: 0 8px; background: rgba(0,0,0,0.3); border: 1px solid rgba(56,189,248,0.4); color: #38bdf8; border-radius: 4px;" title="クリックで全選択＆コピー" onclick="this.select()">
       <button type="button" class="ghost-button copy-button" style="font-size: 11px; padding: 0 8px; height: 28px;">${escapeHtml(dict.copyUrl)}</button>
-      <button type="button" class="ghost-button civitai-post-btn" data-index="${index}" data-url="${escapeHtml(result.proxyUrl)}" data-name="${escapeHtml(result.name)}" style="font-size: 11px; padding: 0 8px; height: 28px; color: #38bdf8; border-color: rgba(56, 189, 248, 0.4);" title="Civitai の投稿画面を開く">🎨 Civitai</button>
+      ${!result.hasPassword ? `<button type="button" class="ghost-button civitai-post-btn" data-index="${index}" data-url="${escapeHtml(result.proxyUrl)}" data-name="${escapeHtml(result.name)}" style="font-size: 11px; padding: 0 8px; height: 28px; color: #38bdf8; border-color: rgba(56, 189, 248, 0.4);" title="Civitai の投稿画面を開く">🎨 Civitai</button>` : ""}
       <button type="button" class="ghost-button download-single-btn" data-index="${index}" style="font-size: 11px; padding: 0 8px; height: 28px;" title="${dlBtnTitle}" ${dlBtnDisabled}>📥 DL</button>
     `;
   }
@@ -3293,6 +3324,9 @@ async function uploadImage(result, targetProvider = "r2") {
   render();
 
   try {
+    const pwdInput = document.querySelector("#tempPasswordInput");
+    const password = customPassword !== null ? customPassword : (pwdInput ? pwdInput.value.trim() : "");
+
     const arrayBuffer = await result.blob.arrayBuffer();
     const bytes = new Uint8Array(arrayBuffer);
     let contentType = result.blob.type || "";
@@ -3351,12 +3385,14 @@ async function uploadImage(result, targetProvider = "r2") {
     result.isUploaded = true;
     result.uploadedProvider = targetProvider;
     result.storageKey = result.name;
+    result.password = password;
+    result.hasPassword = Boolean(password);
 
     if (isFilebase) {
       if (ipfsCid) {
         result.ipfsCid = ipfsCid;
         storeIpfsCid(result.name, ipfsCid);
-        registerKvCid(result.name, ipfsCid, result.size || bytes.length, contentType);
+        registerKvCid(result.name, ipfsCid, result.size || bytes.length, contentType, result.name, password);
       }
       const baseDomain = (getSelectedR2Domain() || (typeof window !== "undefined" ? window.location.origin : "")).replace(/\/$/, "");
       result.proxyUrl = `${baseDomain}/${encodeURIComponent(result.name)}`;
@@ -3753,12 +3789,18 @@ async function fetchAndRenderR2Files() {
       let statusBadgeHtml = "";
       let actionButtonsHtml = "";
 
+      const hasPassword = Boolean(item.password || item.metadata?.passwordHash || item.metadata?.password);
+      const plainPwd = item.password || item.metadata?.password;
+      const pwdBadgeHtml = hasPassword
+        ? `<span class="password-badge" style="background: rgba(99, 102, 241, 0.15); color: #818cf8; border: 1px solid rgba(99, 102, 241, 0.3); font-size: 10px; padding: 1px 6px; border-radius: 4px; font-weight: 600;">🔒 ${plainPwd ? `パスワード: ${escapeHtml(plainPwd)}` : "パスワード保護"}</span>`
+        : "";
+
       if (isFilebase) {
         if (item.isFromS3) {
           statusBadgeHtml = `<span style="font-size: 10px; padding: 1px 6px; border-radius: 4px; background: rgba(34,197,94,0.15); color: #22c55e; border: 1px solid rgba(34,197,94,0.4);" title="Filebase オリジンに保存中（ストレージ容量を消費中）">⚡ オリジン保存中</span>`;
           actionButtonsHtml = `
             <button type="button" class="ghost-button copy-r2-url-btn" data-url="${escapeHtml(publicUrl)}">${escapeHtml(dict.copyUrl)}</button>
-            <button type="button" class="ghost-button civitai-r2-post-btn" data-url="${escapeHtml(publicUrl)}" data-name="${escapeHtml(item.Key)}" style="color: #38bdf8; border-color: rgba(56, 189, 248, 0.4);" title="Civitai の投稿画面を開く">🎨 Civitai</button>
+            ${!hasPassword ? `<button type="button" class="ghost-button civitai-r2-post-btn" data-url="${escapeHtml(publicUrl)}" data-name="${escapeHtml(item.Key)}" style="color: #38bdf8; border-color: rgba(56, 189, 248, 0.4);" title="Civitai の投稿画面を開く">🎨 Civitai</button>` : ""}
             <button type="button" class="ghost-button unpin-file-btn" data-key="${escapeHtml(item.Key)}" data-s3key="${escapeHtml(item.s3Key || item.Key)}" style="color: #f59e0b; border-color: rgba(245,158,11,0.4);" title="Filebaseの容量を解放します（URLリンクはそのまま使えます）">容量解放</button>
             <button type="button" class="ghost-button danger-button delete-r2-file-btn" data-key="${escapeHtml(item.Key)}" data-s3key="${escapeHtml(item.s3Key || item.Key)}" data-origin="1" title="アクセスを遮断し、KVおよびストレージから完全に削除します">リンク抹消</button>
           `;
@@ -3766,14 +3808,14 @@ async function fetchAndRenderR2Files() {
           statusBadgeHtml = `<span style="font-size: 10px; padding: 1px 6px; border-radius: 4px; background: rgba(239, 68, 68, 0.15); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.4); font-weight: 600;" title="オリジンから削除済み。IPFS/CDNキャッシュにより一時的に表示されていますが、永続性は保証されません。">⚠️ IPFS残留中 (非保証)</span>`;
           actionButtonsHtml = `
             <button type="button" class="ghost-button copy-r2-url-btn" data-url="${escapeHtml(publicUrl)}">${escapeHtml(dict.copyUrl)}</button>
-            <button type="button" class="ghost-button civitai-r2-post-btn" data-url="${escapeHtml(publicUrl)}" data-name="${escapeHtml(item.Key)}" style="color: #38bdf8; border-color: rgba(56, 189, 248, 0.4);" title="Civitai の投稿画面を開く">🎨 Civitai</button>
+            ${!hasPassword ? `<button type="button" class="ghost-button civitai-r2-post-btn" data-url="${escapeHtml(publicUrl)}" data-name="${escapeHtml(item.Key)}" style="color: #38bdf8; border-color: rgba(56, 189, 248, 0.4);" title="Civitai の投稿画面を開く">🎨 Civitai</button>` : ""}
             <button type="button" class="ghost-button danger-button delete-r2-file-btn" data-key="${escapeHtml(item.Key)}" data-s3key="${escapeHtml(item.s3Key || item.Key)}" data-origin="0" title="アクセスを遮断し、KVから完全に削除します">リンク抹消</button>
           `;
         }
       } else {
         actionButtonsHtml = `
           <button type="button" class="ghost-button copy-r2-url-btn" data-url="${escapeHtml(publicUrl)}">${escapeHtml(dict.copyUrl)}</button>
-          <button type="button" class="ghost-button civitai-r2-post-btn" data-url="${escapeHtml(publicUrl)}" data-name="${escapeHtml(item.Key)}" style="color: #38bdf8; border-color: rgba(56, 189, 248, 0.4);" title="Civitai の投稿画面を開く">🎨 Civitai</button>
+          ${!hasPassword ? `<button type="button" class="ghost-button civitai-r2-post-btn" data-url="${escapeHtml(publicUrl)}" data-name="${escapeHtml(item.Key)}" style="color: #38bdf8; border-color: rgba(56, 189, 248, 0.4);" title="Civitai の投稿画面を開く">🎨 Civitai</button>` : ""}
           ${devUrl ? `<button type="button" class="ghost-button copy-r2-dev-url-btn" data-url="${escapeHtml(devUrl)}">${escapeHtml(dict.devCopyUrl)}</button>` : ""}
           <button type="button" class="ghost-button danger-button delete-r2-file-btn" data-key="${escapeHtml(item.Key)}" data-origin="1">${escapeHtml(dict.deleteNow)}</button>
         `;
@@ -3794,6 +3836,7 @@ async function fetchAndRenderR2Files() {
             ${renameBtnHtml}
             <span style="color: #64748b; font-size: 11px; white-space: nowrap;">${formatBytes(item.Size || 0)}</span>
             ${statusBadgeHtml}
+            ${pwdBadgeHtml}
             <span class="r2-wf-badge-placeholder" data-key="${escapeHtml(item.Key)}"></span>
           </div>
           <div class="item-meta" style="color: var(--muted); margin-top: 4px; font-size: 11px;">
@@ -4544,5 +4587,135 @@ civitaiGalleryList?.addEventListener("click", async (event) => {
       await copyToClipboard(rawUrl, copyBtn, "📋 URLコピー");
     }
   }
+});
+
+// --- 🚀 外部投稿 / Windows「送る」連携ロジック ---
+const dedicatedUploadApiUrlInput = document.querySelector("#dedicatedUploadApiUrl");
+const copyUploadApiUrlBtn = document.querySelector("#copyUploadApiUrlBtn");
+const copyCurlCmdBtn = document.querySelector("#copyCurlCmdBtn");
+const downloadSendToBatBtn = document.querySelector("#downloadSendToBatBtn");
+
+function getDedicatedUploadUrlWithDomain() {
+  const baseDomain = (getSelectedR2Domain() || (typeof window !== "undefined" ? window.location.origin : "")).replace(/\/$/, "");
+  return `${baseDomain}/api/upload`;
+}
+
+function updateDedicatedUploadApiUI() {
+  if (!dedicatedUploadApiUrlInput) return;
+  const endpoint = getDedicatedUploadUrlWithDomain();
+  dedicatedUploadApiUrlInput.value = endpoint;
+}
+
+r2DomainSelect?.addEventListener("change", updateDedicatedUploadApiUI);
+setTimeout(updateDedicatedUploadApiUI, 200);
+
+copyUploadApiUrlBtn?.addEventListener("click", async () => {
+  const endpoint = getDedicatedUploadUrlWithDomain();
+  await copyToClipboard(endpoint, copyUploadApiUrlBtn, "📋 コピー完了!");
+});
+
+copyCurlCmdBtn?.addEventListener("click", async () => {
+  const endpoint = getDedicatedUploadUrlWithDomain();
+  const curlCmd = `curl -X POST "${endpoint}" -F "file=@/path/to/image.webp"`;
+  await copyToClipboard(curlCmd, copyCurlCmdBtn, "💻 コピー完了!");
+});
+
+downloadSendToBatBtn?.addEventListener("click", () => {
+  const endpoint = getDedicatedUploadUrlWithDomain();
+  if (!endpoint) {
+    alert("⚠️ 配信ドメインURLを設定してください。");
+    return;
+  }
+
+  const batContent = `<# :
+@echo off
+chcp 65001 >nul
+set "BAT_PATH=%~f0"
+set "BAT_ARGS="
+:loop
+if "%~1"=="" goto :endloop
+if defined BAT_ARGS (set "BAT_ARGS=%BAT_ARGS%|||%~1") else (set "BAT_ARGS=%~1")
+shift
+goto :loop
+:endloop
+powershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command "$s=[System.IO.File]::ReadAllText($env:BAT_PATH, [System.Text.Encoding]::UTF8); & ([ScriptBlock]::Create($s))"
+exit /b
+#>
+
+$endpoint = "${endpoint}"
+$batPath = $env:BAT_PATH
+$rawArgs = $env:BAT_ARGS
+
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
+
+# 1. 引数なし（ダブルクリック時）: SendTo フォルダへ自動登録
+if (-not $rawArgs) {
+    $sendtoDir = [Environment]::GetFolderPath([Environment+SpecialFolder]::SendTo)
+    $dest = Join-Path $sendtoDir "BYORRへアップロード.bat"
+    
+    try {
+        Copy-Item -Path $batPath -Destination $dest -Force
+        [System.Windows.Forms.MessageBox]::Show("【BYORR 登録完了】\`n\`n✅ Windows の「送る」メニューに「BYORRへアップロード」を登録しました！\`n\`nエクスプローラーで画像や動画を右クリック ➜「送る」➜「BYORRへアップロード」でご利用いただけます。\`n\`n※解除・削除したい場合: Win+R ➜ shell:sendto から本ファイルを削除してください。", "登録完了 - BYORR", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information)
+    } catch {
+        [System.Windows.Forms.MessageBox]::Show("⚠️ 登録に失敗しました: " + $_.Exception.Message, "エラー", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
+    }
+    exit
+}
+
+# 2. 引数あり: アップロード処理
+$files = $rawArgs -split '\\|\\|\\|'
+$urls = @()
+$errors = @()
+
+foreach ($f in $files) {
+    if (Test-Path $f -PathType Leaf) {
+        $curlArgs = @('-s', '-X', 'POST', '-F', ('file=@' + $f), $endpoint)
+        
+        try {
+            $raw = & curl.exe @curlArgs
+            $json = $raw | ConvertFrom-Json
+            if ($json.success -and $json.url) {
+                $urls += $json.url
+            } else {
+                $err = if ($json.error) { $json.error } else { $raw }
+                $errors += ([System.IO.Path]::GetFileName($f) + ': ' + $err)
+            }
+        } catch {
+            $errors += ([System.IO.Path]::GetFileName($f) + ': ' + $_.Exception.Message)
+        }
+    }
+}
+
+if ($urls.Count -gt 0) {
+    $clip = $urls -join [Environment]::NewLine
+    [System.Windows.Forms.Clipboard]::SetText($clip)
+    $notify = New-Object System.Windows.Forms.NotifyIcon
+    $notify.Icon = [System.Drawing.SystemIcons]::Information
+    $notify.Visible = $true
+    $msg = if ($urls.Count -eq 1) { "URLをクリップボードにコピーしました！" } else { "$($urls.Count)件のURLをクリップボードにコピーしました！" }
+    $notify.ShowBalloonTip(4000, "BYORR アップロード完了", $msg, [System.Windows.Forms.ToolTipIcon]::Info)
+    Start-Sleep -Seconds 2
+    $notify.Dispose()
+}
+
+if ($errors.Count -gt 0) {
+    $errMsg = $errors -join [Environment]::NewLine
+    [System.Windows.Forms.MessageBox]::Show("一部またはすべてのアップロードに失敗しました:\`n" + $errMsg, "BYORR アップロードエラー", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Warning)
+}
+`;
+
+  const crlfContent = "\uFEFF" + batContent.replace(/\r?\n/g, "\r\n");
+  const blob = new Blob([crlfContent], { type: "text/plain;charset=utf-8" });
+  const downloadUrl = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = downloadUrl;
+  a.download = "BYORRへアップロード.bat";
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(downloadUrl);
+
+  alert("📥 設定済みの「BYORRへアップロード.bat」をダウンロードしました！\n\n【登録手順】\nダウンロードしたバッチファイルをダブルクリックすると、自動でWindowsの「送る」メニューに登録されます。\n\n【使い方】\nエクスプローラーで画像や動画を右クリック ➜「送る」➜「BYORRへアップロード」で投稿完了＆URLが自動コピーされます！\n\n【解除・削除方法】\nWin + R キーを押し「shell:sendto」と入力して開いたフォルダから、本ファイルを削除してください。");
 });
 

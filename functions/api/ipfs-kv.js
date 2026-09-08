@@ -84,13 +84,54 @@ export async function onRequestPost(context) {
 
   try {
     const body = await request.json();
-    const { key, cid, size, mime, lastModified } = body;
+    const { key, cid, size, mime, lastModified, password } = body;
 
     if (!key || !cid) {
       return new Response(JSON.stringify({ error: "Missing 'key' or 'cid' in request body" }), {
         status: 400,
         headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
       });
+    }
+
+    // パスワードが指定されている場合は PBKDF2 でハッシュ化
+    let passwordMeta = {};
+    if (password && typeof password === "string" && password.trim().length > 0) {
+      const cleanPwd = password.trim();
+      const saltBytes = crypto.getRandomValues(new Uint8Array(16));
+      const enc = new TextEncoder();
+      const keyMaterial = await crypto.subtle.importKey(
+        "raw",
+        enc.encode(cleanPwd),
+        { name: "PBKDF2" },
+        false,
+        ["deriveBits"]
+      );
+      const derivedBits = await crypto.subtle.deriveBits(
+        {
+          name: "PBKDF2",
+          salt: saltBytes,
+          iterations: 100000,
+          hash: "SHA-256",
+        },
+        keyMaterial,
+        256
+      );
+      const hashHex = Array.from(new Uint8Array(derivedBits))
+        .map(b => b.toString(16).padStart(2, "0"))
+        .join("");
+      const saltHex = Array.from(saltBytes)
+        .map(b => b.toString(16).padStart(2, "0"))
+        .join("");
+      const sessionSecret = "sec_" + Array.from(crypto.getRandomValues(new Uint8Array(16)))
+        .map(b => b.toString(16).padStart(2, "0"))
+        .join("");
+
+      passwordMeta = {
+        password: cleanPwd,
+        passwordHash: hashHex,
+        passwordSalt: saltHex,
+        sessionSecret,
+      };
     }
 
     const metadata = {
@@ -100,6 +141,7 @@ export async function onRequestPost(context) {
       lastModified: lastModified || Date.now(),
       registeredAt: Date.now(),
       s3Key: body.s3Key || key,
+      ...passwordMeta,
     };
 
     // KV に登録 (value: cid, metadata)
