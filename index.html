@@ -173,23 +173,23 @@
                       </div>
                     </div>
                     <div style="display: flex; flex-direction: column; gap: 6px;">
-                      <div style="display: flex; gap: 6px; align-items: center;">
-                        <select id="r2DomainSelect" style="flex: 1; height: 38px; background-color: #1a1c23; color: #f8fafc; color-scheme: dark; border: 1px solid var(--border); border-radius: 6px; padding: 0 10px; font-size: 12px; outline: none; cursor: pointer;">
+                      <div style="display: flex; gap: 6px; align-items: center; width: 100%;">
+                        <select id="r2DomainSelect" style="flex: 1; min-width: 0; height: 38px; background-color: #1a1c23; color: #f8fafc; color-scheme: dark; border: 1px solid var(--border); border-radius: 6px; padding: 0 10px; font-size: 12px; outline: none; cursor: pointer;">
                           <option value="">-- 配信ドメインを選択 (未設定) --</option>
                         </select>
-                        <button type="button" class="ghost-button" id="r2DomainAddBtn" title="新しい配信URLを追加" style="height: 38px; min-width: 38px; padding: 0 10px; font-size: 14px; font-weight: bold;">＋</button>
-                        <button type="button" class="ghost-button danger-button" id="r2DomainDeleteBtn" title="選択中のドメインを削除" style="height: 38px; min-width: 38px; padding: 0 10px; font-size: 13px;">🗑️</button>
+                        <button type="button" class="ghost-button" id="r2DomainAddBtn" title="新しい配信URLを追加" style="height: 38px; width: 38px; min-width: 38px; flex-shrink: 0; padding: 0; font-size: 16px; font-weight: bold; display: inline-flex; align-items: center; justify-content: center;">＋</button>
+                        <button type="button" class="ghost-button danger-button" id="r2DomainDeleteBtn" title="選択中のドメインを削除" style="height: 38px; width: 38px; min-width: 38px; flex-shrink: 0; padding: 0; font-size: 14px; display: inline-flex; align-items: center; justify-content: center;">🗑️</button>
                       </div>
 
                       <!-- インライン新規ドメイン追加入力欄 -->
                       <div id="r2DomainAddForm" style="display: none; margin-top: 4px; gap: 6px; align-items: center;">
-                        <input id="r2DomainNewInput" type="text" inputmode="url" placeholder="例: blob-bin.pages.dev または r2.k7m.f5.si" style="flex: 1; height: 34px; font-size: 12px;" spellcheck="false" autocomplete="off">
+                        <input id="r2DomainNewInput" type="text" inputmode="url" placeholder="例: sample-cdn.pages.dev または img.example.com" style="flex: 1; height: 34px; font-size: 12px;" spellcheck="false" autocomplete="off">
                         <button type="button" class="primary-button" id="r2DomainNewSaveBtn" style="height: 34px; font-size: 11px; padding: 0 12px; margin: 0;">追加</button>
                         <button type="button" class="ghost-button" id="r2DomainNewCancelBtn" style="height: 34px; font-size: 11px; padding: 0 8px;">✕</button>
                       </div>
 
                       <span style="font-size: 11px; color: var(--muted); margin-top: 2px;">
-                        ※ pages.dev URL（例: https://staging.byorr-converter.pages.dev）、独自ドメイン、R2 dev URL を何件でも追加できます。<br>
+                        ※ pages.dev URL（例: https://sample-cdn.pages.dev）、独自ドメイン、R2 dev URL を何件でも追加・削除できます。<br>
                         選択された URL が画像コピーやパレットの配信ベース URL に使用されます。
                       </span>
                     </div>
