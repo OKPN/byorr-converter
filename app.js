@@ -2909,9 +2909,31 @@ fileList?.addEventListener("click", async (event) => {
     const file = state.files[index];
     let result = state.results[index];
 
+    // すでにアップロード済みの場合は直接開く
     if (result && result.isUploaded && result.proxyUrl) {
       openCivitaiIntent(result.proxyUrl, result.name);
       return;
+    }
+
+    // 🛡️ ポップアップブロック回避：クリック直後に空タブを先行オープン
+    let preloadWindow = null;
+    try {
+      preloadWindow = window.open("about:blank", "_blank");
+      if (preloadWindow) {
+        preloadWindow.document.write(`
+          <!DOCTYPE html>
+          <html>
+          <head><meta charset="utf-8"><title>🎨 Civitai 転送準備中...</title></head>
+          <body style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;margin:0;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;background:#0f172a;color:#f8fafc;text-align:center;padding:20px;">
+            <div style="font-size:42px;margin-bottom:16px;">🎨</div>
+            <h2 style="margin:0 0 8px 0;font-size:20px;font-weight:700;">Civitai 転送準備中...</h2>
+            <p style="margin:0;color:#94a3b8;font-size:14px;max-width:380px;line-height:1.5;">画像を高速変換＆アップロードしています。<br>完了後に自動で Civitai の投稿画面が開きます。</p>
+          </body>
+          </html>
+        `);
+      }
+    } catch (e) {
+      console.warn("Preload window failed:", e);
     }
 
     target.disabled = true;
@@ -2926,10 +2948,13 @@ fileList?.addEventListener("click", async (event) => {
       const success = await uploadImage(result);
       if (success && result.proxyUrl) {
         await fetchAndRenderR2Files();
-        openCivitaiIntent(result.proxyUrl, result.name);
+        openCivitaiIntent(result.proxyUrl, result.name, preloadWindow);
+      } else {
+        if (preloadWindow && !preloadWindow.closed) preloadWindow.close();
       }
     } catch (e) {
       console.error(e);
+      if (preloadWindow && !preloadWindow.closed) preloadWindow.close();
       alert("Civitai 転送準備に失敗しました: " + e.message);
     } finally {
       render();
@@ -3844,9 +3869,17 @@ copyComposerTextButton?.addEventListener("click", async () => {
 });
 
 // ユーティリティ
-function openCivitaiIntent(mediaUrl, title = "") {
+function openCivitaiIntent(mediaUrl, title = "", existingWindow = null) {
   if (!mediaUrl) return;
   const intentUrl = `https://civitai.com/intent/post?mediaUrl=${encodeURIComponent(mediaUrl)}${title ? `&title=${encodeURIComponent(title)}` : ""}`;
+  if (existingWindow && !existingWindow.closed) {
+    try {
+      existingWindow.location.href = intentUrl;
+      return;
+    } catch (e) {
+      console.warn("Failed to redirect existing window:", e);
+    }
+  }
   window.open(intentUrl, "_blank", "noopener,noreferrer");
 }
 async function copyToClipboard(text, button = null) {
