@@ -1,5 +1,5 @@
 // functions/_middleware.js
-// Cloudflare Pages Function Middleware: 静的ファイル 404 時のスマート中継フォールバック (KV 連携)
+// Cloudflare Pages Function Middleware: 静的ファイル 404 / SPA フォールバック時のスマート中継 (KV 連携)
 
 export async function onRequest(context) {
   const { request, env } = context;
@@ -8,23 +8,27 @@ export async function onRequest(context) {
 
   // 1. 通常のリクエストを試行（HTML、静的アセット、/i/ など）
   const response = await context.next();
-  if (response.status !== 404) {
+
+  // メディア拡張子（例: /sample.webp）かチェック
+  const extMatch = pathname.match(/\.(webp|png|jpe?g|gif|jxl|avif|mp4|webm|zip)$/i);
+  if (!extMatch) {
+    return response; // メディア以外は通常レスポンスを返す
+  }
+
+  const contentType = response.headers.get("content-type") || "";
+  // Pages が存在しない画像に対して SPA の index.html (200 OK, text/html) を返したケース、または 404 の場合に中継を試行
+  const isSpaFallback = response.status === 200 && contentType.includes("text/html");
+  if (response.status !== 404 && !isSpaFallback) {
     return response;
   }
 
-  // 2. 404 の場合で、画像/メディア拡張子への直接アクセス（例: /sample.webp）かチェック
-  const extMatch = pathname.match(/\.(webp|png|jpe?g|gif|jxl|avif|mp4|webm|zip)$/i);
-  if (!extMatch) {
-    return response; // メディア以外は通常の404を返す
-  }
-
   const filename = pathname.replace(/^\/+/, "");
-  // もし /i/ や /api/ 自体が404だった場合は何もしない
+  // もし /i/ や /api/ 自体だった場合は何もしない
   if (filename.startsWith("i/") || filename.startsWith("api/")) {
     return response;
   }
 
-  // 3. KV からファイル名に対応する IPFS CID を検索
+  // 2. KV からファイル名に対応する IPFS CID を検索
   let targetCid = null;
   if (env && env.IPFS_KV) {
     try {
@@ -37,7 +41,7 @@ export async function onRequest(context) {
   // ターゲットパス: KV に CID があればそれを使い、無ければファイル名自体を探索
   const ipfsTarget = targetCid || filename;
 
-  // 4. IPFS パブリックゲートウェイからフェッチ
+  // 3. IPFS パブリックゲートウェイからフェッチ
   const primaryBase = "https://ipfs.filebase.io/ipfs";
   const fallbackBase = "https://ipfs.io/ipfs";
 
@@ -68,7 +72,7 @@ export async function onRequest(context) {
     return response;
   }
 
-  // 5. レスポンスヘッダー構築
+  // 4. レスポンスヘッダー構築
   const headers = new Headers(upstreamResponse.headers);
   headers.set("Access-Control-Allow-Origin", "*");
   headers.set("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
