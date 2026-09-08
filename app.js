@@ -3466,6 +3466,15 @@ async function uploadImage(result, targetProvider = "r2", customPassword = null)
       return false;
     }
 
+    // TODO: FastStart（moov atom 先頭配置）最適化
+    // MP4ファイルの「moov atom」がファイル末尾にあると、動画全体をDLしないと再生が始まらない。
+    // moov atomを先頭に移動（ffmpegの -movflags +faststart 相当）すれば、リンクを開いた瞬間に再生開始できる。
+    // 実装方法:
+    //   1. mp4box.js (軽量): MP4のbox構造を解析し moov を先頭に再配置。ブラウザで動作。
+    //      https://github.com/niclas/mp4box.js (or gpac/mp4box.js)
+    //   2. ffmpeg.wasm (重量): フルのffmpegをWASMで実行。faststart以外の変換も可能だが ~25MB のロードが必要。
+    // 対象: ext === "mp4" かつ変換なしでそのままアップロードされるファイル（既にエンコード済みの動画）。
+    // WebM (VP9/AV1) は仕様上この問題が発生しにくい（Cuesが先頭に来る構造）。
     let contentType = result.blob.type || "";
     if (!contentType || contentType === "application/octet-stream") {
       contentType = getContentTypeFromFilename(result.name);
