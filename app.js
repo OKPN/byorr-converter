@@ -1339,9 +1339,7 @@ function loadSettings() {
     renamePattern.value = savedRename;
   }
 
-  const savedLimit = localStorage.getItem("storageLimit") || "10000";
-  if (storageLimitRange) storageLimitRange.value = savedLimit;
-  updateLimitOutput(savedLimit);
+  syncStorageLimitControl();
 
   const savedAutoCleanup = localStorage.getItem("autoCleanup");
   if (savedAutoCleanup !== null && autoCleanupCheckbox) {
@@ -2005,10 +2003,39 @@ document.querySelector(".pattern-helpers")?.addEventListener("click", (event) =>
   }
 });
 
+function getActiveStorageLimit() {
+  if (activeStorageTab === "filebase") {
+    return Number(localStorage.getItem("filebaseStorageLimit") || "5000");
+  }
+  return Number(localStorage.getItem("r2StorageLimit") || localStorage.getItem("storageLimit") || "10000");
+}
+
+function setActiveStorageLimit(val) {
+  const num = Number(val) || (activeStorageTab === "filebase" ? 5000 : 10000);
+  if (activeStorageTab === "filebase") {
+    localStorage.setItem("filebaseStorageLimit", String(num));
+  } else {
+    localStorage.setItem("r2StorageLimit", String(num));
+    localStorage.setItem("storageLimit", String(num)); // 後方互換
+  }
+}
+
+function syncStorageLimitControl() {
+  if (!storageLimitRange) return;
+  const isFb = activeStorageTab === "filebase";
+  storageLimitRange.min = isFb ? "100" : "500";
+  storageLimitRange.max = isFb ? "5000" : "20000";
+  storageLimitRange.step = "100";
+  
+  const currentLimit = getActiveStorageLimit();
+  storageLimitRange.value = String(currentLimit);
+  updateLimitOutput(currentLimit);
+}
+
 storageLimitRange?.addEventListener("input", () => {
   const val = storageLimitRange.value;
   updateLimitOutput(val);
-  localStorage.setItem("storageLimit", val);
+  setActiveStorageLimit(val);
   updateStorageUsageUI();
 });
 
@@ -2033,7 +2060,7 @@ function updateLimitOutput(value) {
 function updateStorageUsageUI() {
   if (!storageLimitRange || !storageUsageText || !storageUsageBar) return;
   const totalSize = state.r2TotalSize || 0;
-  const limitMb = Number(storageLimitRange.value) || 10000;
+  const limitMb = getActiveStorageLimit();
   const limitBytes = limitMb * 1024 * 1024;
   
   const percentage = limitBytes > 0 ? (totalSize / limitBytes) * 100 : 0;
@@ -3316,8 +3343,8 @@ async function ensureStorageCapacityFilebase(s3, bucketName, requiredBytes = 0) 
   const isAutoFifo = localStorage.getItem("autoFifo") !== "false";
   if (!isAutoFifo || !s3 || !bucketName) return;
 
-  // 上限サイズ (MB単位、デフォルト 5000MB = 5GB)
-  const limitMb = Number(storageLimitRange?.value || localStorage.getItem("storageLimit") || "5000");
+  // 上限サイズ (MB単位、Filebase上限は専用のfilebaseStorageLimitを参照、デフォルト 5000MB = 5GB)
+  const limitMb = Number(localStorage.getItem("filebaseStorageLimit") || "5000");
   const limitBytes = limitMb * 1024 * 1024;
 
   try {
@@ -3617,6 +3644,7 @@ storageTabR2?.addEventListener("click", () => {
   activeStorageTab = "r2";
   localStorage.setItem("activeStorageTab", "r2");
   updateStorageTabsUi();
+  syncStorageLimitControl();
   fetchAndRenderR2Files();
 });
 
@@ -3624,6 +3652,7 @@ storageTabFilebase?.addEventListener("click", () => {
   activeStorageTab = "filebase";
   localStorage.setItem("activeStorageTab", "filebase");
   updateStorageTabsUi();
+  syncStorageLimitControl();
   fetchAndRenderR2Files();
 });
 
@@ -3808,7 +3837,7 @@ async function fetchAndRenderR2Files() {
     // Filebase FIFO 自動容量解放チェック (一覧更新時に現在容量が上限を超えている場合)
     const isAutoFifo = localStorage.getItem("autoFifo") !== "false";
     if (isFilebase && isAutoFifo && contents.length > 0) {
-      const limitMb = Number(storageLimitRange?.value || localStorage.getItem("storageLimit") || "5000");
+      const limitMb = Number(localStorage.getItem("filebaseStorageLimit") || "5000");
       const limitBytes = limitMb * 1024 * 1024;
       const currentOriginBytes = contents.filter(c => c.isFromS3).reduce((acc, cur) => acc + (cur.Size || 0), 0);
       if (currentOriginBytes > limitBytes) {
