@@ -177,7 +177,7 @@
             <!-- 安全な Cloudflare R2 / Filebase 接続情報アコーディオン -->
             <div style="padding: 0 18px 18px;">
               <details class="settings-accordion cf-settings-accordion" id="cfSettingsAccordion">
-                <summary data-i18n="cfTitle">☁️ ストレージ接続設定 (R2 / Filebase IPFS)</summary>
+                <summary data-i18n="cfTitle">☁️ クラウドストレージ接続設定</summary>
                 <div class="settings-content" style="padding: 14px 0 4px; display: flex; flex-direction: column; gap: 12px;">
 
                   <!-- STEP 1: 画像公開・配信URL設定 (複数登録・プルダウン切替) -->
@@ -315,7 +315,7 @@
               <div class="metadata-warning" style="border-color: rgba(99, 102, 241, 0.3); background: rgba(99, 102, 241, 0.08);">
                 <span class="warning-icon" style="color: #818cf8;">ℹ️</span>
                 <p data-i18n="r2Notice" data-i18n-html="true" style="color: #c7d2fe; font-size: 11px; line-height: 1.5; margin: 0;">
-                  ブラウザから Cloudflare R2 ストレージへダイレクトに通信します（バックエンド Worker 不要）。事前に R2 バケットの設定で CORS（Cross-Origin Resource Sharing）を許可してください。
+                  ブラウザから S3 互換ストレージ（Cloudflare R2 / Filebase IPFS）へダイレクトに通信します（バックエンド不要）。事前にバケットの設定で CORS（Cross-Origin Resource Sharing）を許可してください。
                 </p>
               </div>
             </div>
