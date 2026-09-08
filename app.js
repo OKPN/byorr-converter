@@ -2782,6 +2782,7 @@ function createCardActionHtml(file, result, index) {
     return `
       <input type="text" class="url-output" value="${escapeHtml(result.proxyUrl)}" readonly style="flex: 1; min-width: 220px; max-width: 420px; font-size: 11px; height: 28px; padding: 0 8px; background: rgba(0,0,0,0.3); border: 1px solid rgba(56,189,248,0.4); color: #38bdf8; border-radius: 4px;" title="クリックで全選択＆コピー" onclick="this.select()">
       <button type="button" class="ghost-button copy-button" style="font-size: 11px; padding: 0 8px; height: 28px;">${escapeHtml(dict.copyUrl)}</button>
+      <button type="button" class="ghost-button civitai-post-btn" data-index="${index}" data-url="${escapeHtml(result.proxyUrl)}" data-name="${escapeHtml(result.name)}" style="font-size: 11px; padding: 0 8px; height: 28px; color: #38bdf8; border-color: rgba(56, 189, 248, 0.4);" title="Civitai の投稿画面を開く">🎨 Civitai</button>
       <button type="button" class="ghost-button download-single-btn" data-index="${index}" style="font-size: 11px; padding: 0 8px; height: 28px;" title="${dlBtnTitle}" ${dlBtnDisabled}>📥 DL</button>
     `;
   }
@@ -2790,6 +2791,7 @@ function createCardActionHtml(file, result, index) {
   return `
     <button type="button" class="ghost-button download-single-btn" data-index="${index}" style="font-size: 11px; padding: 0 8px; height: 28px;" title="${dlBtnTitle}" ${dlBtnDisabled}>📥 DL</button>
     <button type="button" class="ghost-button upload-single-btn" data-index="${index}" style="${upBtnStyle}" title="${upBtnTitle}" ${upBtnDisabled}>☁️ UP</button>
+    <button type="button" class="ghost-button civitai-post-btn" data-index="${index}" style="${upBtnStyle}; color: #38bdf8; border-color: rgba(56, 189, 248, 0.4);" title="アップロードしてCivitaiの投稿画面を開く" ${upBtnDisabled}>🎨 Civitai</button>
   `;
 }
 
@@ -2895,6 +2897,40 @@ fileList?.addEventListener("click", async (event) => {
     } catch (e) {
       console.error(e);
       alert("アップロードに失敗しました: " + e.message);
+    } finally {
+      render();
+    }
+    return;
+  }
+
+  // 3.5 Civitai 転送
+  if (target.classList.contains("civitai-post-btn")) {
+    if (isNaN(index) || index < 0 || index >= state.files.length) return;
+    const file = state.files[index];
+    let result = state.results[index];
+
+    if (result && result.isUploaded && result.proxyUrl) {
+      openCivitaiIntent(result.proxyUrl, result.name);
+      return;
+    }
+
+    target.disabled = true;
+    target.textContent = "転送準備中...";
+    try {
+      if (!result || !isConversionCacheValid()) {
+        if (result && result.url) URL.revokeObjectURL(result.url);
+        if (result && result.previewUrl) URL.revokeObjectURL(result.previewUrl);
+        result = await convertImage(file, index);
+        state.results[index] = result;
+      }
+      const success = await uploadImage(result);
+      if (success && result.proxyUrl) {
+        await fetchAndRenderR2Files();
+        openCivitaiIntent(result.proxyUrl, result.name);
+      }
+    } catch (e) {
+      console.error(e);
+      alert("Civitai 転送準備に失敗しました: " + e.message);
     } finally {
       render();
     }
@@ -3400,6 +3436,7 @@ async function fetchAndRenderR2Files() {
           statusBadgeHtml = `<span style="font-size: 10px; padding: 1px 6px; border-radius: 4px; background: rgba(34,197,94,0.15); color: #22c55e; border: 1px solid rgba(34,197,94,0.4);" title="Filebase オリジンに保存中（ストレージ容量を消費中）">⚡ オリジン保存中</span>`;
           actionButtonsHtml = `
             <button type="button" class="ghost-button copy-r2-url-btn" data-url="${escapeHtml(publicUrl)}">${escapeHtml(dict.copyUrl)}</button>
+            <button type="button" class="ghost-button civitai-r2-post-btn" data-url="${escapeHtml(publicUrl)}" data-name="${escapeHtml(item.Key)}" style="color: #38bdf8; border-color: rgba(56, 189, 248, 0.4);" title="Civitai の投稿画面を開く">🎨 Civitai</button>
             <button type="button" class="ghost-button unpin-file-btn" data-key="${escapeHtml(item.Key)}" style="color: #f59e0b; border-color: rgba(245,158,11,0.4);" title="Filebaseの容量を解放します（URLリンクはそのまま使えます）">容量解放</button>
             <button type="button" class="ghost-button danger-button delete-r2-file-btn" data-key="${escapeHtml(item.Key)}" data-origin="1" title="アクセスを遮断し、KVおよびストレージから完全に削除します">リンク抹消</button>
           `;
@@ -3407,12 +3444,14 @@ async function fetchAndRenderR2Files() {
           statusBadgeHtml = `<span style="font-size: 10px; padding: 1px 6px; border-radius: 4px; background: rgba(239, 68, 68, 0.15); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.4); font-weight: 600;" title="オリジンから削除済み。IPFS/CDNキャッシュにより一時的に表示されていますが、永続性は保証されません。">⚠️ IPFS残留中 (非保証)</span>`;
           actionButtonsHtml = `
             <button type="button" class="ghost-button copy-r2-url-btn" data-url="${escapeHtml(publicUrl)}">${escapeHtml(dict.copyUrl)}</button>
+            <button type="button" class="ghost-button civitai-r2-post-btn" data-url="${escapeHtml(publicUrl)}" data-name="${escapeHtml(item.Key)}" style="color: #38bdf8; border-color: rgba(56, 189, 248, 0.4);" title="Civitai の投稿画面を開く">🎨 Civitai</button>
             <button type="button" class="ghost-button danger-button delete-r2-file-btn" data-key="${escapeHtml(item.Key)}" data-origin="0" title="アクセスを遮断し、KVから完全に削除します">リンク抹消</button>
           `;
         }
       } else {
         actionButtonsHtml = `
           <button type="button" class="ghost-button copy-r2-url-btn" data-url="${escapeHtml(publicUrl)}">${escapeHtml(dict.copyUrl)}</button>
+          <button type="button" class="ghost-button civitai-r2-post-btn" data-url="${escapeHtml(publicUrl)}" data-name="${escapeHtml(item.Key)}" style="color: #38bdf8; border-color: rgba(56, 189, 248, 0.4);" title="Civitai の投稿画面を開く">🎨 Civitai</button>
           ${devUrl ? `<button type="button" class="ghost-button copy-r2-dev-url-btn" data-url="${escapeHtml(devUrl)}">${escapeHtml(dict.devCopyUrl)}</button>` : ""}
           <button type="button" class="ghost-button danger-button delete-r2-file-btn" data-key="${escapeHtml(item.Key)}" data-origin="1">${escapeHtml(dict.deleteNow)}</button>
         `;
@@ -3520,6 +3559,13 @@ r2FileList?.addEventListener("click", async (e) => {
   if (target.classList.contains("copy-r2-dev-url-btn")) {
     const url = target.dataset.url;
     await copyToClipboard(url, target);
+    return;
+  }
+
+  if (target.classList.contains("civitai-r2-post-btn")) {
+    const url = target.dataset.url;
+    const name = target.dataset.name;
+    openCivitaiIntent(url, name);
     return;
   }
 
@@ -3798,6 +3844,11 @@ copyComposerTextButton?.addEventListener("click", async () => {
 });
 
 // ユーティリティ
+function openCivitaiIntent(mediaUrl, title = "") {
+  if (!mediaUrl) return;
+  const intentUrl = `https://civitai.com/intent/post?mediaUrl=${encodeURIComponent(mediaUrl)}${title ? `&title=${encodeURIComponent(title)}` : ""}`;
+  window.open(intentUrl, "_blank", "noopener,noreferrer");
+}
 async function copyToClipboard(text, button = null) {
   if (!text) return;
   let copied = false;
