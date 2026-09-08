@@ -201,6 +201,12 @@ export async function onRequestDelete(context) {
   }
 
   try {
+    const existing = await env.IPFS_KV.getWithMetadata(key);
+    if (existing?.metadata?.blobKey) {
+      await env.IPFS_KV.delete(existing.metadata.blobKey).catch(() => {});
+    } else {
+      await env.IPFS_KV.delete("blob_" + key).catch(() => {});
+    }
     await env.IPFS_KV.delete(key);
     return new Response(JSON.stringify({ success: true, deletedKey: key }), {
       status: 200,

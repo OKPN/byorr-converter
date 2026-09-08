@@ -3766,6 +3766,9 @@ async function fetchAndRenderR2Files() {
             LastModified: matchedS3.LastModified || (kvItem.metadata?.lastModified ? new Date(kvItem.metadata.lastModified) : null),
             isFromS3: true,
             cid: kvCid || getStoredIpfsCid(matchedS3.Key),
+            password: kvItem.metadata?.password || null,
+            passwordHash: kvItem.metadata?.passwordHash || null,
+            metadata: kvItem.metadata || {},
           });
           if (kvCid) {
             storeIpfsCid(kvName, kvCid);
@@ -3780,6 +3783,9 @@ async function fetchAndRenderR2Files() {
             LastModified: kvItem.metadata?.lastModified ? new Date(kvItem.metadata.lastModified) : null,
             isFromS3: false,
             cid: kvCid,
+            password: kvItem.metadata?.password || null,
+            passwordHash: kvItem.metadata?.passwordHash || null,
+            metadata: kvItem.metadata || {},
           });
           if (kvCid) storeIpfsCid(kvName, kvCid);
         }
@@ -3795,18 +3801,35 @@ async function fetchAndRenderR2Files() {
             LastModified: s3Item.LastModified,
             isFromS3: true,
             cid: getStoredIpfsCid(s3Item.Key),
+            metadata: {},
           });
         }
       }
     } else {
-      // ⚡ Cloudflare R2 モード（直接 S3 のみ）
-      contents = (response.Contents || []).map(item => ({
-        Key: item.Key,
-        s3Key: item.Key,
-        Size: item.Size || 0,
-        LastModified: item.LastModified,
-        isFromS3: true,
-      }));
+      // ⚡ Cloudflare R2 モード: KV メタデータも参照してパスワード保護情報を結合
+      let r2KvMap = new Map();
+      try {
+        const kvList = await fetchKvFiles();
+        for (const k of kvList) {
+          if (k.name) r2KvMap.set(k.name, k.metadata || {});
+        }
+      } catch (e) {
+        console.warn("fetchKvFiles error in R2 mode:", e);
+      }
+
+      contents = (response.Contents || []).map(item => {
+        const meta = r2KvMap.get(item.Key) || {};
+        return {
+          Key: item.Key,
+          s3Key: item.Key,
+          Size: item.Size || meta.size || 0,
+          LastModified: item.LastModified,
+          isFromS3: true,
+          password: meta.password || null,
+          passwordHash: meta.passwordHash || null,
+          metadata: meta,
+        };
+      });
     }
 
     // 自動クリーンアップチェック (7日以上経過したファイルを削除)
@@ -3885,9 +3908,23 @@ async function fetchAndRenderR2Files() {
         : getPublicUrl(item.Key);
       const devUrl = isFilebase ? null : getDevUrl(item.Key);
 
+      const hasPassword = Boolean(item.password || item.metadata?.passwordHash || item.metadata?.password);
+      const plainPwd = item.password || item.metadata?.password;
+      const pwdBadgeHtml = hasPassword
+        ? `<span class="password-badge" style="background: rgba(99, 102, 241, 0.2); color: #a5b4fc; border: 1px solid rgba(99, 102, 241, 0.5); font-size: 11px; padding: 2px 7px; border-radius: 4px; font-weight: 700; display: inline-flex; align-items: center; gap: 4px;" title="閲覧パスワードが設定されています">🔒 ${plainPwd ? `合言葉: ${escapeHtml(plainPwd)}` : "パスワード保護"}</span>`
+        : "";
+
       let thumbHtml = "";
-      if (isImage) {
-        thumbHtml = `<img class="thumb" alt="" src="${escapeHtml(publicUrl)}" loading="lazy">`;
+      if (hasPassword) {
+        // パスワード保護ファイルは直接読み込むと未認証で404/認証フォームになるため、保護アイコンプレースホルダーを表示
+        thumbHtml = `
+          <div class="thumb format-badge" style="background: rgba(99, 102, 241, 0.12); color: #818cf8; border: 1px dashed rgba(99, 102, 241, 0.4); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;">
+            <span style="font-size: 20px;">🔒</span>
+            <span style="font-size: 9px; font-weight: 700; letter-spacing: 0.5px;">PROTECTED</span>
+          </div>
+        `;
+      } else if (isImage) {
+        thumbHtml = `<img class="thumb" alt="" src="${escapeHtml(publicUrl)}" loading="lazy" onerror="this.onerror=null; this.parentElement.innerHTML='<div class=\\'thumb format-badge\\'>${escapeHtml(ext.toUpperCase() || 'IMG')}</div>';">`;
       } else if (isVideo) {
         thumbHtml = `<video class="thumb" src="${escapeHtml(publicUrl)}#t=0.5" preload="metadata" muted playsinline style="object-fit: cover; pointer-events: none;"></video>`;
       } else {
@@ -3899,12 +3936,6 @@ async function fetchAndRenderR2Files() {
       // ステータスバッジとアクションボタン
       let statusBadgeHtml = "";
       let actionButtonsHtml = "";
-
-      const hasPassword = Boolean(item.password || item.metadata?.passwordHash || item.metadata?.password);
-      const plainPwd = item.password || item.metadata?.password;
-      const pwdBadgeHtml = hasPassword
-        ? `<span class="password-badge" style="background: rgba(99, 102, 241, 0.15); color: #818cf8; border: 1px solid rgba(99, 102, 241, 0.3); font-size: 10px; padding: 1px 6px; border-radius: 4px; font-weight: 600;">🔒 ${plainPwd ? `パスワード: ${escapeHtml(plainPwd)}` : "パスワード保護"}</span>`
-        : "";
 
       if (isFilebase) {
         if (item.isFromS3) {

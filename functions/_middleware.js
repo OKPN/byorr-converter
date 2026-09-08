@@ -392,32 +392,42 @@ export async function onRequest(context) {
     }
   }
 
-  const ipfsTarget = targetCid || filename;
+  // 候補ターゲット（CID、S3Key、ファイル名）を順次試行
+  const candidates = [];
+  if (targetCid) candidates.push(targetCid);
+  if (meta.s3Key && !candidates.includes(meta.s3Key)) candidates.push(meta.s3Key);
+  if (!candidates.includes(filename)) candidates.push(filename);
 
   const primaryBase = "https://ipfs.filebase.io/ipfs";
   const fallbackBase = "https://ipfs.io/ipfs";
 
   let upstreamResponse = null;
-  try {
-    upstreamResponse = await fetch(`${primaryBase}/${ipfsTarget}`, {
-      headers: {
-        "User-Agent": "BYORR-KV-Relay/1.0",
-        ...(request.headers.get("Range") ? { "Range": request.headers.get("Range") } : {}),
-      },
-      cf: { cacheEverything: !hasPassword, cacheTtl: hasPassword ? 0 : 86400 * 30 },
-    });
-
-    if (!upstreamResponse.ok) {
-      upstreamResponse = await fetch(`${fallbackBase}/${ipfsTarget}`, {
+  for (const candidate of candidates) {
+    try {
+      upstreamResponse = await fetch(`${primaryBase}/${candidate}`, {
         headers: {
           "User-Agent": "BYORR-KV-Relay/1.0",
           ...(request.headers.get("Range") ? { "Range": request.headers.get("Range") } : {}),
         },
         cf: { cacheEverything: !hasPassword, cacheTtl: hasPassword ? 0 : 86400 * 30 },
       });
+
+      if (!upstreamResponse.ok) {
+        upstreamResponse = await fetch(`${fallbackBase}/${candidate}`, {
+          headers: {
+            "User-Agent": "BYORR-KV-Relay/1.0",
+            ...(request.headers.get("Range") ? { "Range": request.headers.get("Range") } : {}),
+          },
+          cf: { cacheEverything: !hasPassword, cacheTtl: hasPassword ? 0 : 86400 * 30 },
+        });
+      }
+
+      if (upstreamResponse && upstreamResponse.ok) {
+        break;
+      }
+    } catch (err) {
+      console.warn(`Upstream fetch attempt failed for ${candidate}:`, err);
     }
-  } catch (err) {
-    return renderNotFoundResponse(request);
   }
 
   if (!upstreamResponse || !upstreamResponse.ok) {
