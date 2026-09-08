@@ -2645,7 +2645,11 @@ function render() {
           metaHtml = `${formatBytes(file.size)} · <span style="color: var(--muted);">待機中</span>`;
         }
 
-        const targetUrl = result ? (result.isUploaded && result.proxyUrl ? result.proxyUrl : result.url) : null;
+        let targetUrl = result ? (result.isUploaded && result.proxyUrl ? result.proxyUrl : result.url) : null;
+        if (targetUrl && getStorageProvider() === "filebase" && result?.ipfsCid && !targetUrl.includes("/i/")) {
+          const baseDomain = (getSelectedR2Domain() || (typeof window !== "undefined" ? window.location.origin : "")).replace(/\/$/, "");
+          targetUrl = `${baseDomain}/i/${result.ipfsCid}/${encodeURIComponent(result.name)}`;
+        }
         const thumbWrapper = targetUrl
           ? `<a href="${escapeHtml(targetUrl)}" target="_blank" rel="noopener noreferrer" class="thumb-link" title="表示">${thumbHtml}</a>`
           : thumbHtml;
@@ -2718,7 +2722,7 @@ function createCardActionHtml(file, result, index) {
 
   if (result && result.isUploaded) {
     return `
-      <input type="text" class="url-output" value="${escapeHtml(result.proxyUrl)}" readonly style="width: 150px; font-size: 11px; height: 28px; padding: 0 6px;">
+      <input type="text" class="url-output" value="${escapeHtml(result.proxyUrl)}" readonly style="flex: 1; min-width: 220px; max-width: 420px; font-size: 11px; height: 28px; padding: 0 8px; background: rgba(0,0,0,0.3); border: 1px solid rgba(56,189,248,0.4); color: #38bdf8; border-radius: 4px;" title="クリックで全選択＆コピー" onclick="this.select()">
       <button type="button" class="ghost-button copy-button" style="font-size: 11px; padding: 0 8px; height: 28px;">${escapeHtml(dict.copyUrl)}</button>
       <button type="button" class="ghost-button download-single-btn" data-index="${index}" style="font-size: 11px; padding: 0 8px; height: 28px;" title="${dlBtnTitle}" ${dlBtnDisabled}>📥 DL</button>
     `;
@@ -2842,8 +2846,22 @@ fileList?.addEventListener("click", async (event) => {
   // 4. URL コピー
   if (target.classList.contains("copy-button")) {
     const result = state.results[index];
-    const inputUrl = card.querySelector(".url-output")?.value;
-    const urlToCopy = result?.proxyUrl || inputUrl;
+    const inputEl = card.querySelector(".url-output");
+    let urlToCopy = result?.proxyUrl || inputEl?.value || "";
+
+    // Filebase IPFS モードで URL に /i/ が抜けている場合は強制的に完全な直リンを再構築
+    const provider = getStorageProvider();
+    if (provider === "filebase" && result?.ipfsCid && !urlToCopy.includes("/i/")) {
+      const baseDomain = (getSelectedR2Domain() || (typeof window !== "undefined" ? window.location.origin : "")).replace(/\/$/, "");
+      urlToCopy = `${baseDomain}/i/${result.ipfsCid}/${encodeURIComponent(result.name)}`;
+      if (inputEl) inputEl.value = urlToCopy;
+      if (result) result.proxyUrl = urlToCopy;
+    }
+
+    if (inputEl) {
+      inputEl.value = urlToCopy;
+      inputEl.select();
+    }
     await copyToClipboard(urlToCopy, target);
     return;
   }
@@ -3076,15 +3094,15 @@ async function uploadImage(result) {
     result.isUploaded = true;
     result.storageKey = result.name;
 
-    if (ipfsCid) {
-      result.ipfsCid = ipfsCid;
-      const baseDomain = getSelectedR2Domain();
-      if (baseDomain) {
-        result.proxyUrl = `${baseDomain.replace(/\/$/, "")}/i/${ipfsCid}/${encodeURIComponent(result.name)}`;
+    if (provider === "filebase" || ipfsCid) {
+      if (ipfsCid) result.ipfsCid = ipfsCid;
+      const baseDomain = (getSelectedR2Domain() || (typeof window !== "undefined" ? window.location.origin : "")).replace(/\/$/, "");
+      if (ipfsCid) {
+        result.proxyUrl = `${baseDomain}/i/${ipfsCid}/${encodeURIComponent(result.name)}`;
       } else {
-        result.proxyUrl = `https://cloudflare-ipfs.com/ipfs/${ipfsCid}`;
+        result.proxyUrl = `https://ipfs.filebase.io/ipfs/${encodeURIComponent(result.name)}`;
       }
-      console.log(`🪐 Filebase IPFS CID 取得成功: ${ipfsCid} -> ${result.proxyUrl}`);
+      console.log(`🪐 Filebase IPFS URL 生成完了: CID=${ipfsCid} -> ${result.proxyUrl}`);
     } else {
       result.proxyUrl = getPublicUrl(result.name);
     }
@@ -3585,19 +3603,42 @@ copyComposerTextButton?.addEventListener("click", async () => {
 
 // ユーティリティ
 async function copyToClipboard(text, button = null) {
+  if (!text) return;
+  let copied = false;
   try {
-    await navigator.clipboard.writeText(text);
-    if (button) {
-      const orig = button.textContent;
-      button.textContent = "コピー完了!";
-      button.classList.add("good");
-      setTimeout(() => {
-        button.textContent = orig;
-        button.classList.remove("good");
-      }, 1500);
+    if (navigator?.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      copied = true;
     }
   } catch (err) {
-    console.error("Clipboard copy failed:", err);
+    console.warn("navigator.clipboard failed, trying execCommand fallback:", err);
+  }
+
+  if (!copied) {
+    try {
+      const textArea = document.createElement("textarea");
+      textArea.value = text;
+      textArea.style.position = "fixed";
+      textArea.style.top = "-9999px";
+      textArea.style.left = "-9999px";
+      document.body.appendChild(textArea);
+      textArea.focus();
+      textArea.select();
+      copied = document.execCommand("copy");
+      document.body.removeChild(textArea);
+    } catch (fallbackErr) {
+      console.error("execCommand copy failed:", fallbackErr);
+    }
+  }
+
+  if (button) {
+    const orig = button.textContent;
+    button.textContent = copied ? "コピー完了!" : "コピー失敗";
+    button.classList.add(copied ? "good" : "danger-button");
+    setTimeout(() => {
+      button.textContent = orig;
+      button.classList.remove("good", "danger-button");
+    }, 1500);
   }
 }
 
