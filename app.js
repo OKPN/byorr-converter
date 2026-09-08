@@ -610,16 +610,39 @@ function storeIpfsCid(key, cid) {
   registerKvCid(key, cid);
 }
 
-async function registerKvCid(key, cid) {
+async function registerKvCid(key, cid, size = 0, mime = "") {
   if (!key || !cid) return;
   try {
     await fetch("/api/ipfs-kv", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ key, cid }),
+      body: JSON.stringify({ key, cid, size, mime }),
     });
   } catch (e) {
     console.warn("Failed to register CID to KV:", e);
+  }
+}
+
+async function deleteKvCid(key) {
+  if (!key) return;
+  try {
+    await fetch(`/api/ipfs-kv?key=${encodeURIComponent(key)}`, {
+      method: "DELETE",
+    });
+  } catch (e) {
+    console.warn("Failed to delete CID from KV:", e);
+  }
+}
+
+async function fetchKvFiles() {
+  try {
+    const res = await fetch("/api/ipfs-kv");
+    if (!res.ok) return [];
+    const data = await res.json();
+    return data.files || [];
+  } catch (e) {
+    console.warn("Failed to fetch KV files:", e);
+    return [];
   }
 }
 
@@ -3133,6 +3156,7 @@ async function uploadImage(result) {
       if (ipfsCid) {
         result.ipfsCid = ipfsCid;
         storeIpfsCid(result.name, ipfsCid);
+        registerKvCid(result.name, ipfsCid, fileToUpload?.size || 0, fileToUpload?.type || "");
       }
       const baseDomain = (getSelectedR2Domain() || (typeof window !== "undefined" ? window.location.origin : "")).replace(/\/$/, "");
       result.proxyUrl = `${baseDomain}/${encodeURIComponent(result.name)}`;
@@ -3265,13 +3289,42 @@ async function fetchAndRenderR2Files() {
       MaxKeys: 1000,
     });
     const response = await s3.send(command);
-    const contents = response.Contents || [];
+    let contents = (response.Contents || []).map(item => ({
+      Key: item.Key,
+      Size: item.Size || 0,
+      LastModified: item.LastModified,
+      isFromS3: true,
+    }));
+
+    const isFilebase = getStorageProvider() === "filebase";
+    const baseDomain = (getSelectedR2Domain() || (typeof window !== "undefined" ? window.location.origin : "")).replace(/\/$/, "");
+
+    // Filebase の場合、KV に保存されているファイルもマージ（アンピン済みで容量0のファイルも表示）
+    if (isFilebase) {
+      try {
+        const kvFiles = await fetchKvFiles();
+        const s3Keys = new Set(contents.map(c => c.Key));
+        for (const kvItem of kvFiles) {
+          if (!s3Keys.has(kvItem.name)) {
+            contents.push({
+              Key: kvItem.name,
+              Size: kvItem.metadata?.size || 0,
+              LastModified: kvItem.metadata?.lastModified ? new Date(kvItem.metadata.lastModified) : null,
+              isFromS3: false,
+            });
+          }
+        }
+      } catch (kvErr) {
+        console.warn("fetchKvFiles merge error:", kvErr);
+      }
+    }
 
     // 自動クリーンアップチェック (7日以上経過したファイルを削除)
     const isAutoCleanup = localStorage.getItem("autoCleanup") === "true";
     if (isAutoCleanup && contents.length > 0) {
       const now = new Date();
       const oldKeys = contents.filter(item => {
+        if (!item.isFromS3) return false;
         if (item.Key?.startsWith("pinned_")) return false; // 📌永続化は保護
         if (!item.LastModified) return false;
         const diffDays = (now - new Date(item.LastModified)) / (1000 * 60 * 60 * 24);
@@ -3293,7 +3346,7 @@ async function fetchAndRenderR2Files() {
 
     paletteFiles = contents.map(item => ({
       key: item.Key,
-      url: getPublicUrl(item.Key),
+      url: isFilebase ? `${baseDomain}/${encodeURIComponent(item.Key)}` : getPublicUrl(item.Key),
     }));
     renderUrlPalette();
 
@@ -3308,15 +3361,14 @@ async function fetchAndRenderR2Files() {
     // 更新日時の降順ソート
     contents.sort((a, b) => new Date(b.LastModified || 0) - new Date(a.LastModified || 0));
 
-    state.r2TotalSize = contents.reduce((acc, cur) => acc + (cur.Size || 0), 0);
+    // 使用容量は Filebase / S3 に実体があるもののみカウント（アンピン済みは容量 0）
+    state.r2TotalSize = contents.filter(c => c.isFromS3).reduce((acc, cur) => acc + (cur.Size || 0), 0);
     updateStorageUsageUI();
-
-    const isFilebase = getStorageProvider() === "filebase";
-    const baseDomain = (getSelectedR2Domain() || (typeof window !== "undefined" ? window.location.origin : "")).replace(/\/$/, "");
 
     contents.forEach(item => {
       const article = document.createElement("article");
       article.className = "result-item";
+      article.dataset.key = item.Key || "";
 
       const ext = item.Key ? item.Key.split('.').pop().toLowerCase() : "";
       const isVideo = ["mp4", "webm", "ogv", "mov", "m4v"].includes(ext);
@@ -3339,6 +3391,33 @@ async function fetchAndRenderR2Files() {
 
       const dateStr = item.LastModified ? new Date(item.LastModified).toLocaleDateString() : "";
 
+      // ステータスバッジとアクションボタン
+      let statusBadgeHtml = "";
+      let actionButtonsHtml = "";
+
+      if (isFilebase) {
+        if (item.isFromS3) {
+          statusBadgeHtml = `<span style="font-size: 10px; padding: 1px 6px; border-radius: 4px; background: rgba(34,197,94,0.15); color: #22c55e; border: 1px solid rgba(34,197,94,0.4);" title="Filebase オリジンに保存中（ストレージ容量を消費中）">⚡ オリジン保存中</span>`;
+          actionButtonsHtml = `
+            <button type="button" class="ghost-button copy-r2-url-btn" data-url="${escapeHtml(publicUrl)}">${escapeHtml(dict.copyUrl)}</button>
+            <button type="button" class="ghost-button unpin-file-btn" data-key="${escapeHtml(item.Key)}" style="color: #f59e0b; border-color: rgba(245,158,11,0.4);" title="Filebaseの容量を解放します（URLリンクはそのまま使えます）">容量解放</button>
+            <button type="button" class="ghost-button danger-button delete-r2-file-btn" data-key="${escapeHtml(item.Key)}" data-origin="1" title="アクセスを遮断し、KVおよびストレージから完全に削除します">リンク抹消</button>
+          `;
+        } else {
+          statusBadgeHtml = `<span style="font-size: 10px; padding: 1px 6px; border-radius: 4px; background: rgba(56,189,248,0.15); color: #38bdf8; border: 1px solid rgba(56,189,248,0.4);" title="Filebase から解放済み。IPFS/Cloudflareから配信継続中（容量消費0）">🪐 IPFS配信中 (容量0)</span>`;
+          actionButtonsHtml = `
+            <button type="button" class="ghost-button copy-r2-url-btn" data-url="${escapeHtml(publicUrl)}">${escapeHtml(dict.copyUrl)}</button>
+            <button type="button" class="ghost-button danger-button delete-r2-file-btn" data-key="${escapeHtml(item.Key)}" data-origin="0" title="アクセスを遮断し、KVから完全に削除します">リンク抹消</button>
+          `;
+        }
+      } else {
+        actionButtonsHtml = `
+          <button type="button" class="ghost-button copy-r2-url-btn" data-url="${escapeHtml(publicUrl)}">${escapeHtml(dict.copyUrl)}</button>
+          ${devUrl ? `<button type="button" class="ghost-button copy-r2-dev-url-btn" data-url="${escapeHtml(devUrl)}">${escapeHtml(dict.devCopyUrl)}</button>` : ""}
+          <button type="button" class="ghost-button danger-button delete-r2-file-btn" data-key="${escapeHtml(item.Key)}" data-origin="1">${escapeHtml(dict.deleteNow)}</button>
+        `;
+      }
+
       article.innerHTML = `
         <input type="checkbox" class="r2-file-checkbox" data-key="${escapeHtml(item.Key)}" style="width: 18px; height: 18px; cursor: pointer; accent-color: var(--accent); align-self: center; margin-right: 4px;">
         <a href="${escapeHtml(publicUrl)}" target="_blank" rel="noopener noreferrer" class="thumb-link" title="表示">
@@ -3348,7 +3427,7 @@ async function fetchAndRenderR2Files() {
           <div class="item-name-row" style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap;">
             <span class="item-name" style="font-weight: 600; word-break: break-all;">${escapeHtml(item.Key)}</span>
             <span style="color: #64748b; font-size: 11px; white-space: nowrap;">${formatBytes(item.Size || 0)}</span>
-            ${itemCid ? `<span style="font-size: 10px; padding: 1px 5px; border-radius: 4px; background: rgba(56,189,248,0.15); color: #38bdf8; border: 1px solid rgba(56,189,248,0.4);" title="IPFS CID: ${escapeHtml(itemCid)}">🪐 IPFS: ${escapeHtml(itemCid.slice(0, 8))}...</span>` : ""}
+            ${statusBadgeHtml}
             <span class="r2-wf-badge-placeholder" data-key="${escapeHtml(item.Key)}"></span>
           </div>
           <div class="item-meta" style="color: var(--muted); margin-top: 4px; font-size: 11px;">
@@ -3356,18 +3435,16 @@ async function fetchAndRenderR2Files() {
           </div>
         </div>
         <div class="result-actions" style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
-          <button type="button" class="ghost-button copy-r2-url-btn" data-url="${escapeHtml(publicUrl)}">${escapeHtml(dict.copyUrl)}</button>
-          ${devUrl ? `<button type="button" class="ghost-button copy-r2-dev-url-btn" data-url="${escapeHtml(devUrl)}">${escapeHtml(dict.devCopyUrl)}</button>` : ""}
-          <button type="button" class="ghost-button danger-button delete-r2-file-btn" data-key="${escapeHtml(item.Key)}">${escapeHtml(dict.deleteNow)}</button>
+          ${actionButtonsHtml}
         </div>
       `;
 
       r2FileList.append(article);
 
-      // Filebase で CID がある場合は KV にも同期。まだない場合は HeadObject で取得して KV 登録
-      if (isFilebase) {
+      // Filebase で S3 に実体がある場合、CID の確認と KV 同期
+      if (isFilebase && item.isFromS3) {
         if (itemCid) {
-          registerKvCid(item.Key, itemCid);
+          registerKvCid(item.Key, itemCid, item.Size || 0);
         } else {
           s3.send(new HeadObjectCommand({ Bucket: bucketName, Key: item.Key })).then(headOutput => {
             const hHeaders = headOutput?.$metadata?.httpHeaders || {};
@@ -3377,15 +3454,7 @@ async function fetchAndRenderR2Files() {
                                headOutput?.Metadata?.["ipfs-hash"];
             if (fetchedCid) {
               storeIpfsCid(item.Key, fetchedCid);
-              const nameRow = article.querySelector(".item-name-row");
-              if (nameRow && !nameRow.querySelector(".ipfs-badge")) {
-                const badge = document.createElement("span");
-                badge.className = "ipfs-badge";
-                badge.style.cssText = "font-size: 10px; padding: 1px 5px; border-radius: 4px; background: rgba(56,189,248,0.15); color: #38bdf8; border: 1px solid rgba(56,189,248,0.4);";
-                badge.title = `IPFS CID: ${fetchedCid}`;
-                badge.textContent = `🪐 IPFS: ${fetchedCid.slice(0, 8)}...`;
-                nameRow.appendChild(badge);
-              }
+              registerKvCid(item.Key, fetchedCid, item.Size || 0);
             }
           }).catch(e => console.warn("HeadObject lookup for file list item failed:", e));
         }
@@ -3454,9 +3523,10 @@ r2FileList?.addEventListener("click", async (e) => {
     return;
   }
 
-  if (target.classList.contains("delete-r2-file-btn")) {
+  // ⚡ 容量解放（アンピン）：Filebase S3 からのみ削除し、KVとURLは維持
+  if (target.classList.contains("unpin-file-btn")) {
     const key = target.dataset.key;
-    if (!key || !confirm(`ファイル '${key}' を R2 から削除しますか？`)) return;
+    if (!key || !confirm(`ファイル '${key}' を Filebase から削除して容量を解放しますか？\n\n・Filebase のストレージ容量が 0 になります（無料枠節約）。\n・Cloudflare KV と IPFS キャッシュにより、URL リンク（画像表示）はそのまま維持されます。`)) return;
 
     try {
       const command = new DeleteObjectCommand({
@@ -3464,6 +3534,36 @@ r2FileList?.addEventListener("click", async (e) => {
         Key: key,
       });
       await s3.send(command);
+      await fetchAndRenderR2Files();
+    } catch (err) {
+      alert(`容量解放に失敗しました: ${err.message}`);
+    }
+    return;
+  }
+
+  // 🚫 リンク抹消（完全削除）：KV から削除して即座に 404 化し、S3 にあればそれも削除
+  if (target.classList.contains("delete-r2-file-btn")) {
+    const key = target.dataset.key;
+    const isFromOrigin = target.dataset.origin === "1";
+    const isFilebase = getStorageProvider() === "filebase";
+
+    const confirmMsg = isFilebase
+      ? `ファイル '${key}' へのアクセスを完全に遮断しますか？\n\n・Cloudflare KV からマッピングを削除します。\n・URL は即座に 404 になり、第三者が閲覧できなくなります。`
+      : `ファイル '${key}' を R2 から削除しますか？`;
+
+    if (!key || !confirm(confirmMsg)) return;
+
+    try {
+      if (isFilebase) {
+        await deleteKvCid(key);
+      }
+      if (isFromOrigin) {
+        const command = new DeleteObjectCommand({
+          Bucket: bucketName,
+          Key: key,
+        });
+        await s3.send(command);
+      }
       await fetchAndRenderR2Files();
     } catch (err) {
       alert(`削除に失敗しました: ${err.message}`);

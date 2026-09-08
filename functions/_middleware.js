@@ -1,5 +1,5 @@
 // functions/_middleware.js
-// Cloudflare Pages Function Middleware: 静的ファイル 404 / SPA フォールバック時のスマート中継 (KV 連携)
+// Cloudflare Pages Function Middleware: 静的ファイル 404 / SPA フォールバック時のスマート中継 (KV 連携 ＆ CID隠蔽)
 
 export async function onRequest(context) {
   const { request, env } = context;
@@ -72,13 +72,22 @@ export async function onRequest(context) {
     return response;
   }
 
-  // 4. レスポンスヘッダー構築
-  const headers = new Headers(upstreamResponse.headers);
+  // 4. レスポンスヘッダー構築（完全サニタイズ：CID・IPFS・Filebaseの痕跡をすべて遮断）
+  const headers = new Headers();
   headers.set("Access-Control-Allow-Origin", "*");
   headers.set("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
   headers.set("Content-Disposition", `inline; filename="${encodeURIComponent(filename)}"`);
   headers.set("X-Content-Type-Options", "nosniff");
   headers.set("Cache-Control", "public, max-age=31536000, immutable");
+
+  const contentLength = upstreamResponse.headers.get("content-length");
+  if (contentLength) {
+    headers.set("Content-Length", contentLength);
+  }
+  const acceptRanges = upstreamResponse.headers.get("accept-ranges");
+  if (acceptRanges) {
+    headers.set("Accept-Ranges", acceptRanges);
+  }
 
   const mimeMap = {
     webp: "image/webp",
@@ -93,9 +102,7 @@ export async function onRequest(context) {
     zip: "application/zip",
   };
   const ext = extMatch[1].toLowerCase();
-  if (mimeMap[ext]) {
-    headers.set("Content-Type", mimeMap[ext]);
-  }
+  headers.set("Content-Type", mimeMap[ext] || upstreamResponse.headers.get("content-type") || "application/octet-stream");
 
   return new Response(upstreamResponse.body, {
     status: 200,

@@ -1,28 +1,22 @@
 // functions/api/ipfs-kv.js
-// Cloudflare Pages Function: ファイル名と IPFS CID の KV 登録・照会 API
+// Cloudflare Pages Function: ファイル名と IPFS CID の KV 登録・照会・削除・一覧 API
 
 export async function onRequestOptions() {
   return new Response(null, {
     status: 204,
     headers: {
       "Access-Control-Allow-Origin": "*",
-      "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+      "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
       "Access-Control-Allow-Headers": "Content-Type",
     },
   });
 }
 
+// GET: 単一キーの照会、または全キーの一覧取得
 export async function onRequestGet(context) {
   const { request, env } = context;
   const url = new URL(request.url);
   const key = url.searchParams.get("key");
-
-  if (!key) {
-    return new Response(JSON.stringify({ error: "Missing 'key' parameter" }), {
-      status: 400,
-      headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
-    });
-  }
 
   if (!env || !env.IPFS_KV) {
     return new Response(JSON.stringify({ error: "IPFS_KV binding not configured" }), {
@@ -31,15 +25,41 @@ export async function onRequestGet(context) {
     });
   }
 
+  // 1. key パラメータがない場合は、KV に登録されている全キーの一覧を返却
+  if (!key) {
+    try {
+      const list = await env.IPFS_KV.list({ limit: 1000 });
+      const items = (list.keys || []).map(k => ({
+        name: k.name,
+        metadata: k.metadata || {},
+      }));
+      return new Response(JSON.stringify({ success: true, files: items }), {
+        status: 200,
+        headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
+      });
+    } catch (err) {
+      return new Response(JSON.stringify({ error: err.message }), {
+        status: 500,
+        headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
+      });
+    }
+  }
+
+  // 2. key パラメータがある場合は単一照会
   try {
-    const cid = await env.IPFS_KV.get(key);
-    if (!cid) {
+    const value = await env.IPFS_KV.getWithMetadata(key);
+    if (!value || !value.value) {
       return new Response(JSON.stringify({ found: false, key }), {
         status: 404,
         headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
       });
     }
-    return new Response(JSON.stringify({ found: true, key, cid }), {
+    return new Response(JSON.stringify({
+      found: true,
+      key,
+      cid: value.value,
+      metadata: value.metadata || {},
+    }), {
       status: 200,
       headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
     });
@@ -51,6 +71,7 @@ export async function onRequestGet(context) {
   }
 }
 
+// POST: キーと CID の登録（メタデータ対応）
 export async function onRequestPost(context) {
   const { request, env } = context;
 
@@ -63,7 +84,7 @@ export async function onRequestPost(context) {
 
   try {
     const body = await request.json();
-    const { key, cid } = body;
+    const { key, cid, size, mime, lastModified } = body;
 
     if (!key || !cid) {
       return new Response(JSON.stringify({ error: "Missing 'key' or 'cid' in request body" }), {
@@ -72,10 +93,51 @@ export async function onRequestPost(context) {
       });
     }
 
-    // KV に key -> cid を登録
-    await env.IPFS_KV.put(key, cid);
+    const metadata = {
+      size: size || 0,
+      mime: mime || "",
+      lastModified: lastModified || Date.now(),
+      registeredAt: Date.now(),
+    };
 
-    return new Response(JSON.stringify({ success: true, key, cid }), {
+    // KV に登録 (value: cid, metadata)
+    await env.IPFS_KV.put(key, cid, { metadata });
+
+    return new Response(JSON.stringify({ success: true, key, cid, metadata }), {
+      status: 200,
+      headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
+    });
+  } catch (err) {
+    return new Response(JSON.stringify({ error: err.message }), {
+      status: 500,
+      headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
+    });
+  }
+}
+
+// DELETE: キーの削除（リンク抹消 / 遮断）
+export async function onRequestDelete(context) {
+  const { request, env } = context;
+  const url = new URL(request.url);
+  const key = url.searchParams.get("key");
+
+  if (!env || !env.IPFS_KV) {
+    return new Response(JSON.stringify({ error: "IPFS_KV binding not configured" }), {
+      status: 500,
+      headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
+    });
+  }
+
+  if (!key) {
+    return new Response(JSON.stringify({ error: "Missing 'key' query parameter" }), {
+      status: 400,
+      headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
+    });
+  }
+
+  try {
+    await env.IPFS_KV.delete(key);
+    return new Response(JSON.stringify({ success: true, deletedKey: key }), {
       status: 200,
       headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
     });
