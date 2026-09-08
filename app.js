@@ -2726,29 +2726,23 @@ function render() {
         item.dataset.index = index;
 
         const originalExt = file.name ? file.name.split('.').pop().toLowerCase() : "";
-        const targetExt = isConvertOn
-          ? (extensions[formatSelect?.value || "image/webp"] || "webp")
-          : originalExt;
-
-        const isNonConverted = (!isConvertOn && originalExt === targetExt) || (result && !result.converted);
 
         let previewSrc = "";
         if (result && result.previewUrl) {
           previewSrc = result.previewUrl;
-        } else if (file.type.startsWith("image/")) {
+        } else if (file.type && file.type.startsWith("image/")) {
           previewSrc = URL.createObjectURL(file);
         }
 
-        const displayName = result ? result.name : createOutputName(file.name, formatSelect?.value || "image/webp", index);
+        const displayName = result ? result.name : file.name;
 
         let metaHtml = "";
         if (result && result.size) {
-          const diff = file.size - result.size;
-          const savedRate = file.size ? Math.round((diff / file.size) * 100) : 0;
-
-          if (isNonConverted) {
+          if (result.isNonImage || !isConvertOn) {
             metaHtml = `${formatBytes(result.size)} · <span style="color: var(--muted);">${escapeHtml(dict.nonConverted || "非変換")}</span>`;
           } else {
+            const diff = file.size - result.size;
+            const savedRate = file.size ? Math.round((diff / file.size) * 100) : 0;
             let rateText = "";
             if (savedRate > 0) {
               rateText = `<span style="color: #22c55e; font-weight: bold;">${savedRate}% 削減</span>`;
@@ -3349,7 +3343,7 @@ async function ensureStorageCapacityFilebase(s3, bucketName, requiredBytes = 0) 
 }
 
 // --- S3 アップロード処理 (R2 / Filebase 独立対応) ---
-async function uploadImage(result, targetProvider = "r2") {
+async function uploadImage(result, targetProvider = "r2", customPassword = null) {
   if (!result || !result.blob) return false;
 
   const isFilebase = targetProvider === "filebase";
@@ -3367,7 +3361,9 @@ async function uploadImage(result, targetProvider = "r2") {
 
   try {
     const pwdInput = document.querySelector("#tempPasswordInput");
-    const password = customPassword !== null ? customPassword : (pwdInput ? pwdInput.value.trim() : "");
+    const password = (typeof customPassword !== "undefined" && customPassword !== null)
+      ? customPassword
+      : (pwdInput ? pwdInput.value.trim() : "");
 
     const arrayBuffer = await result.blob.arrayBuffer();
     const bytes = new Uint8Array(arrayBuffer);
