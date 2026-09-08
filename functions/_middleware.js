@@ -65,11 +65,17 @@ export async function onRequest(context) {
       });
     }
   } catch (err) {
-    return response;
+    return new Response("404 Not Found", {
+      status: 404,
+      headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-cache" },
+    });
   }
 
   if (!upstreamResponse || !upstreamResponse.ok) {
-    return response;
+    return new Response("404 Not Found", {
+      status: 404,
+      headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-cache" },
+    });
   }
 
   // 4. レスポンスヘッダー構築（完全サニタイズ：CID・IPFS・Filebaseの痕跡をすべて遮断）
