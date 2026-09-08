@@ -2781,7 +2781,7 @@ function render() {
             </div>
             ${createComfyBadgeHtml(file, result)}
           </div>
-          <div class="card-actions-area">
+          <div class="card-actions-area item-actions-col" style="display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-left: auto;">
             ${promptBtnHtml}
             ${createCardActionHtml(file, result, index)}
             <button type="button" class="ghost-button delete-button danger-button" data-index="${index}" aria-label="削除" title="一覧から削除" style="min-width: 28px; height: 28px; padding: 0 6px; font-size: 14px; line-height: 1;">&times;</button>
@@ -2814,6 +2814,7 @@ function createCardActionHtml(file, result, index) {
   const canProcessLocal = isConvertOn || isRenameOn;
   const r2Ok = isR2Configured();
   const fbOk = isFilebaseConfigured();
+  const upOk = r2Ok || fbOk;
 
   const dlBtnDisabled = (!canProcessLocal && !result) ? "disabled" : "";
   const dlBtnTitle = (!canProcessLocal && !result)
@@ -2821,48 +2822,56 @@ function createCardActionHtml(file, result, index) {
     : "ダウンロード";
 
   if (result && result.isUploading) {
-    const pName = result.uploadingProvider === "filebase" ? "Filebase" : "R2";
+    const pName = result.uploadingProvider === "filebase" ? "IPFS" : "R2";
     return `<span class="status-text saving" style="font-size: 11px;">${pName} UP中...</span>`;
   }
+
+  const currentProviderName = (activeStorageTab === "filebase" && fbOk) ? "Filebase (IPFS)" : (r2Ok ? "Cloudflare R2" : (fbOk ? "Filebase (IPFS)" : "ストレージ"));
+  const upBtnTitle = upOk
+    ? `このファイルだけ変換して${currentProviderName}へアップロード`
+    : "ストレージ未設定のためアップロード不可";
+  const upBtnStyle = upOk
+    ? "font-size: 11px; padding: 0 8px; height: 28px;"
+    : "opacity: 0.35; font-size: 11px; padding: 0 8px; height: 28px; cursor: not-allowed;";
+
+  const currentName = result ? result.name : file.name;
+  const ext = currentName.split('.').pop().toLowerCase();
+  const isCivitaiSupported = ["jpg", "jpeg", "png", "webp", "mp4", "webm"].includes(ext);
+  const isProtected = Boolean(file.hasPassword || result?.hasPassword);
+  const civitaiOk = upOk && isCivitaiSupported && !isProtected;
+  const civitaiStyle = civitaiOk
+    ? "color: #38bdf8; border-color: rgba(56, 189, 248, 0.4); font-size: 11px; padding: 0 8px; height: 28px;"
+    : "opacity: 0.35; font-size: 11px; padding: 0 8px; height: 28px; cursor: not-allowed;";
+  let civitaiBtnTitle = "リネームを無視して変換・一時共有し、Civitaiの投稿画面を開く";
+  if (!upOk) civitaiBtnTitle = "ストレージ未接続のためCivitai連携不可";
+  else if (!isCivitaiSupported) civitaiBtnTitle = "Civitai非対応フォーマット";
+  else if (isProtected) civitaiBtnTitle = "パスワード保護中のファイルはCivitai連携不可";
 
   if (result && result.isUploaded) {
     const isFb = result.uploadedProvider === "filebase";
     const badgeHtml = isFb
-      ? `<span style="font-size: 10px; font-weight: 700; color: #38bdf8; background: rgba(56, 189, 248, 0.15); border: 1px solid rgba(56, 189, 248, 0.4); padding: 2px 6px; border-radius: 4px;">🪐 IPFS</span>`
-      : `<span style="font-size: 10px; font-weight: 700; color: #fb923c; background: rgba(249, 115, 22, 0.15); border: 1px solid rgba(249, 115, 22, 0.4); padding: 2px 6px; border-radius: 4px;">⚡ R2</span>`;
+      ? `<span style="font-size: 9.5px; font-weight: 700; color: #38bdf8; background: rgba(56, 189, 248, 0.15); border: 1px solid rgba(56, 189, 248, 0.4); padding: 1px 5px; border-radius: 4px;">🪐 IPFS</span>`
+      : `<span style="font-size: 9.5px; font-weight: 700; color: #fb923c; background: rgba(249, 115, 22, 0.15); border: 1px solid rgba(249, 115, 22, 0.4); padding: 1px 5px; border-radius: 4px;">⚡ R2</span>`;
 
     const pwdBadge = result.hasPassword
-      ? `<span class="password-badge" style="font-size: 10px; font-weight: 600; color: #818cf8; background: rgba(99, 102, 241, 0.15); border: 1px solid rgba(99, 102, 241, 0.3); padding: 2px 6px; border-radius: 4px;">🔒 ${result.password ? `パスワード: ${escapeHtml(result.password)}` : "パスワード保護"}</span>`
+      ? `<span class="password-badge" style="font-size: 9.5px; font-weight: 600; color: #818cf8; background: rgba(99, 102, 241, 0.15); border: 1px solid rgba(99, 102, 241, 0.3); padding: 1px 5px; border-radius: 4px;" title="合言葉: ${result.password ? escapeHtml(result.password) : '保護中'}">🔒 保護</span>`
       : "";
 
     return `
       ${badgeHtml}
       ${pwdBadge}
-      <input type="text" class="url-output" value="${escapeHtml(result.proxyUrl)}" readonly style="flex: 1; min-width: 200px; max-width: 400px; font-size: 11px; height: 28px; padding: 0 8px; background: rgba(0,0,0,0.3); border: 1px solid rgba(56,189,248,0.4); color: #38bdf8; border-radius: 4px;" title="クリックで全選択＆コピー" onclick="this.select()">
-      <button type="button" class="ghost-button copy-button" style="font-size: 11px; padding: 0 8px; height: 28px;">${escapeHtml(dict.copyUrl)}</button>
-      ${!result.hasPassword ? `<button type="button" class="ghost-button civitai-post-btn" data-index="${index}" data-url="${escapeHtml(result.proxyUrl)}" data-name="${escapeHtml(result.name)}" style="font-size: 11px; padding: 0 8px; height: 28px; color: #38bdf8; border-color: rgba(56, 189, 248, 0.4);" title="Civitai の投稿画面を開く">🎨 Civitai</button>` : ""}
+      <input type="text" class="url-output" value="${escapeHtml(result.proxyUrl)}" readonly style="width: 140px; font-size: 11px; height: 28px; padding: 0 6px; background: rgba(0,0,0,0.3); border: 1px solid rgba(56,189,248,0.4); color: #38bdf8; border-radius: 4px;" title="クリックで全選択＆コピー" onclick="this.select()">
+      <button type="button" class="ghost-button copy-button" style="font-size: 11px; padding: 0 8px; height: 28px;">${escapeHtml(dict.copyUrl || "コピー")}</button>
       <button type="button" class="ghost-button download-single-btn" data-index="${index}" style="font-size: 11px; padding: 0 8px; height: 28px;" title="${dlBtnTitle}" ${dlBtnDisabled}>📥 DL</button>
+      ${!result.hasPassword ? `<button type="button" class="ghost-button civitai-post-btn" data-index="${index}" data-url="${escapeHtml(result.proxyUrl)}" data-name="${escapeHtml(result.name)}" style="${civitaiStyle}" title="${civitaiBtnTitle}" ${civitaiOk ? '' : 'disabled'}>🎨 Civitai</button>` : ""}
     `;
   }
 
-  // 待機中または変換完了時: [⚡ R2] と [🪐 Filebase] の個別アップロードボタンを表示
-  const r2Style = r2Ok
-    ? "font-size: 11px; padding: 0 8px; height: 28px; color: #fb923c; border-color: rgba(249, 115, 22, 0.4);"
-    : "opacity: 0.35; font-size: 11px; padding: 0 8px; height: 28px; cursor: not-allowed;";
-  const fbStyle = fbOk
-    ? "font-size: 11px; padding: 0 8px; height: 28px; color: #38bdf8; border-color: rgba(56, 189, 248, 0.4);"
-    : "opacity: 0.35; font-size: 11px; padding: 0 8px; height: 28px; cursor: not-allowed;";
-
-  const civitaiOk = r2Ok || fbOk;
-  const civitaiStyle = civitaiOk
-    ? "font-size: 11px; padding: 0 8px; height: 28px; color: #a78bfa; border-color: rgba(167, 139, 250, 0.4);"
-    : "opacity: 0.35; font-size: 11px; padding: 0 8px; height: 28px; cursor: not-allowed;";
-
+  // 待機中または変換完了時（BYOCと完全一致: [📥 DL] [☁️ UP] [🎨 Civitai]）
   return `
     <button type="button" class="ghost-button download-single-btn" data-index="${index}" style="font-size: 11px; padding: 0 8px; height: 28px;" title="${dlBtnTitle}" ${dlBtnDisabled}>📥 DL</button>
-    <button type="button" class="ghost-button upload-r2-btn" data-index="${index}" style="${r2Style}" title="${r2Ok ? 'R2へアップロード' : 'R2接続設定が未完了'}" ${r2Ok ? '' : 'disabled'}>⚡ R2</button>
-    <button type="button" class="ghost-button upload-filebase-btn" data-index="${index}" style="${fbStyle}" title="${fbOk ? 'Filebase (IPFS)へアップロード' : 'Filebase接続設定が未完了'}" ${fbOk ? '' : 'disabled'}>🪐 Filebase</button>
-    <button type="button" class="ghost-button civitai-post-btn" data-index="${index}" style="${civitaiStyle}" title="アップロードしてCivitaiの投稿画面を開く" ${civitaiOk ? '' : 'disabled'}>🎨 Civitai</button>
+    <button type="button" class="ghost-button upload-single-btn" data-index="${index}" style="${upBtnStyle}" title="${upBtnTitle}" ${upOk ? '' : 'disabled'}>☁️ UP</button>
+    <button type="button" class="ghost-button civitai-post-btn" data-index="${index}" style="${civitaiStyle}" title="${civitaiBtnTitle}" ${civitaiOk ? '' : 'disabled'}>🎨 Civitai</button>
   `;
 }
 
@@ -2946,7 +2955,38 @@ fileList?.addEventListener("click", async (event) => {
     return;
   }
 
-  // 3. 単体アップロード (⚡ R2)
+  // 3. 単体アップロード (☁️ UP: BYOC準拠・選択中ストレージへ自動アップロード)
+  if (target.classList.contains("upload-single-btn")) {
+    if (isNaN(index) || index < 0 || index >= state.files.length) return;
+    const file = state.files[index];
+    let result = state.results[index];
+
+    target.disabled = true;
+    target.textContent = "UP中...";
+    try {
+      if (!result || !isConversionCacheValid()) {
+        if (result && result.url) URL.revokeObjectURL(result.url);
+        if (result && result.previewUrl) URL.revokeObjectURL(result.previewUrl);
+        result = await convertImage(file, index);
+        state.results[index] = result;
+      }
+      const r2Ok = isR2Configured();
+      const fbOk = isFilebaseConfigured();
+      const targetProvider = (activeStorageTab === "filebase" && fbOk) ? "filebase" : (r2Ok ? "r2" : (fbOk ? "filebase" : "r2"));
+      const success = await uploadImage(result, targetProvider);
+      if (success) {
+        await fetchAndRenderR2Files();
+      }
+    } catch (e) {
+      console.error(e);
+      alert("アップロードに失敗しました: " + e.message);
+    } finally {
+      render();
+    }
+    return;
+  }
+
+  // 3.1 単体アップロード (⚡ R2)
   if (target.classList.contains("upload-r2-btn")) {
     if (isNaN(index) || index < 0 || index >= state.files.length) return;
     const file = state.files[index];
