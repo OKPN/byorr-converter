@@ -665,8 +665,6 @@ function storeIpfsCid(key, cid) {
     map[key] = cid;
     localStorage.setItem("ipfsCidMap", JSON.stringify(map));
   } catch (e) {}
-  // Cloudflare KV へも非同期登録
-  registerKvCid(key, cid);
 }
 
 function blobToBase64(blobOrBytes) {
@@ -4105,25 +4103,6 @@ r2FileList?.addEventListener("click", async (e) => {
     if (isFilebase && key) {
       url = `${baseDomain}/${encodeURIComponent(key)}`;
       target.dataset.url = url;
-
-      // KV に登録済みか確認し、未登録なら裏で同期
-      const cachedCid = getStoredIpfsCid(key);
-      const s3Key = article?.dataset?.s3key || key;
-      if (cachedCid) {
-        registerKvCid(key, cachedCid, 0, "", s3Key);
-      } else if (s3 && bucketName) {
-        s3.send(new HeadObjectCommand({ Bucket: bucketName, Key: s3Key })).then(headOutput => {
-          const hHeaders = headOutput?.$metadata?.httpHeaders || {};
-          const fetchedCid = hHeaders["x-amz-meta-cid"] ||
-                             hHeaders["x-amz-meta-ipfs-hash"] ||
-                             headOutput?.Metadata?.cid ||
-                             headOutput?.Metadata?.["ipfs-hash"];
-          if (fetchedCid) {
-            storeIpfsCid(key, fetchedCid);
-            storeIpfsCid(s3Key, fetchedCid);
-          }
-        }).catch(err => console.warn("Background CID lookup failed:", err));
-      }
     }
 
     await copyToClipboard(url, target);
