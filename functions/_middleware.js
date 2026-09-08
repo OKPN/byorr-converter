@@ -377,14 +377,14 @@ export async function onRequest(context) {
         headers.set("Content-Disposition", `inline; filename="${encodeURIComponent(filename)}"`);
         headers.set("X-Content-Type-Options", "nosniff");
         const BROWSER_CACHE_SECONDS = 3600; // 閲覧者ブラウザは1時間
-        const EDGE_CACHE_SECONDS = 3024000;  // Cloudflareエッジは35日間
+        const CDN_CACHE_SECONDS = 3600;     // CDNレスポンスキャッシュも1時間（リンク抹消を即時反映するため）
         if (hasPassword) {
           headers.set("Cache-Control", `private, max-age=${BROWSER_CACHE_SECONDS}`);
           headers.set("Cloudflare-CDN-Cache-Control", "private, no-store");
           headers.set("Vary", "Cookie, Accept-Encoding");
         } else {
           headers.set("Cache-Control", `public, max-age=${BROWSER_CACHE_SECONDS}`);
-          headers.set("Cloudflare-CDN-Cache-Control", `public, max-age=${EDGE_CACHE_SECONDS}`);
+          headers.set("Cloudflare-CDN-Cache-Control", `public, max-age=${CDN_CACHE_SECONDS}`);
           headers.set("Vary", "Accept-Encoding");
         }
         headers.set("Content-Length", String(directData.byteLength));
@@ -419,7 +419,7 @@ export async function onRequest(context) {
           "User-Agent": "Cividge-KV-Relay/1.0",
           ...(request.headers.get("Range") ? { "Range": request.headers.get("Range") } : {}),
         },
-        cf: { cacheEverything: !hasPassword, cacheTtl: hasPassword ? 0 : 86400 * 35 },
+        cf: { cacheEverything: !hasPassword, cacheTtl: hasPassword ? 0 : 31536000 },
       });
 
       if (!upstreamResponse.ok) {
@@ -428,7 +428,7 @@ export async function onRequest(context) {
             "User-Agent": "Cividge-KV-Relay/1.0",
             ...(request.headers.get("Range") ? { "Range": request.headers.get("Range") } : {}),
           },
-          cf: { cacheEverything: !hasPassword, cacheTtl: hasPassword ? 0 : 86400 * 35 },
+          cf: { cacheEverything: !hasPassword, cacheTtl: hasPassword ? 0 : 31536000 },
         });
       }
 
@@ -450,15 +450,16 @@ export async function onRequest(context) {
   headers.set("Content-Disposition", `inline; filename="${encodeURIComponent(filename)}"`);
   headers.set("X-Content-Type-Options", "nosniff");
 
-  const BROWSER_CACHE_SECONDS = 3600; // 閲覧者ブラウザは1時間
-  const EDGE_CACHE_SECONDS = 3024000;  // Cloudflareエッジは35日間
+  // 3層キャッシュ戦略: ブラウザ1時間 / CDNレスポンス1時間 / 上流フェッチ1年
+  const BROWSER_CACHE_SECONDS = 3600;  // 閲覧者ブラウザは1時間
+  const CDN_CACHE_SECONDS = 3600;      // CDNレスポンスも1時間（リンク抹消を最大1時間で反映）
   if (hasPassword) {
     headers.set("Cache-Control", `private, max-age=${BROWSER_CACHE_SECONDS}`);
     headers.set("Cloudflare-CDN-Cache-Control", "private, no-store");
     headers.set("Vary", "Cookie, Accept-Encoding");
   } else {
     headers.set("Cache-Control", `public, max-age=${BROWSER_CACHE_SECONDS}`);
-    headers.set("Cloudflare-CDN-Cache-Control", `public, max-age=${EDGE_CACHE_SECONDS}`);
+    headers.set("Cloudflare-CDN-Cache-Control", `public, max-age=${CDN_CACHE_SECONDS}`);
     headers.set("Vary", "Accept-Encoding");
   }
 
