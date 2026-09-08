@@ -484,6 +484,11 @@ export async function onRequest(context) {
   if (acceptRanges) {
     headers.set("Accept-Ranges", acceptRanges);
   }
+  // 206 Partial Content 対応: 動画シーク再生に必須
+  const contentRange = upstreamResponse.headers.get("content-range");
+  if (contentRange) {
+    headers.set("Content-Range", contentRange);
+  }
 
   const mimeMap = {
     webp: "image/webp",
@@ -501,7 +506,7 @@ export async function onRequest(context) {
   headers.set("Content-Type", mimeMap[ext] || upstreamResponse.headers.get("content-type") || "application/octet-stream");
 
   return new Response(upstreamResponse.body, {
-    status: 200,
+    status: upstreamResponse.status,  // 200 or 206 をそのまま返す
     headers,
   });
 }

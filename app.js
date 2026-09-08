@@ -3454,6 +3454,18 @@ async function uploadImage(result, targetProvider = "r2", customPassword = null)
 
     const arrayBuffer = await result.blob.arrayBuffer();
     const bytes = new Uint8Array(arrayBuffer);
+
+    // 個別ファイルサイズ制限: Cloudflareエッジキャッシュ上限(100MB)を考慮し80MBに制限
+    const MAX_SINGLE_FILE_BYTES = 80 * 1024 * 1024; // 80MB
+    if (bytes.length > MAX_SINGLE_FILE_BYTES) {
+      const sizeMb = (bytes.length / (1024 * 1024)).toFixed(1);
+      alert(`⚠️ ファイルサイズ (${sizeMb} MB) が上限 (80 MB) を超えています。\nCloudflareのキャッシュ制限により、80MB以下のファイルをアップロードしてください。`);
+      result.isUploading = false;
+      result.uploadingProvider = null;
+      render();
+      return false;
+    }
+
     let contentType = result.blob.type || "";
     if (!contentType || contentType === "application/octet-stream") {
       contentType = getContentTypeFromFilename(result.name);

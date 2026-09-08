@@ -196,6 +196,9 @@ export async function onRequestDelete(context) {
       await env.IPFS_KV.delete("blob_" + key).catch(() => {});
     }
     await env.IPFS_KV.delete(key);
+    // TODO: 即時キャッシュパージ（Purge by URL API）を使えば削除が数秒で反映されるが、
+    // pages.dev ドメインでは zone_id がないため利用不可。独自ドメイン導入時に実装を検討。
+    // 現状はCDNキャッシュTTL（1時間）経過後に自然反映される。
     return new Response(JSON.stringify({ success: true, deletedKey: key }), {
       status: 200,
       headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
