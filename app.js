@@ -3404,7 +3404,7 @@ async function fetchAndRenderR2Files() {
             <button type="button" class="ghost-button danger-button delete-r2-file-btn" data-key="${escapeHtml(item.Key)}" data-origin="1" title="アクセスを遮断し、KVおよびストレージから完全に削除します">リンク抹消</button>
           `;
         } else {
-          statusBadgeHtml = `<span style="font-size: 10px; padding: 1px 6px; border-radius: 4px; background: rgba(56,189,248,0.15); color: #38bdf8; border: 1px solid rgba(56,189,248,0.4);" title="Filebase から解放済み。IPFS/Cloudflareから配信継続中（容量消費0）">🪐 IPFS配信中 (容量0)</span>`;
+          statusBadgeHtml = `<span style="font-size: 10px; padding: 1px 6px; border-radius: 4px; background: rgba(239, 68, 68, 0.15); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.4); font-weight: 600;" title="オリジンから削除済み。IPFS/CDNキャッシュにより一時的に表示されていますが、永続性は保証されません。">⚠️ IPFS残留中 (非保証)</span>`;
           actionButtonsHtml = `
             <button type="button" class="ghost-button copy-r2-url-btn" data-url="${escapeHtml(publicUrl)}">${escapeHtml(dict.copyUrl)}</button>
             <button type="button" class="ghost-button danger-button delete-r2-file-btn" data-key="${escapeHtml(item.Key)}" data-origin="0" title="アクセスを遮断し、KVから完全に削除します">リンク抹消</button>
@@ -3526,7 +3526,7 @@ r2FileList?.addEventListener("click", async (e) => {
   // ⚡ 容量解放（アンピン）：Filebase S3 からのみ削除し、KVとURLは維持
   if (target.classList.contains("unpin-file-btn")) {
     const key = target.dataset.key;
-    if (!key || !confirm(`ファイル '${key}' を Filebase から削除して容量を解放しますか？\n\n・Filebase のストレージ容量が 0 になります（無料枠節約）。\n・Cloudflare KV と IPFS キャッシュにより、URL リンク（画像表示）はそのまま維持されます。`)) return;
+    if (!key || !confirm(`ファイル '${key}' を Filebase から削除して容量を解放しますか？\n\n・Filebase のストレージ容量が 0 になります（無料枠節約）。\n・IPFS/CDNキャッシュにより一時的に『残留』しますが、永続性は保証されません。`)) return;
 
     try {
       const command = new DeleteObjectCommand({
