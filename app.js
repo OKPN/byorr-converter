@@ -32,7 +32,7 @@ import {
 // --- 多言語 (i18n) 辞書 ---
 const i18nDict = {
   ja: {
-    siteTitle: "BYORR Converter",
+    siteTitle: "Cividge",
     eyebrow: "ブラウザ内のみで画像をセキュアに変換 ＆ R2にダイレクト保存!",
     whatIsSiteSummary: "❓ どのようなサイト？",
     whatIsSiteBody: `外部サーバやWorkerを一切介さず、お使いのブラウザ内だけで画像をセキュアに変換し、ご自身の Cloudflare R2 ストレージ（S3互換）にダイレクト保存・配信できるローカル＆R2専用ツールです。<br><span style="display: inline-block; margin-top: 6px; font-size: 12px; color: #a5b4fc;">※接続情報は全てお使いのブラウザ内（localStorage）にのみセキュア保存されます。</span>`,
@@ -154,13 +154,13 @@ const i18nDict = {
     promptEmptyNotice: "定型文の内容が空です。",
   },
   en: {
-    siteTitle: "BYORR Converter",
+    siteTitle: "Cividge",
     eyebrow: "Secure in-browser image conversion & direct Cloudflare R2 upload!",
     whatIsSiteSummary: "❓ What is this site?",
     whatIsSiteBody: `
       <div style="font-size: 13px; line-height: 1.6; color: var(--text);">
         <p style="margin-bottom: 12px; font-weight: 500;">
-          <strong>BYORR (Bring Your Own R2) Converter</strong> is a 100% serverless, client-side tool built for AI creators. Convert images in your browser and upload them directly to your personal Cloudflare R2 bucket via S3 API — without any intermediate server or Worker.
+          <strong>Cividge</strong> is a 100% serverless, client-side tool built for AI creators. Convert images in your browser and upload them directly to your personal Cloudflare R2 bucket via S3 API — without any intermediate server or Worker.
         </p>
 
         <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 10px; margin: 14px 0;">
@@ -714,15 +714,6 @@ async function registerKvCid(key, cid = "", size = 0, mime = "", s3Key = "", pas
     }
     if (password && typeof password === "string" && password.trim().length > 0) {
       payload.password = password.trim();
-      // パスワード保護ファイル（25MB以下）は KV に実データも保存して即時保護配信
-      if (blobOrBytes && (!size || size < 24 * 1024 * 1024)) {
-        try {
-          const b64 = await blobToBase64(blobOrBytes);
-          if (b64) payload.dataBase64 = b64;
-        } catch (b64Err) {
-          console.warn("Base64 conversion failed:", b64Err);
-        }
-      }
     }
     await fetch("/api/ipfs-kv", {
       method: "POST",
@@ -5032,11 +5023,11 @@ Add-Type -AssemblyName System.Drawing
 # 1. 引数なし（ダブルクリック時）: SendTo フォルダへ自動登録
 if (-not $rawArgs) {
     $sendtoDir = [Environment]::GetFolderPath([Environment+SpecialFolder]::SendTo)
-    $dest = Join-Path $sendtoDir "BYORRへアップロード.bat"
+    $dest = Join-Path $sendtoDir "Cividgeへアップロード.bat"
     
     try {
         Copy-Item -Path $batPath -Destination $dest -Force
-        [System.Windows.Forms.MessageBox]::Show("【BYORR 登録完了】\`n\`n✅ Windows の「送る」メニューに「BYORRへアップロード」を登録しました！\`n\`nエクスプローラーで画像や動画を右クリック ➜「送る」➜「BYORRへアップロード」でご利用いただけます。\`n\`n※解除・削除したい場合: Win+R ➜ shell:sendto から本ファイルを削除してください。", "登録完了 - BYORR", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information)
+        [System.Windows.Forms.MessageBox]::Show("【Cividge 登録完了】\`n\`n✅ Windows の「送る」メニューに「Cividgeへアップロード」を登録しました！\`n\`nエクスプローラーで画像や動画を右クリック ➜「送る」➜「Cividgeへアップロード」でご利用いただけます。\`n\`n※解除・削除したい場合: Win+R ➜ shell:sendto から本ファイルを削除してください。", "登録完了 - Cividge", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information)
     } catch {
         [System.Windows.Forms.MessageBox]::Show("⚠️ 登録に失敗しました: " + $_.Exception.Message, "エラー", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
     }
@@ -5074,14 +5065,14 @@ if ($urls.Count -gt 0) {
     $notify.Icon = [System.Drawing.SystemIcons]::Information
     $notify.Visible = $true
     $msg = if ($urls.Count -eq 1) { "URLをクリップボードにコピーしました！" } else { "$($urls.Count)件のURLをクリップボードにコピーしました！" }
-    $notify.ShowBalloonTip(4000, "BYORR アップロード完了", $msg, [System.Windows.Forms.ToolTipIcon]::Info)
+    $notify.ShowBalloonTip(4000, "Cividge アップロード完了", $msg, [System.Windows.Forms.ToolTipIcon]::Info)
     Start-Sleep -Seconds 2
     $notify.Dispose()
 }
 
 if ($errors.Count -gt 0) {
     $errMsg = $errors -join [Environment]::NewLine
-    [System.Windows.Forms.MessageBox]::Show("一部またはすべてのアップロードに失敗しました:\`n" + $errMsg, "BYORR アップロードエラー", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Warning)
+    [System.Windows.Forms.MessageBox]::Show("一部またはすべてのアップロードに失敗しました:\`n" + $errMsg, "Cividge アップロードエラー", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Warning)
 }
 `;
 
@@ -5090,12 +5081,12 @@ if ($errors.Count -gt 0) {
   const downloadUrl = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = downloadUrl;
-  a.download = "BYORRへアップロード.bat";
+  a.download = "Cividgeへアップロード.bat";
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
   URL.revokeObjectURL(downloadUrl);
 
-  alert("📥 設定済みの「BYORRへアップロード.bat」をダウンロードしました！\n\n【登録手順】\nダウンロードしたバッチファイルをダブルクリックすると、自動でWindowsの「送る」メニューに登録されます。\n\n【使い方】\nエクスプローラーで画像や動画を右クリック ➜「送る」➜「BYORRへアップロード」で投稿完了＆URLが自動コピーされます！\n\n【解除・削除方法】\nWin + R キーを押し「shell:sendto」と入力して開いたフォルダから、本ファイルを削除してください。");
+  alert("📥 設定済みの「Cividgeへアップロード.bat」をダウンロードしました！\n\n【登録手順】\nダウンロードしたバッチファイルをダブルクリックすると、自動でWindowsの「送る」メニューに登録されます。\n\n【使い方】\nエクスプローラーで画像や動画を右クリック ➜「送る」➜「Cividgeへアップロード」で投稿完了＆URLが自動コピーされます！\n\n【解除・削除方法】\nWin + R キーを押し「shell:sendto」と入力して開いたフォルダから、本ファイルを削除してください。");
 });
 

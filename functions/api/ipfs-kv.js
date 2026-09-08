@@ -136,24 +136,6 @@ export async function onRequestPost(context) {
       };
     }
 
-    // もし dataBase64（実データ）が送られてきた場合、blob_<key> として KV に直接キャッシュ保存
-    let blobKey = undefined;
-    if (dataBase64 && typeof dataBase64 === "string") {
-      try {
-        const binStr = atob(dataBase64);
-        const binBytes = new Uint8Array(binStr.length);
-        for (let i = 0; i < binStr.length; i++) {
-          binBytes[i] = binStr.charCodeAt(i);
-        }
-        blobKey = "blob_" + key;
-        const blobOptions = { metadata: { mime: mime || "application/octet-stream" } };
-        if (ttl && Number(ttl) > 0) blobOptions.expirationTtl = Math.max(60, Number(ttl));
-        await env.IPFS_KV.put(blobKey, binBytes.buffer, blobOptions);
-      } catch (blobErr) {
-        console.warn("Failed to store dataBase64 to KV:", blobErr);
-      }
-    }
-
     const calculatedExpiresAt = expiresAt || (ttl && Number(ttl) > 0 ? Date.now() + Number(ttl) * 1000 : null);
 
     const metadata = {
@@ -164,7 +146,6 @@ export async function onRequestPost(context) {
       registeredAt: Date.now(),
       s3Key: body.s3Key || key,
       ...(calculatedExpiresAt ? { expiresAt: calculatedExpiresAt, ttl: Number(ttl) } : {}),
-      ...(blobKey ? { blobKey } : {}),
       ...passwordMeta,
     };
 
