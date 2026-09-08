@@ -3944,9 +3944,88 @@ async function fetchAndRenderR2Files() {
     });
 
     updateSelectedR2ActionButtonsState();
+
+    // 🪐 IPFS ガベージコレクション検知: S3から削除済み（残留中）のファイルがIPFS上から消失していたら自動でKVから掃除
+    if (isFilebase) {
+      const lingeringItems = contents.filter(c => !c.isFromS3 && c.cid);
+      if (lingeringItems.length > 0) {
+        cleanupGarbageCollectedIpfsFiles(lingeringItems);
+      }
+    }
   } catch (error) {
     console.error("Storage fetch error:", error);
     r2FileList.innerHTML = `<span class="item-meta error" style="padding: 18px; color: var(--danger); display: block; text-align: center;">通信エラー: ${escapeHtml(error.message)}</span>`;
+  }
+}
+
+// 🪐 IPFS ガベージコレクション（消失）検知ユーティリティ
+async function checkIpfsLiveness(cid) {
+  if (!cid) return false;
+  // 1. Filebase IPFS ゲートウェイへの軽量 HEAD 疎通確認 (3.5秒タイムアウト)
+  try {
+    const ctrl = new AbortController();
+    const tid = setTimeout(() => ctrl.abort(), 3500);
+    const res = await fetch(`https://ipfs.filebase.io/ipfs/${cid}`, {
+      method: "HEAD",
+      signal: ctrl.signal,
+      cache: "no-store",
+    });
+    clearTimeout(tid);
+    if (res.ok || res.status === 206 || res.status === 304) return true;
+  } catch (e) {}
+
+  // 2. フォールバック: パブリック ipfs.io ゲートウェイ (3.5秒タイムアウト)
+  try {
+    const ctrl = new AbortController();
+    const tid = setTimeout(() => ctrl.abort(), 3500);
+    const res = await fetch(`https://ipfs.io/ipfs/${cid}`, {
+      method: "HEAD",
+      signal: ctrl.signal,
+      headers: { Range: "bytes=0-0" },
+    });
+    clearTimeout(tid);
+    if (res.ok || res.status === 206 || res.status === 304) return true;
+  } catch (e) {}
+
+  return false;
+}
+
+async function cleanupGarbageCollectedIpfsFiles(lingeringItems) {
+  if (!lingeringItems || lingeringItems.length === 0) return;
+
+  for (const item of lingeringItems) {
+    if (!item.cid) continue;
+
+    // 同一セッション（サイトを開いている間）で既に生存確認済みの場合はスキップ
+    const sessionKey = `ipfs_live_${item.cid}`;
+    if (sessionStorage.getItem(sessionKey) === "1") continue;
+
+    const isAlive = await checkIpfsLiveness(item.cid);
+    if (isAlive) {
+      sessionStorage.setItem(sessionKey, "1");
+    } else {
+      console.log(`🧹 IPFS ガベージコレクション検知（消失確認）: ${item.Key} (CID: ${item.cid}) -> KVから自動抹消`);
+      try {
+        await deleteKvCid(item.Key);
+        // DOM 上の該当アイテムを静かにフェードアウト削除
+        const elem = r2FileList.querySelector(`.result-item[data-key="${CSS.escape(item.Key)}"]`);
+        if (elem) {
+          elem.style.transition = "opacity 0.4s ease, transform 0.4s ease";
+          elem.style.opacity = "0";
+          elem.style.transform = "scale(0.95)";
+          setTimeout(() => {
+            elem.remove();
+            if (r2FileList.querySelectorAll(".result-item").length === 0) {
+              const lang = getAppLanguage();
+              const dict = i18nDict[lang] || i18nDict.ja;
+              r2FileList.innerHTML = `<span class="item-meta" style="padding: 18px; color: var(--muted); display: block; text-align: center;">${escapeHtml(dict.noFilesR2)}</span>`;
+            }
+          }, 400);
+        }
+      } catch (err) {
+        console.warn("Auto GC cleanup error:", err);
+      }
+    }
   }
 }
 
