@@ -3642,16 +3642,17 @@ async function fetchAndRenderR2Files() {
     contents.forEach(item => {
       const article = document.createElement("article");
       article.className = "result-item";
+      const ext = item.Key ? item.Key.split('.').pop().toLowerCase() : "";
+      const isVideo = ["mp4", "webm", "ogv", "mov", "m4v"].includes(ext);
+      const isImage = ["jpg", "jpeg", "png", "webp", "gif", "avif"].includes(ext);
+      
+      const itemCid = isFilebase ? (item.cid || getStoredIpfsCid(item.Key) || (item.s3Key ? getStoredIpfsCid(item.s3Key) : null)) : null;
+
       article.dataset.key = item.Key || "";
       article.dataset.s3key = item.s3Key || item.Key || "";
       article.dataset.size = String(item.Size || 0);
       article.dataset.cid = itemCid || "";
 
-      const ext = item.Key ? item.Key.split('.').pop().toLowerCase() : "";
-      const isVideo = ["mp4", "webm", "ogv", "mov", "m4v"].includes(ext);
-      const isImage = ["jpg", "jpeg", "png", "webp", "gif", "avif"].includes(ext);
-      
-      let itemCid = isFilebase ? (item.cid || getStoredIpfsCid(item.Key) || (item.s3Key ? getStoredIpfsCid(item.s3Key) : null)) : null;
       let publicUrl = isFilebase
         ? `${baseDomain}/${encodeURIComponent(item.Key)}`
         : getPublicUrl(item.Key);
