@@ -669,12 +669,39 @@ function storeIpfsCid(key, cid) {
   registerKvCid(key, cid);
 }
 
-async function registerKvCid(key, cid, size = 0, mime = "", s3Key = "", password = "") {
-  if (!key || !cid) return;
+function blobToBase64(blobOrBytes) {
+  return new Promise((resolve) => {
+    if (!blobOrBytes) return resolve(null);
+    try {
+      const blob = blobOrBytes instanceof Blob ? blobOrBytes : new Blob([blobOrBytes]);
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        const res = reader.result;
+        resolve(typeof res === "string" ? res.split(",")[1] : null);
+      };
+      reader.onerror = () => resolve(null);
+      reader.readAsDataURL(blob);
+    } catch (e) {
+      resolve(null);
+    }
+  });
+}
+
+async function registerKvCid(key, cid = "", size = 0, mime = "", s3Key = "", password = "", blobOrBytes = null) {
+  if (!key) return;
   try {
-    const payload = { key, cid, size, mime, s3Key: s3Key || key };
+    const payload = { key, cid: cid || "", size, mime, s3Key: s3Key || key };
     if (password && typeof password === "string" && password.trim().length > 0) {
       payload.password = password.trim();
+      // パスワード保護ファイル（25MB以下）は KV に実データも保存して即時保護配信
+      if (blobOrBytes && (!size || size < 24 * 1024 * 1024)) {
+        try {
+          const b64 = await blobToBase64(blobOrBytes);
+          if (b64) payload.dataBase64 = b64;
+        } catch (b64Err) {
+          console.warn("Base64 conversion failed:", b64Err);
+        }
+      }
     }
     await fetch("/api/ipfs-kv", {
       method: "POST",
@@ -2861,10 +2888,18 @@ function createCardActionHtml(file, result, index) {
     `;
   }
 
-  // 待機中または変換完了時（BYOCと完全一致: [📥 DL] [☁️ UP] [🎨 Civitai]）
+  // 待機中または変換完了時: [📥 DL] [⚡ R2] [🪐 IPFS] [🎨 Civitai]
+  const r2Style = r2Ok
+    ? "font-size: 11px; padding: 0 8px; height: 28px; color: #fb923c; border-color: rgba(249, 115, 22, 0.4);"
+    : "opacity: 0.35; font-size: 11px; padding: 0 8px; height: 28px; cursor: not-allowed;";
+  const fbStyle = fbOk
+    ? "font-size: 11px; padding: 0 8px; height: 28px; color: #38bdf8; border-color: rgba(56, 189, 248, 0.4);"
+    : "opacity: 0.35; font-size: 11px; padding: 0 8px; height: 28px; cursor: not-allowed;";
+
   return `
     <button type="button" class="ghost-button download-single-btn" data-index="${index}" style="font-size: 11px; padding: 0 8px; height: 28px;" title="${dlBtnTitle}" ${dlBtnDisabled}>📥 DL</button>
-    <button type="button" class="ghost-button upload-single-btn" data-index="${index}" style="${upBtnStyle}" title="${upBtnTitle}" ${upOk ? '' : 'disabled'}>☁️ UP</button>
+    <button type="button" class="ghost-button upload-r2-btn" data-index="${index}" style="${r2Style}" title="${r2Ok ? 'このファイルをCloudflare R2へアップロード' : 'R2接続設定が未完了'}" ${r2Ok ? '' : 'disabled'}>⚡ R2</button>
+    <button type="button" class="ghost-button upload-filebase-btn" data-index="${index}" style="${fbStyle}" title="${fbOk ? 'このファイルをFilebase (IPFS)へアップロード' : 'Filebase接続設定が未完了'}" ${fbOk ? '' : 'disabled'}>🪐 IPFS</button>
     <button type="button" class="ghost-button civitai-post-btn" data-index="${index}" style="${civitaiStyle}" title="${civitaiBtnTitle}" ${civitaiOk ? '' : 'disabled'}>🎨 Civitai</button>
   `;
 }
@@ -3402,9 +3437,10 @@ async function uploadImage(result, targetProvider = "r2", customPassword = null)
       const headers = putOutput?.$metadata?.httpHeaders || {};
       ipfsCid = headers["x-amz-meta-cid"] || headers["x-amz-meta-ipfs-hash"];
 
-      // レスポンスヘッダーに無ければ HeadObject を試行
-      if (!ipfsCid) {
+      // レスポンスヘッダーに無ければ HeadObject を最大3回リトライして試行
+      for (let attempt = 0; attempt < 3 && !ipfsCid; attempt++) {
         try {
+          if (attempt > 0) await new Promise(r => setTimeout(r, 600));
           const headOutput = await s3.send(new HeadObjectCommand({
             Bucket: bucketName,
             Key: result.name,
@@ -3415,7 +3451,7 @@ async function uploadImage(result, targetProvider = "r2", customPassword = null)
                     headOutput?.Metadata?.cid ||
                     headOutput?.Metadata?.["ipfs-hash"];
         } catch (hErr) {
-          console.warn("HeadObject CID lookup fallback failed:", hErr);
+          console.warn(`HeadObject CID lookup attempt ${attempt + 1} failed:`, hErr);
         }
       }
     }
@@ -3426,17 +3462,25 @@ async function uploadImage(result, targetProvider = "r2", customPassword = null)
     result.password = password;
     result.hasPassword = Boolean(password);
 
+    const baseDomain = (getSelectedR2Domain() || (typeof window !== "undefined" ? window.location.origin : "")).replace(/\/$/, "");
+
     if (isFilebase) {
       if (ipfsCid) {
         result.ipfsCid = ipfsCid;
         storeIpfsCid(result.name, ipfsCid);
-        registerKvCid(result.name, ipfsCid, result.size || bytes.length, contentType, result.name, password);
       }
-      const baseDomain = (getSelectedR2Domain() || (typeof window !== "undefined" ? window.location.origin : "")).replace(/\/$/, "");
+      // CID の有無に関わらず、KV にメタデータ（パスワード含む）を確実に登録
+      await registerKvCid(result.name, ipfsCid || "", result.size || bytes.length, contentType, result.name, password, result.blob || bytes);
       result.proxyUrl = `${baseDomain}/${encodeURIComponent(result.name)}`;
       console.log(`🪐 Filebase URL 生成完了 (KV連携): CID=${ipfsCid} -> ${result.proxyUrl}`);
     } else {
-      result.proxyUrl = getPublicUrl(result.name);
+      // ⚡ Cloudflare R2: パスワード付きの場合は KV に保護メタデータ＆実体を登録
+      if (password) {
+        await registerKvCid(result.name, "", result.size || bytes.length, contentType, result.name, password, result.blob || bytes);
+        result.proxyUrl = `${baseDomain}/${encodeURIComponent(result.name)}`;
+      } else {
+        result.proxyUrl = getPublicUrl(result.name);
+      }
     }
 
     paletteFiles.unshift({ key: result.name, url: result.proxyUrl });

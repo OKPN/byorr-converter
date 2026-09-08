@@ -84,14 +84,16 @@ export async function onRequestPost(context) {
 
   try {
     const body = await request.json();
-    const { key, cid, size, mime, lastModified, password } = body;
+    const { key, cid, size, mime, lastModified, password, dataBase64 } = body;
 
-    if (!key || !cid) {
-      return new Response(JSON.stringify({ error: "Missing 'key' or 'cid' in request body" }), {
+    if (!key) {
+      return new Response(JSON.stringify({ error: "Missing 'key' in request body" }), {
         status: 400,
         headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
       });
     }
+
+    const safeCid = cid || "";
 
     // パスワードが指定されている場合は PBKDF2 でハッシュ化
     let passwordMeta = {};
@@ -134,20 +136,39 @@ export async function onRequestPost(context) {
       };
     }
 
+    // もし dataBase64（実データ）が送られてきた場合、blob_<key> として KV に直接キャッシュ保存
+    let blobKey = undefined;
+    if (dataBase64 && typeof dataBase64 === "string") {
+      try {
+        const binStr = atob(dataBase64);
+        const binBytes = new Uint8Array(binStr.length);
+        for (let i = 0; i < binStr.length; i++) {
+          binBytes[i] = binStr.charCodeAt(i);
+        }
+        blobKey = "blob_" + key;
+        await env.IPFS_KV.put(blobKey, binBytes.buffer, {
+          metadata: { mime: mime || "application/octet-stream" },
+        });
+      } catch (blobErr) {
+        console.warn("Failed to store dataBase64 to KV:", blobErr);
+      }
+    }
+
     const metadata = {
-      cid: cid,
+      cid: safeCid,
       size: size || 0,
       mime: mime || "",
       lastModified: lastModified || Date.now(),
       registeredAt: Date.now(),
       s3Key: body.s3Key || key,
+      ...(blobKey ? { blobKey } : {}),
       ...passwordMeta,
     };
 
-    // KV に登録 (value: cid, metadata)
-    await env.IPFS_KV.put(key, cid, { metadata });
+    // KV に登録 (value: safeCid, metadata)
+    await env.IPFS_KV.put(key, safeCid, { metadata });
 
-    return new Response(JSON.stringify({ success: true, key, cid, metadata }), {
+    return new Response(JSON.stringify({ success: true, key, cid: safeCid, metadata }), {
       status: 200,
       headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
     });
