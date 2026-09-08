@@ -419,7 +419,12 @@ export async function onRequest(context) {
           "User-Agent": "Cividge-KV-Relay/1.0",
           ...(request.headers.get("Range") ? { "Range": request.headers.get("Range") } : {}),
         },
-        cf: { cacheEverything: !hasPassword, cacheTtl: hasPassword ? 0 : 31536000 },
+        cf: {
+          cacheEverything: !hasPassword,
+          ...(hasPassword ? { cacheTtl: 0 } : {
+            cacheTtlByStatus: { "200-299": 31536000, "404": 60, "500-599": 0 }
+          }),
+        },
       });
 
       if (!upstreamResponse.ok) {
@@ -428,7 +433,12 @@ export async function onRequest(context) {
             "User-Agent": "Cividge-KV-Relay/1.0",
             ...(request.headers.get("Range") ? { "Range": request.headers.get("Range") } : {}),
           },
-          cf: { cacheEverything: !hasPassword, cacheTtl: hasPassword ? 0 : 31536000 },
+          cf: {
+            cacheEverything: !hasPassword,
+            ...(hasPassword ? { cacheTtl: 0 } : {
+              cacheTtlByStatus: { "200-299": 31536000, "404": 60, "500-599": 0 }
+            }),
+          },
         });
       }
 
