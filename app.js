@@ -2721,7 +2721,7 @@ function render() {
       try {
         const result = state.results[index];
         const item = document.createElement("article");
-        item.className = "unified-file-card";
+        item.className = "file-item unified-file-card";
         item.dataset.index = index;
 
         const originalExt = file.name ? file.name.split('.').pop().toLowerCase() : "";
@@ -2738,7 +2738,7 @@ function render() {
           previewSrc = URL.createObjectURL(file);
         }
 
-        const displayName = result ? result.name : generateOutputName(file.name, index);
+        const displayName = result ? result.name : createOutputName(file.name, formatSelect?.value || "image/webp", index);
 
         let compressionBadgeHtml = "";
         if (result && result.size) {
