@@ -337,6 +337,10 @@
                 <input type="checkbox" id="autoCleanupCheckbox" style="width: 16px; height: 16px; cursor: pointer;">
                 <span>🧹 7日経過したファイルを自動削除</span>
               </label>
+              <label style="display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); cursor: pointer; user-select: none;" title="Filebase(IPFS)の容量上限に近づいたとき、最も古いオリジン実体を自動で容量解放（アンピン）して空きを確保します（URLは維持）">
+                <input type="checkbox" id="autoFifoCheckbox" style="width: 16px; height: 16px; cursor: pointer;">
+                <span>📦 自動容量解放 (FIFO)</span>
+              </label>
               <button class="ghost-button danger-button" id="deleteSelectedR2FilesButton" type="button" style="display: none; min-height: 38px;" data-i18n="btnBatchDelete">選択削除</button>
               <button class="ghost-button" id="reloadR2FilesButton" type="button" data-i18n="btnReload">更新</button>
             </div>

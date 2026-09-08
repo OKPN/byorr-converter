@@ -448,6 +448,7 @@ const storageLimitOutput = document.querySelector("#storageLimitOutput");
 const storageUsageText = document.querySelector("#storageUsageText");
 const storageUsageBar = document.querySelector("#storageUsageBar");
 const autoCleanupCheckbox = document.querySelector("#autoCleanupCheckbox");
+const autoFifoCheckbox = document.querySelector("#autoFifoCheckbox");
 
 // テキスト作成支援要素
 const templateSelect = document.querySelector("#templateSelect");
@@ -1294,6 +1295,11 @@ function loadSettings() {
     autoCleanupCheckbox.checked = savedAutoCleanup === "true";
   }
 
+  const savedAutoFifo = localStorage.getItem("autoFifo");
+  if (autoFifoCheckbox) {
+    autoFifoCheckbox.checked = savedAutoFifo !== "false"; // デフォルトでON
+  }
+
   loadTemplates();
 }
 
@@ -1955,6 +1961,10 @@ storageLimitRange?.addEventListener("input", () => {
 
 autoCleanupCheckbox?.addEventListener("change", () => {
   localStorage.setItem("autoCleanup", String(autoCleanupCheckbox.checked));
+});
+
+autoFifoCheckbox?.addEventListener("change", () => {
+  localStorage.setItem("autoFifo", String(autoFifoCheckbox.checked));
 });
 
 function updateLimitOutput(value) {
@@ -3199,6 +3209,72 @@ async function convertImage(file, index = 0) {
   };
 }
 
+// 🪐 Filebase FIFO（先入れ先出し）自動容量解放
+async function ensureStorageCapacityFilebase(s3, bucketName, requiredBytes = 0) {
+  const isAutoFifo = localStorage.getItem("autoFifo") !== "false";
+  if (!isAutoFifo || !s3 || !bucketName) return;
+
+  // 上限サイズ (MB単位、デフォルト 5000MB = 5GB)
+  const limitMb = Number(storageLimitRange?.value || localStorage.getItem("storageLimit") || "5000");
+  const limitBytes = limitMb * 1024 * 1024;
+
+  try {
+    const listCommand = new ListObjectsV2Command({
+      Bucket: bucketName,
+      MaxKeys: 1000,
+    });
+    const response = await s3.send(listCommand);
+    const contents = response.Contents || [];
+    if (contents.length === 0) return;
+
+    let currentTotalBytes = contents.reduce((acc, cur) => acc + (cur.Size || 0), 0);
+
+    // 新規ファイルを足しても上限の 95% 未満なら解放不要
+    if (currentTotalBytes + requiredBytes <= limitBytes * 0.95) {
+      return;
+    }
+
+    console.log(`🪐 Filebase FIFO 発動: 現在容量 ${formatBytes(currentTotalBytes)} + 新規 ${formatBytes(requiredBytes)} > 上限 ${formatBytes(limitBytes)} (95%)`);
+
+    // 保護対象（pinned_ で始まるもの）を除外し、古い順（LastModified 昇順）にソート
+    const eligibleFiles = contents.filter(item => {
+      if (item.Key?.startsWith("pinned_")) return false; // 📌永続化は保護
+      return true;
+    }).sort((a, b) => new Date(a.LastModified || 0) - new Date(b.LastModified || 0));
+
+    const filesToUnpin = [];
+    let freedBytes = 0;
+
+    for (const file of eligibleFiles) {
+      filesToUnpin.push(file.Key);
+      freedBytes += (file.Size || 0);
+      currentTotalBytes -= (file.Size || 0);
+
+      // 十分な空き容量（上限の90%以下）が確保できたら終了
+      if (currentTotalBytes + requiredBytes <= limitBytes * 0.90) {
+        break;
+      }
+    }
+
+    if (filesToUnpin.length > 0) {
+      console.log(`🪐 Filebase FIFO 自動アンピン実行: ${filesToUnpin.join(", ")} (${formatBytes(freedBytes)} 解放)`);
+      if (filesToUnpin.length === 1) {
+        await s3.send(new DeleteObjectCommand({
+          Bucket: bucketName,
+          Key: filesToUnpin[0],
+        }));
+      } else {
+        await s3.send(new DeleteObjectsCommand({
+          Bucket: bucketName,
+          Delete: { Objects: filesToUnpin.map(k => ({ Key: k })) },
+        }));
+      }
+    }
+  } catch (err) {
+    console.warn("Filebase FIFO ensureStorageCapacity error:", err);
+  }
+}
+
 // --- S3 アップロード処理 (R2 / Filebase 独立対応) ---
 async function uploadImage(result, targetProvider = "r2") {
   if (!result || !result.blob) return false;
@@ -3229,6 +3305,11 @@ async function uploadImage(result, targetProvider = "r2") {
     const contentDisposition = isAttachment
       ? `attachment; filename="${encodeURIComponent(result.name)}"`
       : "inline";
+
+    // 🪐 Filebase (IPFS): 容量上限に近づいている場合、最も古い実体を自動アンピン (FIFO)
+    if (isFilebase) {
+      await ensureStorageCapacityFilebase(s3, bucketName, bytes.length);
+    }
 
     const command = new PutObjectCommand({
       Bucket: bucketName,
@@ -3603,6 +3684,17 @@ async function fetchAndRenderR2Files() {
         } catch (delErr) {
           console.warn("Auto cleanup delete error:", delErr);
         }
+      }
+    }
+
+    // Filebase FIFO 自動容量解放チェック (一覧更新時に現在容量が上限を超えている場合)
+    const isAutoFifo = localStorage.getItem("autoFifo") !== "false";
+    if (isFilebase && isAutoFifo && contents.length > 0) {
+      const limitMb = Number(storageLimitRange?.value || localStorage.getItem("storageLimit") || "5000");
+      const limitBytes = limitMb * 1024 * 1024;
+      const currentOriginBytes = contents.filter(c => c.isFromS3).reduce((acc, cur) => acc + (cur.Size || 0), 0);
+      if (currentOriginBytes > limitBytes) {
+        await ensureStorageCapacityFilebase(s3, bucketName, 0);
       }
     }
 
