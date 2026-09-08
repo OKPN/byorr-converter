@@ -588,6 +588,26 @@ async function configureFilebaseCors() {
   }
 }
 
+// --- 🪐 IPFS CID キャッシュ管理 ---
+function getStoredIpfsCid(key) {
+  if (!key) return null;
+  try {
+    const map = JSON.parse(localStorage.getItem("ipfsCidMap") || "{}");
+    return map[key] || null;
+  } catch (e) {
+    return null;
+  }
+}
+
+function storeIpfsCid(key, cid) {
+  if (!key || !cid) return;
+  try {
+    const map = JSON.parse(localStorage.getItem("ipfsCidMap") || "{}");
+    map[key] = cid;
+    localStorage.setItem("ipfsCidMap", JSON.stringify(map));
+  } catch (e) {}
+}
+
 // --- 🌐 R2 公開・配信ドメイン管理 ---
 
 function getR2DomainList() {
@@ -3095,7 +3115,10 @@ async function uploadImage(result) {
     result.storageKey = result.name;
 
     if (provider === "filebase" || ipfsCid) {
-      if (ipfsCid) result.ipfsCid = ipfsCid;
+      if (ipfsCid) {
+        result.ipfsCid = ipfsCid;
+        storeIpfsCid(result.name, ipfsCid);
+      }
       const baseDomain = (getSelectedR2Domain() || (typeof window !== "undefined" ? window.location.origin : "")).replace(/\/$/, "");
       if (ipfsCid) {
         result.proxyUrl = `${baseDomain}/i/${ipfsCid}/${encodeURIComponent(result.name)}`;
@@ -3277,6 +3300,9 @@ async function fetchAndRenderR2Files() {
     state.r2TotalSize = contents.reduce((acc, cur) => acc + (cur.Size || 0), 0);
     updateStorageUsageUI();
 
+    const isFilebase = getStorageProvider() === "filebase";
+    const baseDomain = (getSelectedR2Domain() || (typeof window !== "undefined" ? window.location.origin : "")).replace(/\/$/, "");
+
     contents.forEach(item => {
       const article = document.createElement("article");
       article.className = "result-item";
@@ -3284,8 +3310,12 @@ async function fetchAndRenderR2Files() {
       const ext = item.Key ? item.Key.split('.').pop().toLowerCase() : "";
       const isVideo = ["mp4", "webm", "ogv", "mov", "m4v"].includes(ext);
       const isImage = ["jpg", "jpeg", "png", "webp", "gif", "avif"].includes(ext);
-      const publicUrl = getPublicUrl(item.Key);
-      const devUrl = getDevUrl(item.Key);
+      
+      let itemCid = isFilebase ? getStoredIpfsCid(item.Key) : null;
+      let publicUrl = isFilebase && itemCid
+        ? `${baseDomain}/i/${itemCid}/${encodeURIComponent(item.Key)}`
+        : (isFilebase ? `${baseDomain}/i/raw/${encodeURIComponent(item.Key)}` : getPublicUrl(item.Key));
+      const devUrl = isFilebase ? null : getDevUrl(item.Key);
 
       let thumbHtml = "";
       if (isImage) {
@@ -3307,6 +3337,7 @@ async function fetchAndRenderR2Files() {
           <div class="item-name-row" style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap;">
             <span class="item-name" style="font-weight: 600; word-break: break-all;">${escapeHtml(item.Key)}</span>
             <span style="color: #64748b; font-size: 11px; white-space: nowrap;">${formatBytes(item.Size || 0)}</span>
+            ${itemCid ? `<span style="font-size: 10px; padding: 1px 5px; border-radius: 4px; background: rgba(56,189,248,0.15); color: #38bdf8; border: 1px solid rgba(56,189,248,0.4);" title="IPFS CID: ${escapeHtml(itemCid)}">🪐 IPFS: ${escapeHtml(itemCid.slice(0, 8))}...</span>` : ""}
             <span class="r2-wf-badge-placeholder" data-key="${escapeHtml(item.Key)}"></span>
           </div>
           <div class="item-meta" style="color: var(--muted); margin-top: 4px; font-size: 11px;">
@@ -3321,6 +3352,27 @@ async function fetchAndRenderR2Files() {
       `;
 
       r2FileList.append(article);
+
+      // Filebase でまだ CID がキャッシュにない場合、HeadObject から非同期解決してサムネとコピーURLを更新
+      if (isFilebase && !itemCid) {
+        s3.send(new HeadObjectCommand({ Bucket: bucketName, Key: item.Key })).then(headOutput => {
+          const hHeaders = headOutput?.$metadata?.httpHeaders || {};
+          const fetchedCid = hHeaders["x-amz-meta-cid"] ||
+                             hHeaders["x-amz-meta-ipfs-hash"] ||
+                             headOutput?.Metadata?.cid ||
+                             headOutput?.Metadata?.["ipfs-hash"];
+          if (fetchedCid) {
+            storeIpfsCid(item.Key, fetchedCid);
+            const resolvedUrl = `${baseDomain}/i/${fetchedCid}/${encodeURIComponent(item.Key)}`;
+            const linkEl = article.querySelector("a.thumb-link");
+            if (linkEl) linkEl.href = resolvedUrl;
+            const imgEl = article.querySelector("img.thumb");
+            if (imgEl) imgEl.src = resolvedUrl;
+            const copyBtn = article.querySelector(".copy-r2-url-btn");
+            if (copyBtn) copyBtn.dataset.url = resolvedUrl;
+          }
+        }).catch(e => console.warn("HeadObject lookup for file list item failed:", e));
+      }
 
       // R2 ファイルのワークフロー有無を非同期で判定し、存在する場合のみバッジを表示
       checkRemoteFileWf(item.Key, publicUrl).then(hasWf => {
@@ -3347,7 +3399,44 @@ r2FileList?.addEventListener("click", async (e) => {
   const bucketName = (localStorage.getItem("r2BucketName") || r2BucketName?.value || "").trim();
 
   if (target.classList.contains("copy-r2-url-btn")) {
-    const url = target.dataset.url;
+    let url = target.dataset.url;
+    const article = target.closest(".result-item");
+    const key = article?.dataset?.key;
+    const isFilebase = getStorageProvider() === "filebase";
+    const baseDomain = (getSelectedR2Domain() || (typeof window !== "undefined" ? window.location.origin : "")).replace(/\/$/, "");
+
+    if (isFilebase && key && (!url || url.includes("/i/raw/"))) {
+      const cachedCid = getStoredIpfsCid(key);
+      if (cachedCid) {
+        url = `${baseDomain}/i/${cachedCid}/${encodeURIComponent(key)}`;
+        target.dataset.url = url;
+      } else {
+        const origText = target.textContent;
+        target.textContent = "取得中...";
+        try {
+          const headOutput = await s3.send(new HeadObjectCommand({ Bucket: bucketName, Key: key }));
+          const hHeaders = headOutput?.$metadata?.httpHeaders || {};
+          const fetchedCid = hHeaders["x-amz-meta-cid"] ||
+                             hHeaders["x-amz-meta-ipfs-hash"] ||
+                             headOutput?.Metadata?.cid ||
+                             headOutput?.Metadata?.["ipfs-hash"];
+          if (fetchedCid) {
+            storeIpfsCid(key, fetchedCid);
+            url = `${baseDomain}/i/${fetchedCid}/${encodeURIComponent(key)}`;
+            target.dataset.url = url;
+            const linkEl = article.querySelector("a.thumb-link");
+            if (linkEl) linkEl.href = url;
+            const imgEl = article.querySelector("img.thumb");
+            if (imgEl) imgEl.src = url;
+          }
+        } catch (e) {
+          console.warn("On-demand CID lookup failed:", e);
+        } finally {
+          target.textContent = origText;
+        }
+      }
+    }
+
     await copyToClipboard(url, target);
     return;
   }
