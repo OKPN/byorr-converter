@@ -152,29 +152,17 @@
 
               <button class="primary-button" id="convertDownloadButton" type="button" disabled data-i18n="btnDownload">📥 ダウンロード</button>
 
-              <button class="primary-button upload-primary-cta" id="convertUploadButton" type="button" disabled data-i18n="btnUpload">🟩 アップロード</button>
+              <div style="display: flex; gap: 8px; width: 100%;">
+                <button class="primary-button upload-primary-cta" id="convertUploadR2Button" type="button" disabled data-i18n="btnUploadR2" style="flex: 1; margin: 0; background: linear-gradient(135deg, #ea580c, #c2410c); border-color: #f97316;" title="変換した画像をCloudflare R2へ一括保存">⚡ R2へ保存</button>
+                <button class="primary-button upload-primary-cta" id="convertUploadFilebaseButton" type="button" disabled data-i18n="btnUploadFilebase" style="flex: 1; margin: 0; background: linear-gradient(135deg, #0284c7, #0369a1); border-color: #38bdf8;" title="変換した画像をFilebase (IPFS)へ一括保存">🪐 Filebaseへ保存</button>
+              </div>
             </div>
 
-            <!-- 安全な Cloudflare R2 接続情報アコーディオン -->
+            <!-- 安全な Cloudflare R2 / Filebase 接続情報アコーディオン -->
             <div style="padding: 0 18px 18px;">
               <details class="settings-accordion cf-settings-accordion" id="cfSettingsAccordion">
-                <summary data-i18n="cfTitle">☁️ ストレージ接続設定 (S3 / IPFS)</summary>
+                <summary data-i18n="cfTitle">☁️ ストレージ接続設定 (R2 / Filebase IPFS)</summary>
                 <div class="settings-content" style="padding: 14px 0 4px; display: flex; flex-direction: column; gap: 12px;">
-
-                  <!-- ストレージ方式切り替え -->
-                  <div style="padding: 10px 12px; background: rgba(255,255,255,0.03); border: 1px solid var(--border); border-radius: 8px;">
-                    <div style="font-size: 11px; font-weight: bold; color: var(--muted); margin-bottom: 6px;">接続先ストレージ方式:</div>
-                    <div style="display: flex; gap: 14px; flex-wrap: wrap;">
-                      <label style="display: flex; align-items: center; gap: 5px; font-size: 12px; cursor: pointer; color: var(--text);">
-                        <input type="radio" name="storageProvider" value="r2" checked id="providerR2">
-                        <span>Cloudflare R2 (自分専用・高機能)</span>
-                      </label>
-                      <label style="display: flex; align-items: center; gap: 5px; font-size: 12px; cursor: pointer; color: #38bdf8;">
-                        <input type="radio" name="storageProvider" value="filebase" id="providerFilebase">
-                        <span>🪐 Filebase (IPFS分散・容量ゼロ・Pages直リン)</span>
-                      </label>
-                    </div>
-                  </div>
 
                   <!-- STEP 1: 画像公開・配信URL設定 (複数登録・プルダウン切替) -->
                   <div class="setup-step-box" style="padding: 12px; border: 1px solid rgba(255, 122, 26, 0.4); border-radius: 8px; background: rgba(255, 122, 26, 0.05);">
@@ -201,45 +189,70 @@
                       </div>
 
                       <span style="font-size: 11px; color: var(--muted); margin-top: 2px;">
-                        ※ pages.dev URL（例: https://blob-bin.pages.dev）、独自ドメイン、R2 dev URL を何件でも追加できます。<br>
+                        ※ pages.dev URL（例: https://staging.byorr-converter.pages.dev）、独自ドメイン、R2 dev URL を何件でも追加できます。<br>
                         選択された URL が画像コピーやパレットの配信ベース URL に使用されます。
                       </span>
                     </div>
                   </div>
 
-                  <!-- STEP 2: S3 API 通信鍵設定 (STEP 1 入力でアンロック) -->
-                  <div id="r2KeysStepContainer" class="setup-step-box" style="padding: 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel-strong); opacity: 0.5; pointer-events: none; transition: opacity 0.2s ease;">
-                    <div style="font-size: 13px; font-weight: bold; color: var(--text); margin-bottom: 8px; display: flex; align-items: center; gap: 6px;">
-                      <span>2️⃣ R2 S3 API 通信鍵を入力</span>
-                      <span id="step2Notice" style="font-size: 11px; color: var(--danger); font-weight: normal;">⚠️ 上の公開URLを先に入力してください</span>
+                  <!-- STEP 2: ストレージ認証情報 (R2 & Filebase 併用入力) -->
+                  <div id="r2KeysStepContainer" class="setup-step-box" style="padding: 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel-strong); opacity: 0.5; pointer-events: none; transition: opacity 0.2s ease; display: flex; flex-direction: column; gap: 14px;">
+                    
+                    <!-- ⚡ Cloudflare R2 セクション -->
+                    <div style="border-bottom: 1px solid var(--border); padding-bottom: 12px;">
+                      <div style="font-size: 13px; font-weight: bold; color: #fb923c; margin-bottom: 8px; display: flex; align-items: center; justify-content: space-between;">
+                        <span>⚡ Cloudflare R2 接続情報 (S3 API)</span>
+                        <a href="https://dash.cloudflare.com/" target="_blank" rel="noopener noreferrer" style="font-size: 11px; color: #94a3b8; text-decoration: none;">Cloudflare ↗</a>
+                      </div>
+                      <div style="display: flex; flex-direction: column; gap: 8px;">
+                        <label class="field">
+                          <span><span data-i18n="r2AccountLabel">Account ID</span></span>
+                          <input id="r2AccountId" type="text" placeholder="例: 0123456789abcdef... または S3 API URL" spellcheck="false" autocomplete="off" disabled>
+                          <span style="font-size: 11px; color: var(--muted);" data-i18n="r2AccountSub">Cloudflare アカウント ID</span>
+                        </label>
+                        <label class="field">
+                          <span><span data-i18n="r2BucketLabel">R2 バケット名</span></span>
+                          <input id="r2BucketName" type="text" placeholder="例: my-bucket" spellcheck="false" autocomplete="off" disabled>
+                        </label>
+                        <label class="field">
+                          <span><span data-i18n="r2AccessKeyLabel">Access Key ID</span></span>
+                          <input id="r2AccessKeyId" type="text" placeholder="例: c8a1928374..." spellcheck="false" autocomplete="off" disabled>
+                        </label>
+                        <label class="field">
+                          <span><span data-i18n="r2SecretKeyLabel">Secret Access Key</span></span>
+                          <input id="r2SecretAccessKey" type="text" style="-webkit-text-security: disc;" placeholder="例: 99f87654..." spellcheck="false" autocomplete="off" disabled>
+                        </label>
+                      </div>
                     </div>
-                    <div style="display: flex; flex-direction: column; gap: 8px;">
-                      <label class="field">
-                        <span><span data-i18n="r2AccountLabel">Account ID</span> <span style="color: var(--danger);">*</span></span>
-                        <input id="r2AccountId" type="text" placeholder="例: 0123456789abcdef... または S3 API URL" spellcheck="false" autocomplete="off" disabled>
-                        <span style="font-size: 11px; color: var(--muted);" data-i18n="r2AccountSub">Cloudflare アカウント ID（S3 API URLを貼り付けても自動抽出されます）</span>
-                      </label>
-                      <label class="field">
-                        <span><span data-i18n="r2BucketLabel">R2 バケット名</span> <span style="color: var(--danger);">*</span></span>
-                        <input id="r2BucketName" type="text" placeholder="例: my-bucket" spellcheck="false" autocomplete="off" disabled>
-                        <span style="font-size: 11px; color: var(--muted);" data-i18n="r2BucketSub">対象の Cloudflare R2 バケット名</span>
-                      </label>
-                      <label class="field">
-                        <span><span data-i18n="r2AccessKeyLabel">Access Key ID</span> <span style="color: var(--danger);">*</span></span>
-                        <input id="r2AccessKeyId" type="text" placeholder="例: c8a1928374..." spellcheck="false" autocomplete="off" disabled>
-                        <span style="font-size: 11px; color: var(--muted);" data-i18n="r2AccessKeySub">R2 API トークンの Access Key ID</span>
-                      </label>
-                      <label class="field">
-                        <span><span data-i18n="r2SecretKeyLabel">Secret Access Key</span> <span style="color: var(--danger);">*</span></span>
-                        <input id="r2SecretAccessKey" type="text" style="-webkit-text-security: disc;" placeholder="例: 99f87654..." spellcheck="false" autocomplete="off" disabled>
-                        <span style="font-size: 11px; color: var(--muted);" data-i18n="r2SecretKeySub">R2 API トークンの Secret Access Key</span>
-                      </label>
+
+                    <!-- 🪐 Filebase (IPFS) セクション -->
+                    <div>
+                      <div style="font-size: 13px; font-weight: bold; color: #38bdf8; margin-bottom: 8px; display: flex; align-items: center; justify-content: space-between;">
+                        <span>🪐 Filebase (IPFS分散・容量ゼロ・Pages直リン)</span>
+                        <div style="display: flex; gap: 8px; align-items: center;">
+                          <button class="ghost-button" id="filebaseCorsButton" type="button" style="font-size: 10.5px; padding: 2px 8px; height: 24px; color: #38bdf8; border-color: rgba(56, 189, 248, 0.4);" title="FilebaseバケットにIPFS CID公開用CORS設定をワンクリック適用">⚙️ CORS自動設定</button>
+                          <a href="https://console.filebase.com/" target="_blank" rel="noopener noreferrer" style="font-size: 11px; color: #94a3b8; text-decoration: none;">Filebase ↗</a>
+                        </div>
+                      </div>
+                      <div style="display: flex; flex-direction: column; gap: 8px;">
+                        <label class="field">
+                          <span><span>Filebase バケット名 (IPFS Bucket)</span></span>
+                          <input id="filebaseBucket" type="text" placeholder="例: my-ipfs-bucket" spellcheck="false" autocomplete="off" disabled>
+                        </label>
+                        <label class="field">
+                          <span><span>Filebase Key (Access Key)</span></span>
+                          <input id="filebaseApiKey" type="text" placeholder="例: E39D98762..." spellcheck="false" autocomplete="off" disabled>
+                        </label>
+                        <label class="field">
+                          <span><span>Filebase Secret Key</span></span>
+                          <input id="filebaseSecretKey" type="text" style="-webkit-text-security: disc;" placeholder="例: WkH18302..." spellcheck="false" autocomplete="off" disabled>
+                        </label>
+                      </div>
                     </div>
+
                   </div>
                   <div style="display: flex; gap: 6px; margin-top: 4px; flex-wrap: wrap;">
                     <button class="primary-button" id="cfSaveButton" type="button" style="flex: 1; min-width: 90px;" data-i18n="btnSave">保存する</button>
-                    <button class="ghost-button" id="filebaseCorsButton" type="button" style="display: none; font-size: 11px; padding: 0 10px; color: #38bdf8; border-color: rgba(56, 189, 248, 0.4);" title="FilebaseバケットにIPFS CID読み取り用CORS設定をワンクリック適用">⚙️ CORS自動設定</button>
-                    <a href="https://dash.cloudflare.com/" target="_blank" rel="noopener noreferrer" class="ghost-button" id="cfDashboardLink" style="display: inline-flex; align-items: center; font-size: 12px; text-decoration: none;">Cloudflare ↗</a>
                     <button class="ghost-button danger-button" id="cfClearButton" type="button" data-i18n="btnClear">クリア</button>
                   </div>
                   <div id="cfStatus" style="font-size: 12px; min-height: 16px;"></div>
@@ -303,8 +316,11 @@
         </details>
 
         <section class="panel r2-files-panel">
-          <div class="panel-heading">
-            <h2 data-i18n="r2Heading">⚡ Cloudflare R2 ストレージ内のファイル</h2>
+          <div class="panel-heading" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
+            <div class="storage-tab-group" style="display: flex; gap: 6px; align-items: center;">
+              <button type="button" class="tab-button active" id="storageTabR2" style="font-size: 13px; font-weight: 700; padding: 6px 14px; border-radius: 6px; border: 1px solid #f97316; background: rgba(249, 115, 22, 0.15); color: #fb923c; cursor: pointer; transition: all 0.15s ease;">⚡ Cloudflare R2</button>
+              <button type="button" class="tab-button" id="storageTabFilebase" style="font-size: 13px; font-weight: 600; padding: 6px 14px; border-radius: 6px; border: 1px solid var(--border); background: rgba(255, 255, 255, 0.04); color: var(--muted); cursor: pointer; transition: all 0.15s ease;">🪐 Filebase (IPFS)</button>
+            </div>
             <div class="storage-usage" id="storageUsage" style="display: flex; flex-direction: column; gap: 4px; flex: 1; margin: 0 16px;">
               <div class="storage-info-row" style="display: flex; justify-content: space-between; align-items: center; font-size: 13px;">
                 <span id="storageUsageText" style="font-weight: 500;">使用量: 0 MB / 1.0 GB (0%)</span>

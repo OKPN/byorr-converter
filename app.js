@@ -55,6 +55,8 @@ const i18nDict = {
     btnDownload: "📥 ダウンロード",
     btnUpload: "🟩 アップロード",
     btnConvertUpload: "🟩 アップロード",
+    btnUploadR2: "⚡ R2へ保存",
+    btnUploadFilebase: "🪐 Filebaseへ保存",
     cfTitle: "☁️ Cloudflare R2 接続設定 (S3 API)",
     r2AccountLabel: "Account ID",
     r2AccountSub: "Cloudflare アカウント ID（S3 API URLを貼り付けても自動抽出されます）",
@@ -203,6 +205,8 @@ const i18nDict = {
     btnDownload: "📥 Download",
     btnUpload: "🟩 Upload",
     btnConvertUpload: "🟩 Upload",
+    btnUploadR2: "⚡ Save to R2",
+    btnUploadFilebase: "🪐 Save to Filebase",
     cfTitle: "☁️ Cloudflare R2 Connection (S3 API)",
     r2AccountLabel: "Account ID",
     r2AccountSub: "Cloudflare Account ID",
@@ -378,7 +382,8 @@ const enableZipCheck = document.querySelector("#enableZipCheck");
 
 // アクションボタン
 const convertDownloadButton = document.querySelector("#convertDownloadButton");
-const convertUploadButton = document.querySelector("#convertUploadButton");
+const convertUploadR2Button = document.querySelector("#convertUploadR2Button");
+const convertUploadFilebaseButton = document.querySelector("#convertUploadFilebaseButton");
 const clearButton = document.querySelector("#clearButton");
 
 // ☁️ Cloudflare R2 接続設定フォーム要素
@@ -395,6 +400,11 @@ const r2DomainNewSaveBtn = document.querySelector("#r2DomainNewSaveBtn");
 const r2DomainNewCancelBtn = document.querySelector("#r2DomainNewCancelBtn");
 const r2PublicDomain = document.querySelector("#r2PublicDomain"); // 後方互換
 const r2DevDomain = document.querySelector("#r2DevDomain"); // 後方互換
+
+// 🪐 Filebase 接続設定フォーム要素
+const filebaseBucket = document.querySelector("#filebaseBucket");
+const filebaseApiKey = document.querySelector("#filebaseApiKey");
+const filebaseSecretKey = document.querySelector("#filebaseSecretKey");
 
 const cfStatus = document.querySelector("#cfStatus");
 const cfSettingsAccordion = document.querySelector("#cfSettingsAccordion");
@@ -425,7 +435,11 @@ const civitaiGalleryList = document.querySelector("#civitaiGalleryList");
 const reloadCivitaiButton = document.querySelector("#reloadCivitaiButton");
 const civitaiProfileLink = document.querySelector("#civitaiProfileLink");
 
-// R2 ファイル一覧 & 容量表示要素
+// R2 & Filebase ファイル一覧 & タブ要素
+const storageTabR2 = document.querySelector("#storageTabR2");
+const storageTabFilebase = document.querySelector("#storageTabFilebase");
+let activeStorageTab = localStorage.getItem("activeStorageTab") || "r2";
+
 const r2FileList = document.querySelector("#r2FileList");
 const reloadR2FilesButton = document.querySelector("#reloadR2FilesButton");
 const deleteSelectedR2FilesButton = document.querySelector("#deleteSelectedR2FilesButton");
@@ -496,21 +510,41 @@ langSelect?.addEventListener("change", (e) => {
   setAppLanguage(e.target.value);
 });
 
-// --- S3 クライアント生成ヘルパー ---
-let s3ClientInstance = null;
+// --- S3 クライアント生成 ＆ ストレージ接続判定ヘルパー ---
+let s3ClientR2 = null;
+let s3ClientFilebase = null;
 
-function getStorageProvider() {
-  return localStorage.getItem("storageProvider") || "r2";
-}
-
-function getS3Client() {
-  const provider = getStorageProvider();
+function isR2Configured() {
+  const accountId = (localStorage.getItem("r2AccountId") || r2AccountId?.value || "").trim();
+  const bucketName = (localStorage.getItem("r2BucketName") || r2BucketName?.value || "").trim();
   const accessKeyId = (localStorage.getItem("r2AccessKeyId") || r2AccessKeyId?.value || "").trim();
   const secretAccessKey = (localStorage.getItem("r2SecretAccessKey") || r2SecretAccessKey?.value || "").trim();
+  const domain = getSelectedR2Domain();
+  return Boolean(accountId && bucketName && accessKeyId && secretAccessKey && domain);
+}
 
+function isFilebaseConfigured() {
+  const bucketName = (localStorage.getItem("filebaseBucket") || filebaseBucket?.value || "").trim();
+  const accessKeyId = (localStorage.getItem("filebaseApiKey") || filebaseApiKey?.value || "").trim();
+  const secretAccessKey = (localStorage.getItem("filebaseSecretKey") || filebaseSecretKey?.value || "").trim();
+  const domain = getSelectedR2Domain();
+  return Boolean(bucketName && accessKeyId && secretAccessKey && domain);
+}
+
+function getBucketName(provider = "r2") {
   if (provider === "filebase") {
+    return (localStorage.getItem("filebaseBucket") || filebaseBucket?.value || "").trim();
+  }
+  return (localStorage.getItem("r2BucketName") || r2BucketName?.value || "").trim();
+}
+
+function getS3Client(provider = "r2") {
+  if (provider === "filebase") {
+    const accessKeyId = (localStorage.getItem("filebaseApiKey") || filebaseApiKey?.value || "").trim();
+    const secretAccessKey = (localStorage.getItem("filebaseSecretKey") || filebaseSecretKey?.value || "").trim();
     if (!accessKeyId || !secretAccessKey) return null;
-    s3ClientInstance = new S3Client({
+
+    s3ClientFilebase = new S3Client({
       region: "us-east-1",
       endpoint: "https://s3.filebase.io",
       forcePathStyle: true,
@@ -519,14 +553,16 @@ function getS3Client() {
         secretAccessKey,
       },
     });
-    return s3ClientInstance;
+    return s3ClientFilebase;
   }
 
   // デフォルト: Cloudflare R2
   const accountId = (localStorage.getItem("r2AccountId") || r2AccountId?.value || "").trim();
+  const accessKeyId = (localStorage.getItem("r2AccessKeyId") || r2AccessKeyId?.value || "").trim();
+  const secretAccessKey = (localStorage.getItem("r2SecretAccessKey") || r2SecretAccessKey?.value || "").trim();
   if (!accountId || !accessKeyId || !secretAccessKey) return null;
 
-  s3ClientInstance = new S3Client({
+  s3ClientR2 = new S3Client({
     region: "auto",
     endpoint: `https://${accountId}.r2.cloudflarestorage.com`,
     credentials: {
@@ -534,13 +570,13 @@ function getS3Client() {
       secretAccessKey,
     },
   });
-  return s3ClientInstance;
+  return s3ClientR2;
 }
 
 // Filebase S3 バケットの CORS 自動設定 (CID 読み取りヘッダー公開)
 async function configureFilebaseCors() {
-  const s3 = getS3Client();
-  const bucketName = (localStorage.getItem("r2BucketName") || r2BucketName?.value || "").trim();
+  const s3 = getS3Client("filebase");
+  const bucketName = getBucketName("filebase");
 
   if (!s3 || !bucketName) {
     alert("⚠️ Filebaseのバケット名、Access Key、Secret Keyを入力してから実行してください。");
@@ -717,40 +753,8 @@ function renderR2DomainSelect() {
   });
 }
 
-// --- R2 / Filebase IPFS 設定状態の更新 (STEP 1のURL必須ルールを堅持) ---
+// --- R2 / Filebase 設定状態の更新 (STEP 1のURL必須ルールを堅持) ---
 function updateR2Status() {
-  const provider = getStorageProvider();
-  const isFilebase = provider === "filebase";
-
-  const accountId = (localStorage.getItem("r2AccountId") || r2AccountId?.value || "").trim();
-  const bucketName = (localStorage.getItem("r2BucketName") || r2BucketName?.value || "").trim();
-  const accessKeyId = (localStorage.getItem("r2AccessKeyId") || r2AccessKeyId?.value || "").trim();
-  const secretAccessKey = (localStorage.getItem("r2SecretAccessKey") || r2SecretAccessKey?.value || "").trim();
-
-  // Filebase 選択時は Account ID の入力欄を非表示、CORSボタン表示、リンク先をFilebaseに変更
-  const accountField = r2AccountId ? r2AccountId.closest(".field") : null;
-  if (accountField) {
-    accountField.style.display = isFilebase ? "none" : "";
-  }
-  if (filebaseCorsButton) {
-    filebaseCorsButton.style.display = isFilebase ? "inline-block" : "none";
-  }
-  if (cfDashboardLink) {
-    cfDashboardLink.textContent = isFilebase ? "Filebase ↗" : "Cloudflare ↗";
-    cfDashboardLink.href = isFilebase ? "https://console.filebase.com/" : "https://dash.cloudflare.com/";
-  }
-
-  // Filebase 選択時かつ配信ドメインが未登録の場合、現在の Pages オリジンを自動候補追加
-  if (isFilebase && typeof window !== "undefined" && window.location?.origin && !window.location.origin.startsWith("file://")) {
-    const list = getR2DomainList();
-    if (list.length === 0) {
-      const curOrigin = window.location.origin;
-      list.push(curOrigin);
-      saveR2DomainList(list);
-      renderR2DomainSelect(curOrigin);
-    }
-  }
-
   // 🔒 STEP 1: 配信ドメインが1件以上存在し、有効に選択されていること
   const selectedDomain = getSelectedR2Domain();
   const isStep1Ok = Boolean(selectedDomain && selectedDomain.trim());
@@ -758,9 +762,10 @@ function updateR2Status() {
   // 🔒 STEP 2 のロック制御 (STEP 1 未設定時は完全ブロック)
   const step2Box = document.querySelector("#r2KeysStepContainer");
   const step2Notice = document.querySelector("#step2Notice");
-  const step2Inputs = isFilebase
-    ? [r2BucketName, r2AccessKeyId, r2SecretAccessKey]
-    : [r2AccountId, r2BucketName, r2AccessKeyId, r2SecretAccessKey];
+  const step2Inputs = [
+    r2AccountId, r2BucketName, r2AccessKeyId, r2SecretAccessKey,
+    filebaseBucket, filebaseApiKey, filebaseSecretKey
+  ];
 
   if (step2Box) {
     step2Box.style.opacity = isStep1Ok ? "1" : "0.5";
@@ -776,24 +781,34 @@ function updateR2Status() {
     if (input) input.disabled = !isStep1Ok;
   });
 
-  const isConfigured = isFilebase
-    ? Boolean(bucketName && accessKeyId && secretAccessKey && isStep1Ok)
-    : Boolean(accountId && bucketName && accessKeyId && secretAccessKey && isStep1Ok);
+  const r2Ok = isR2Configured();
+  const fbOk = isFilebaseConfigured();
 
   if (cfStatus) {
-    const providerLabel = isFilebase ? "Filebase IPFS" : "R2";
-    if (isConfigured) {
-      cfStatus.innerHTML = `<span style="color: #4caf50;">✅ ${providerLabel} 接続設定済み (${escapeHtml(bucketName)})</span>`;
+    const statusParts = [];
+    if (r2Ok) {
+      statusParts.push(`<span style="color: #4caf50;">⚡ R2 設定済 (${escapeHtml(getBucketName("r2"))})</span>`);
     } else {
-      cfStatus.innerHTML = `<span style="color: var(--danger);">⚠️ ${providerLabel} 接続設定を完了してください</span>`;
+      statusParts.push(`<span style="color: var(--muted);">⚡ R2 未設定</span>`);
     }
+
+    if (fbOk) {
+      statusParts.push(`<span style="color: #38bdf8;">🪐 Filebase 設定済 (${escapeHtml(getBucketName("filebase"))})</span>`);
+    } else {
+      statusParts.push(`<span style="color: var(--muted);">🪐 Filebase 未設定</span>`);
+    }
+
+    cfStatus.innerHTML = statusParts.join(" &nbsp;|&nbsp; ");
   }
 
-  if (!isConfigured && convertUploadButton) {
-    convertUploadButton.disabled = true;
+  if (convertUploadR2Button) {
+    convertUploadR2Button.disabled = !r2Ok || (state.files.length === 0);
+  }
+  if (convertUploadFilebaseButton) {
+    convertUploadFilebaseButton.disabled = !fbOk || (state.files.length === 0);
   }
 
-  return isConfigured;
+  return r2Ok || fbOk;
 }
 
 let civitaiPaletteFiles = []; // パレット用キャッシュ
@@ -1215,10 +1230,18 @@ function loadSettings() {
   const savedPublic    = localStorage.getItem("r2PublicDomain") || "";
   const savedDev       = localStorage.getItem("r2DevDomain") || "";
 
+  const savedFbBucket  = localStorage.getItem("filebaseBucket") || "";
+  const savedFbKeyId   = localStorage.getItem("filebaseApiKey") || "";
+  const savedFbSecret  = localStorage.getItem("filebaseSecretKey") || "";
+
   if (r2AccountId) r2AccountId.value = savedAccount;
   if (r2BucketName) r2BucketName.value = savedBucket;
   if (r2AccessKeyId) r2AccessKeyId.value = savedKeyId;
   if (r2SecretAccessKey) r2SecretAccessKey.value = savedSecret;
+
+  if (filebaseBucket) filebaseBucket.value = savedFbBucket;
+  if (filebaseApiKey) filebaseApiKey.value = savedFbKeyId;
+  if (filebaseSecretKey) filebaseSecretKey.value = savedFbSecret;
 
   renderR2DomainSelect();
   updateR2Status();
@@ -1510,8 +1533,8 @@ fetchAndRenderCivitaiGallery();
 let r2AutoFetchTimer = null;
 
 function saveR2SettingsAuto() {
-  const provider = getStorageProvider();
-  s3ClientInstance = null; // 設定変更時はインスタンスを再生成
+  s3ClientR2 = null;
+  s3ClientFilebase = null;
 
   let rawAccount = r2AccountId?.value?.trim() || "";
   // S3 API URL（https://<account_id>.r2.cloudflarestorage.com）が貼られた場合は自動抽出
@@ -1528,12 +1551,18 @@ function saveR2SettingsAuto() {
   const accessKeyId = r2AccessKeyId?.value?.trim() || "";
   const secretAccessKey = r2SecretAccessKey?.value?.trim() || "";
 
-  if (provider === "r2" && accountId) {
-    localStorage.setItem("r2AccountId", accountId);
-  }
+  if (accountId) localStorage.setItem("r2AccountId", accountId);
   if (bucketName) localStorage.setItem("r2BucketName", bucketName);
   if (accessKeyId) localStorage.setItem("r2AccessKeyId", accessKeyId);
   if (secretAccessKey) localStorage.setItem("r2SecretAccessKey", secretAccessKey);
+
+  const fbBucket = filebaseBucket?.value?.trim() || "";
+  const fbKeyId = filebaseApiKey?.value?.trim() || "";
+  const fbSecret = filebaseSecretKey?.value?.trim() || "";
+
+  if (fbBucket) localStorage.setItem("filebaseBucket", fbBucket);
+  if (fbKeyId) localStorage.setItem("filebaseApiKey", fbKeyId);
+  if (fbSecret) localStorage.setItem("filebaseSecretKey", fbSecret);
 
   const isConfigured = updateR2Status();
   render();
@@ -1546,30 +1575,16 @@ function saveR2SettingsAuto() {
   }
 };
 
-providerR2?.addEventListener("change", () => {
-  if (providerR2.checked) {
-    localStorage.setItem("storageProvider", "r2");
-    s3ClientInstance = null;
-    updateR2Status();
-    render();
-  }
-});
-
-providerFilebase?.addEventListener("change", () => {
-  if (providerFilebase.checked) {
-    localStorage.setItem("storageProvider", "filebase");
-    s3ClientInstance = null;
-    updateR2Status();
-    render();
-  }
-});
-
 filebaseCorsButton?.addEventListener("click", configureFilebaseCors);
 
 r2AccountId?.addEventListener("input", saveR2SettingsAuto);
 r2BucketName?.addEventListener("input", saveR2SettingsAuto);
 r2AccessKeyId?.addEventListener("input", saveR2SettingsAuto);
 r2SecretAccessKey?.addEventListener("input", saveR2SettingsAuto);
+
+filebaseBucket?.addEventListener("input", saveR2SettingsAuto);
+filebaseApiKey?.addEventListener("input", saveR2SettingsAuto);
+filebaseSecretKey?.addEventListener("input", saveR2SettingsAuto);
 
 // 🌐 ドメイン選択変更リスナー
 r2DomainSelect?.addEventListener("change", (e) => {
@@ -1665,10 +1680,18 @@ cfClearButton?.addEventListener("click", () => {
   localStorage.removeItem("r2PublicDomain");
   localStorage.removeItem("r2DevDomain");
 
+  localStorage.removeItem("filebaseBucket");
+  localStorage.removeItem("filebaseApiKey");
+  localStorage.removeItem("filebaseSecretKey");
+
   if (r2AccountId) r2AccountId.value = "";
   if (r2BucketName) r2BucketName.value = "";
   if (r2AccessKeyId) r2AccessKeyId.value = "";
   if (r2SecretAccessKey) r2SecretAccessKey.value = "";
+
+  if (filebaseBucket) filebaseBucket.value = "";
+  if (filebaseApiKey) filebaseApiKey.value = "";
+  if (filebaseSecretKey) filebaseSecretKey.value = "";
 
   renderR2DomainSelect();
   updateR2Status();
@@ -2561,7 +2584,8 @@ function addFiles(files) {
 }
 
 function setUiLock(locked) {
-  const r2Ok = updateR2Status();
+  const r2Ok = isR2Configured();
+  const fbOk = isFilebaseConfigured();
   const hasFiles = state.files.length > 0;
   const isConvertOn = enableConvertCheck?.checked ?? true;
   const isRenameOn = enableRenameCheck?.checked ?? true;
@@ -2577,7 +2601,8 @@ function setUiLock(locked) {
       ? "画像変換・リネーム・ZIPまとめ保存がすべてオフのためダウンロード無効"
       : "";
   }
-  if (convertUploadButton) convertUploadButton.disabled = locked || !hasFiles || !r2Ok;
+  if (convertUploadR2Button) convertUploadR2Button.disabled = locked || !hasFiles || !r2Ok;
+  if (convertUploadFilebaseButton) convertUploadFilebaseButton.disabled = locked || !hasFiles || !fbOk;
 }
 
 function updateRenamePreview() {
@@ -2626,7 +2651,8 @@ function updateRenamePreview() {
 
 // --- インプレース描画 (Unified File Card) ---
 function render() {
-  const r2Ok = updateR2Status();
+  const r2Ok = isR2Configured();
+  const fbOk = isFilebaseConfigured();
   const hasFiles = state.files.length > 0;
   if (fileCount) fileCount.textContent = `${state.files.length}件`;
 
@@ -2641,7 +2667,8 @@ function render() {
       ? "画像変換・リネーム・ZIPまとめ保存がすべてオフのためダウンロード無効"
       : "";
   }
-  if (convertUploadButton) convertUploadButton.disabled = !hasFiles || !r2Ok;
+  if (convertUploadR2Button) convertUploadR2Button.disabled = !hasFiles || !r2Ok;
+  if (convertUploadFilebaseButton) convertUploadFilebaseButton.disabled = !hasFiles || !fbOk;
 
   if (dropzone) {
     dropzone.classList.toggle("has-files", hasFiles);
@@ -2658,76 +2685,65 @@ function render() {
       try {
         const result = state.results[index];
         const item = document.createElement("article");
-        item.className = "file-item unified-file-card";
-        if (result) item.dataset.id = result.id;
-        
-        let thumbHtml = "";
-        const currentName = result ? result.name : file.name;
-        const ext = currentName.split('.').pop().toLowerCase();
-        const isVideo = (file.type && file.type.startsWith("video/")) || ["mp4", "webm", "ogv", "mov", "m4v"].includes(ext);
+        item.className = "unified-file-card";
+        item.dataset.index = index;
 
+        const originalExt = file.name ? file.name.split('.').pop().toLowerCase() : "";
+        const targetExt = isConvertOn
+          ? (extensions[formatSelect?.value || "image/webp"] || "webp")
+          : originalExt;
+
+        const isNonConverted = (!isConvertOn && originalExt === targetExt) || (result && !result.converted);
+
+        let previewSrc = "";
         if (result && result.previewUrl) {
-          thumbHtml = `<img class="thumb" alt="" src="${result.previewUrl}">`;
-        } else if (file.type && file.type.startsWith("image/")) {
-          thumbHtml = `<img class="thumb" alt="" src="${URL.createObjectURL(file)}">`;
-        } else if (isVideo) {
-          const videoSrc = result && result.proxyUrl ? result.proxyUrl : URL.createObjectURL(file);
-          thumbHtml = `<video class="thumb" src="${videoSrc}#t=0.5" preload="metadata" muted playsinline style="object-fit: cover; pointer-events: none;"></video>`;
-        } else {
-          thumbHtml = `<div class="thumb format-badge">${escapeHtml(ext.toUpperCase() || "FILE")}</div>`;
+          previewSrc = result.previewUrl;
+        } else if (file.type.startsWith("image/")) {
+          previewSrc = URL.createObjectURL(file);
         }
 
-        let metaHtml = "";
+        const displayName = result ? result.name : generateOutputName(file.name, index);
 
-        if (result) {
-          const saved = result.originalSize - result.size;
-          const savedRate = result.originalSize ? Math.round((saved / result.originalSize) * 100) : 0;
-
-          if (result.isNonImage) {
-            metaHtml = `${formatBytes(result.size)} · ${escapeHtml(dict.nonConverted)}`;
+        let compressionBadgeHtml = "";
+        if (result && result.size) {
+          const diff = result.size - file.size;
+          const pct = Math.abs(Math.round((diff / file.size) * 100));
+          if (diff < 0) {
+            compressionBadgeHtml = `<span class="rate-badge rate-reduced" style="font-size: 10.5px; padding: 2px 6px; border-radius: 4px; background: rgba(34, 197, 94, 0.15); color: #22c55e; border: 1px solid rgba(34, 197, 94, 0.4);">${pct}% 削減</span>`;
+          } else if (diff > 0) {
+            compressionBadgeHtml = `<span class="rate-badge rate-increased" style="font-size: 10.5px; padding: 2px 6px; border-radius: 4px; background: rgba(239, 68, 68, 0.15); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.4);">${pct}% 増加</span>`;
           } else {
-            let rateText = "";
-            if (savedRate > 0) {
-              const template = dict.rateReduced || "{rate}% 削減";
-              rateText = `<span style="color: #4caf50; font-weight: bold;">${escapeHtml(template.replace("{rate}", String(savedRate)))}</span>`;
-            } else if (savedRate < 0) {
-              const absRate = Math.abs(savedRate);
-              const template = dict.rateIncreased || "{rate}% 増加";
-              rateText = `<span style="color: #ff5252; font-weight: bold;">${escapeHtml(template.replace("{rate}", String(absRate)))}</span>`;
-            } else {
-              rateText = `<span style="color: var(--muted);">${escapeHtml(dict.rateUnchanged || "0% 変化なし")}</span>`;
-            }
-            metaHtml = `${formatBytes(result.originalSize)} ➔ <strong style="color: #fff;">${formatBytes(result.size)}</strong> (${rateText})`;
+            compressionBadgeHtml = `<span class="rate-badge rate-unchanged" style="font-size: 10.5px; padding: 2px 6px; border-radius: 4px; background: rgba(148, 163, 184, 0.15); color: #94a3b8; border: 1px solid rgba(148, 163, 184, 0.4);">±0%</span>`;
           }
-        } else {
-          metaHtml = `${formatBytes(file.size)} · <span style="color: var(--muted);">待機中</span>`;
         }
 
-        let targetUrl = result ? (result.isUploaded && result.proxyUrl ? result.proxyUrl : result.url) : null;
-        if (targetUrl && getStorageProvider() === "filebase" && result?.ipfsCid && !targetUrl.includes("/i/")) {
-          const baseDomain = (getSelectedR2Domain() || (typeof window !== "undefined" ? window.location.origin : "")).replace(/\/$/, "");
-          targetUrl = `${baseDomain}/i/${result.ipfsCid}/${encodeURIComponent(result.name)}`;
+        let wfBadgeHtml = "";
+        if (file.metaStatus && file.metaStatus.hasWorkflow) {
+          wfBadgeHtml = `<span class="meta-badge" style="background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.4); font-size: 10px; padding: 1px 6px; border-radius: 4px; font-weight: 600;" title="ComfyUIワークフローまたはプロンプトが含まれています。変換後も安全に保持されます。">🧬 ワークフロー保持</span>`;
         }
-        const thumbWrapper = targetUrl
-          ? `<a href="${escapeHtml(targetUrl)}" target="_blank" rel="noopener noreferrer" class="thumb-link" title="表示">${thumbHtml}</a>`
-          : thumbHtml;
 
-        const hasPromptDetails = Boolean(file.metaStatus?.promptDetails?.prompt);
-        const promptBtnHtml = hasPromptDetails
-          ? `<button type="button" class="ghost-button copy-prompt-btn" data-index="${index}" style="height: 28px; font-size: 11px; padding: 0 8px; color: #fbbf24; border-color: rgba(251, 191, 36, 0.4); display: inline-flex; align-items: center; gap: 3px;" title="AIプロンプトをコピー">📝 ${escapeHtml(dict.copyPrompt || "プロンプトコピー")}</button>`
-          : "";
+        let promptBtnHtml = "";
+        if (file.metaStatus && file.metaStatus.promptDetails && file.metaStatus.promptDetails.prompt) {
+          promptBtnHtml = `<button type="button" class="ghost-button copy-prompt-btn" data-index="${index}" style="font-size: 11px; padding: 0 8px; height: 28px; color: #a78bfa; border-color: rgba(167, 139, 250, 0.4);" title="プロンプト（生成情報）をコピー">${escapeHtml(dict.civitaiPrompt || "📝 プロンプト")}</button>`;
+        }
 
         item.innerHTML = `
-          ${thumbWrapper}
-          <div class="item-info-col" style="flex: 1; min-width: 0;">
-            <div class="item-name" style="font-weight: 600; font-size: 13px;">${escapeHtml(currentName)}</div>
-            <div class="item-meta" style="font-size: 11px; margin-top: 2px;">
-              ${metaHtml}
-              ${result?.ipfsCid ? `<span style="display: inline-block; margin-left: 6px; padding: 1px 6px; background: rgba(56, 189, 248, 0.15); border: 1px solid rgba(56, 189, 248, 0.4); border-radius: 4px; color: #38bdf8; font-size: 10px;" title="IPFS CID: ${escapeHtml(result.ipfsCid)}">🪐 IPFS: ${escapeHtml(result.ipfsCid.slice(0, 10))}...</span>` : ""}
-            </div>
-            ${createComfyBadgeHtml(file, result)}
+          <div class="card-thumb-area">
+            ${previewSrc ? `<img class="thumb" src="${previewSrc}" alt="" loading="lazy">` : `<div class="thumb format-badge">${escapeHtml(originalExt.toUpperCase() || "FILE")}</div>`}
           </div>
-          <div class="item-actions-col" style="display: flex; gap: 6px; align-items: center; flex-wrap: wrap;">
+          <div class="card-main-area">
+            <div class="card-title-row">
+              <span class="file-name" title="${escapeHtml(displayName)}">${escapeHtml(displayName)}</span>
+              ${isNonConverted ? `<span class="badge badge-non-converted" style="font-size: 10px; padding: 1px 5px; border-radius: 3px; background: rgba(100,116,139,0.2); color: #94a3b8;">非変換</span>` : ""}
+              ${wfBadgeHtml}
+              ${compressionBadgeHtml}
+            </div>
+            <div class="card-meta-row">
+              <span>元: ${formatBytes(file.size)}</span>
+              ${result && result.size ? `<span>➔ <strong>${formatBytes(result.size)}</strong></span>` : ""}
+            </div>
+          </div>
+          <div class="card-actions-area">
             ${promptBtnHtml}
             ${createCardActionHtml(file, result, index)}
             <button type="button" class="ghost-button delete-button danger-button" data-index="${index}" aria-label="削除" title="一覧から削除" style="min-width: 28px; height: 28px; padding: 0 6px; font-size: 14px; line-height: 1;">&times;</button>
@@ -2758,40 +2774,52 @@ function createCardActionHtml(file, result, index) {
   const isConvertOn = enableConvertCheck?.checked ?? true;
   const isRenameOn = enableRenameCheck?.checked ?? true;
   const canProcessLocal = isConvertOn || isRenameOn;
-  const r2Ok = updateR2Status();
+  const r2Ok = isR2Configured();
+  const fbOk = isFilebaseConfigured();
 
   const dlBtnDisabled = (!canProcessLocal && !result) ? "disabled" : "";
   const dlBtnTitle = (!canProcessLocal && !result)
     ? "変換・リネームが両方オフのためダウンロード無効"
     : "ダウンロード";
 
-  const upBtnDisabled = !r2Ok ? "disabled" : "";
-  const upBtnTitle = !r2Ok
-    ? "R2接続設定が未完了のためアップロード不可"
-    : "このファイルだけ変換してR2へアップロード";
-
-  const upBtnStyle = r2Ok
-    ? "font-size: 11px; padding: 0 8px; height: 28px;"
-    : "opacity: 0.35; font-size: 11px; padding: 0 8px; height: 28px; cursor: not-allowed;";
-
   if (result && result.isUploading) {
-    return `<span class="status-text saving" style="font-size: 11px;">アップロード中...</span>`;
+    const pName = result.uploadingProvider === "filebase" ? "Filebase" : "R2";
+    return `<span class="status-text saving" style="font-size: 11px;">${pName} UP中...</span>`;
   }
 
   if (result && result.isUploaded) {
+    const isFb = result.uploadedProvider === "filebase";
+    const badgeHtml = isFb
+      ? `<span style="font-size: 10px; font-weight: 700; color: #38bdf8; background: rgba(56, 189, 248, 0.15); border: 1px solid rgba(56, 189, 248, 0.4); padding: 2px 6px; border-radius: 4px;">🪐 IPFS</span>`
+      : `<span style="font-size: 10px; font-weight: 700; color: #fb923c; background: rgba(249, 115, 22, 0.15); border: 1px solid rgba(249, 115, 22, 0.4); padding: 2px 6px; border-radius: 4px;">⚡ R2</span>`;
+
     return `
-      <input type="text" class="url-output" value="${escapeHtml(result.proxyUrl)}" readonly style="flex: 1; min-width: 220px; max-width: 420px; font-size: 11px; height: 28px; padding: 0 8px; background: rgba(0,0,0,0.3); border: 1px solid rgba(56,189,248,0.4); color: #38bdf8; border-radius: 4px;" title="クリックで全選択＆コピー" onclick="this.select()">
+      ${badgeHtml}
+      <input type="text" class="url-output" value="${escapeHtml(result.proxyUrl)}" readonly style="flex: 1; min-width: 200px; max-width: 400px; font-size: 11px; height: 28px; padding: 0 8px; background: rgba(0,0,0,0.3); border: 1px solid rgba(56,189,248,0.4); color: #38bdf8; border-radius: 4px;" title="クリックで全選択＆コピー" onclick="this.select()">
       <button type="button" class="ghost-button copy-button" style="font-size: 11px; padding: 0 8px; height: 28px;">${escapeHtml(dict.copyUrl)}</button>
       <button type="button" class="ghost-button civitai-post-btn" data-index="${index}" data-url="${escapeHtml(result.proxyUrl)}" data-name="${escapeHtml(result.name)}" style="font-size: 11px; padding: 0 8px; height: 28px; color: #38bdf8; border-color: rgba(56, 189, 248, 0.4);" title="Civitai の投稿画面を開く">🎨 Civitai</button>
       <button type="button" class="ghost-button download-single-btn" data-index="${index}" style="font-size: 11px; padding: 0 8px; height: 28px;" title="${dlBtnTitle}" ${dlBtnDisabled}>📥 DL</button>
     `;
   }
 
-  // 待機中または変換完了時
+  // 待機中または変換完了時: [⚡ R2] と [🪐 Filebase] の個別アップロードボタンを表示
+  const r2Style = r2Ok
+    ? "font-size: 11px; padding: 0 8px; height: 28px; color: #fb923c; border-color: rgba(249, 115, 22, 0.4);"
+    : "opacity: 0.35; font-size: 11px; padding: 0 8px; height: 28px; cursor: not-allowed;";
+  const fbStyle = fbOk
+    ? "font-size: 11px; padding: 0 8px; height: 28px; color: #38bdf8; border-color: rgba(56, 189, 248, 0.4);"
+    : "opacity: 0.35; font-size: 11px; padding: 0 8px; height: 28px; cursor: not-allowed;";
+
+  const civitaiOk = r2Ok || fbOk;
+  const civitaiStyle = civitaiOk
+    ? "font-size: 11px; padding: 0 8px; height: 28px; color: #a78bfa; border-color: rgba(167, 139, 250, 0.4);"
+    : "opacity: 0.35; font-size: 11px; padding: 0 8px; height: 28px; cursor: not-allowed;";
+
   return `
     <button type="button" class="ghost-button download-single-btn" data-index="${index}" style="font-size: 11px; padding: 0 8px; height: 28px;" title="${dlBtnTitle}" ${dlBtnDisabled}>📥 DL</button>
-    <button type="button" class="ghost-button upload-single-btn" data-index="${index}" style="${upBtnStyle}" title="${upBtnTitle}" ${upBtnDisabled}>☁️ UP</button>
-    <button type="button" class="ghost-button civitai-post-btn" data-index="${index}" style="${upBtnStyle}; color: #38bdf8; border-color: rgba(56, 189, 248, 0.4);" title="アップロードしてCivitaiの投稿画面を開く" ${upBtnDisabled}>🎨 Civitai</button>
+    <button type="button" class="ghost-button upload-r2-btn" data-index="${index}" style="${r2Style}" title="${r2Ok ? 'R2へアップロード' : 'R2接続設定が未完了'}" ${r2Ok ? '' : 'disabled'}>⚡ R2</button>
+    <button type="button" class="ghost-button upload-filebase-btn" data-index="${index}" style="${fbStyle}" title="${fbOk ? 'Filebase (IPFS)へアップロード' : 'Filebase接続設定が未完了'}" ${fbOk ? '' : 'disabled'}>🪐 Filebase</button>
+    <button type="button" class="ghost-button civitai-post-btn" data-index="${index}" style="${civitaiStyle}" title="アップロードしてCivitaiの投稿画面を開く" ${civitaiOk ? '' : 'disabled'}>🎨 Civitai</button>
   `;
 }
 
@@ -2875,8 +2903,8 @@ fileList?.addEventListener("click", async (event) => {
     return;
   }
 
-  // 3. 単体アップロード
-  if (target.classList.contains("upload-single-btn")) {
+  // 3. 単体アップロード (⚡ R2)
+  if (target.classList.contains("upload-r2-btn")) {
     if (isNaN(index) || index < 0 || index >= state.files.length) return;
     const file = state.files[index];
     let result = state.results[index];
@@ -2890,13 +2918,41 @@ fileList?.addEventListener("click", async (event) => {
         result = await convertImage(file, index);
         state.results[index] = result;
       }
-      const success = await uploadImage(result);
+      const success = await uploadImage(result, "r2");
       if (success) {
         await fetchAndRenderR2Files();
       }
     } catch (e) {
       console.error(e);
-      alert("アップロードに失敗しました: " + e.message);
+      alert("R2 アップロードに失敗しました: " + e.message);
+    } finally {
+      render();
+    }
+    return;
+  }
+
+  // 3.1 単体アップロード (🪐 Filebase)
+  if (target.classList.contains("upload-filebase-btn")) {
+    if (isNaN(index) || index < 0 || index >= state.files.length) return;
+    const file = state.files[index];
+    let result = state.results[index];
+
+    target.disabled = true;
+    target.textContent = "UP中...";
+    try {
+      if (!result || !isConversionCacheValid()) {
+        if (result && result.url) URL.revokeObjectURL(result.url);
+        if (result && result.previewUrl) URL.revokeObjectURL(result.previewUrl);
+        result = await convertImage(file, index);
+        state.results[index] = result;
+      }
+      const success = await uploadImage(result, "filebase");
+      if (success) {
+        await fetchAndRenderR2Files();
+      }
+    } catch (e) {
+      console.error(e);
+      alert("Filebase アップロードに失敗しました: " + e.message);
     } finally {
       render();
     }
@@ -2945,7 +3001,8 @@ fileList?.addEventListener("click", async (event) => {
         result = await convertImage(file, index);
         state.results[index] = result;
       }
-      const success = await uploadImage(result);
+      const targetProvider = isR2Configured() ? "r2" : "filebase";
+      const success = await uploadImage(result, targetProvider);
       if (success && result.proxyUrl) {
         await fetchAndRenderR2Files();
         openCivitaiIntent(result.proxyUrl, result.name, preloadWindow);
@@ -3142,19 +3199,21 @@ async function convertImage(file, index = 0) {
   };
 }
 
-// --- R2 S3 アップロード処理 ---
-async function uploadImage(result) {
+// --- S3 アップロード処理 (R2 / Filebase 独立対応) ---
+async function uploadImage(result, targetProvider = "r2") {
   if (!result || !result.blob) return false;
 
-  const s3 = getS3Client();
-  const bucketName = (localStorage.getItem("r2BucketName") || r2BucketName?.value || "").trim();
+  const isFilebase = targetProvider === "filebase";
+  const s3 = getS3Client(targetProvider);
+  const bucketName = getBucketName(targetProvider);
 
   if (!s3 || !bucketName) {
-    alert("⚠️ R2 接続設定を完了してください");
+    alert(`⚠️ ${isFilebase ? "Filebase" : "R2"} 接続設定を完了してください`);
     return false;
   }
 
   result.isUploading = true;
+  result.uploadingProvider = targetProvider;
   render();
 
   try {
@@ -3184,10 +3243,8 @@ async function uploadImage(result) {
 
     const putOutput = await s3.send(command);
 
-    const provider = getStorageProvider();
     let ipfsCid = null;
-
-    if (provider === "filebase") {
+    if (isFilebase) {
       // PutObject レスポンスヘッダーから CID を探索
       const headers = putOutput?.$metadata?.httpHeaders || {};
       ipfsCid = headers["x-amz-meta-cid"] || headers["x-amz-meta-ipfs-hash"];
@@ -3211,13 +3268,14 @@ async function uploadImage(result) {
     }
 
     result.isUploaded = true;
+    result.uploadedProvider = targetProvider;
     result.storageKey = result.name;
 
-    if (provider === "filebase" || ipfsCid) {
+    if (isFilebase) {
       if (ipfsCid) {
         result.ipfsCid = ipfsCid;
         storeIpfsCid(result.name, ipfsCid);
-        registerKvCid(result.name, ipfsCid, fileToUpload?.size || 0, fileToUpload?.type || "");
+        registerKvCid(result.name, ipfsCid, result.size || bytes.length, contentType);
       }
       const baseDomain = (getSelectedR2Domain() || (typeof window !== "undefined" ? window.location.origin : "")).replace(/\/$/, "");
       result.proxyUrl = `${baseDomain}/${encodeURIComponent(result.name)}`;
@@ -3232,8 +3290,8 @@ async function uploadImage(result) {
     return true;
   } catch (error) {
     result.error = error.message;
-    console.error("R2 Upload failed:", error);
-    alert(`アップロード失敗: ${error.message}`);
+    console.error("Upload failed:", error);
+    alert(`アップロード失敗 (${targetProvider}): ${error.message}`);
     return false;
   } finally {
     result.isUploading = false;
@@ -3241,8 +3299,8 @@ async function uploadImage(result) {
   }
 }
 
-// --- ボタンイベント ---
-convertUploadButton?.addEventListener("click", async () => {
+// --- 一括アップロード共通処理 ---
+async function handleBatchUpload(targetProvider) {
   if (!state.files.length) return;
   const success = await runConversion();
   if (!success) return;
@@ -3251,21 +3309,22 @@ convertUploadButton?.addEventListener("click", async () => {
   if (targets.length === 0) return;
 
   setUiLock(true);
+  const providerLabel = targetProvider === "filebase" ? "Filebase" : "R2";
   if (statusText) {
     statusText.className = "status-text saving";
-    statusText.textContent = `アップロード中 (0/${targets.length})`;
+    statusText.textContent = `${providerLabel} アップロード中 (0/${targets.length})`;
   }
   if (progressBar) progressBar.value = 0;
 
   try {
     for (let i = 0; i < targets.length; i++) {
       const result = targets[i];
-      if (statusText) statusText.textContent = `アップロード中 (${i + 1}/${targets.length})`;
-      await uploadImage(result);
+      if (statusText) statusText.textContent = `${providerLabel} アップロード中 (${i + 1}/${targets.length})`;
+      await uploadImage(result, targetProvider);
       if (progressBar) progressBar.value = Math.round(((i + 1) / targets.length) * 100);
     }
     if (statusText) {
-      statusText.textContent = "一括アップロード完了";
+      statusText.textContent = `${providerLabel} 一括アップロード完了`;
       statusText.className = "status-text";
     }
   } catch (error) {
@@ -3278,7 +3337,10 @@ convertUploadButton?.addEventListener("click", async () => {
     setUiLock(false);
     await fetchAndRenderR2Files();
   }
-});
+}
+
+convertUploadR2Button?.addEventListener("click", () => handleBatchUpload("r2"));
+convertUploadFilebaseButton?.addEventListener("click", () => handleBatchUpload("filebase"));
 
 convertDownloadButton?.addEventListener("click", async () => {
   const success = await runConversion();
@@ -3325,24 +3387,71 @@ convertDownloadButton?.addEventListener("click", async () => {
   }
 });
 
-// --- R2 ストレージ一覧 & パレット関数 ---
+// --- R2 / Filebase ストレージ一覧 & タブ管理 ---
+function updateStorageTabsUi() {
+  if (storageTabR2 && storageTabFilebase) {
+    if (activeStorageTab === "filebase") {
+      storageTabFilebase.style.border = "1px solid #38bdf8";
+      storageTabFilebase.style.background = "rgba(56, 189, 248, 0.15)";
+      storageTabFilebase.style.color = "#38bdf8";
+      storageTabFilebase.style.fontWeight = "700";
+
+      storageTabR2.style.border = "1px solid var(--border)";
+      storageTabR2.style.background = "rgba(255, 255, 255, 0.04)";
+      storageTabR2.style.color = "var(--muted)";
+      storageTabR2.style.fontWeight = "600";
+    } else {
+      storageTabR2.style.border = "1px solid #f97316";
+      storageTabR2.style.background = "rgba(249, 115, 22, 0.15)";
+      storageTabR2.style.color = "#fb923c";
+      storageTabR2.style.fontWeight = "700";
+
+      storageTabFilebase.style.border = "1px solid var(--border)";
+      storageTabFilebase.style.background = "rgba(255, 255, 255, 0.04)";
+      storageTabFilebase.style.color = "var(--muted)";
+      storageTabFilebase.style.fontWeight = "600";
+    }
+  }
+}
+
+storageTabR2?.addEventListener("click", () => {
+  activeStorageTab = "r2";
+  localStorage.setItem("activeStorageTab", "r2");
+  updateStorageTabsUi();
+  fetchAndRenderR2Files();
+});
+
+storageTabFilebase?.addEventListener("click", () => {
+  activeStorageTab = "filebase";
+  localStorage.setItem("activeStorageTab", "filebase");
+  updateStorageTabsUi();
+  fetchAndRenderR2Files();
+});
+
 reloadR2FilesButton?.addEventListener("click", fetchAndRenderR2Files);
 
 async function fetchAndRenderR2Files() {
   if (!r2FileList) return;
+  updateStorageTabsUi();
+
   const lang = getAppLanguage();
   const dict = i18nDict[lang] || i18nDict.ja;
-  const s3 = getS3Client();
-  const bucketName = (localStorage.getItem("r2BucketName") || r2BucketName?.value || "").trim();
+  const isFilebase = activeStorageTab === "filebase";
+  const s3 = getS3Client(activeStorageTab);
+  const bucketName = getBucketName(activeStorageTab);
+  const providerLabel = isFilebase ? "Filebase (IPFS)" : "Cloudflare R2";
 
   if (!s3 || !bucketName) {
-    r2FileList.innerHTML = `<span class="item-meta" style="padding: 18px; color: var(--muted); display: block; text-align: center;">${escapeHtml(dict.noFilesR2)}</span>`;
+    const emptyNotice = isFilebase
+      ? "🪐 Filebase (IPFS) の接続設定を行ってください。"
+      : escapeHtml(dict.noFilesR2);
+    r2FileList.innerHTML = `<span class="item-meta" style="padding: 18px; color: var(--muted); display: block; text-align: center;">${emptyNotice}</span>`;
     state.r2TotalSize = 0;
     updateStorageUsageUI();
     return;
   }
 
-  r2FileList.innerHTML = `<span class="status-text saving" style="padding: 18px; display: block;">R2 ファイル一覧を取得中...</span>`;
+  r2FileList.innerHTML = `<span class="status-text saving" style="padding: 18px; display: block;">${providerLabel} ファイル一覧を取得中...</span>`;
 
   try {
     const command = new ListObjectsV2Command({
@@ -3357,7 +3466,6 @@ async function fetchAndRenderR2Files() {
       isFromS3: true,
     }));
 
-    const isFilebase = getStorageProvider() === "filebase";
     const baseDomain = (getSelectedR2Domain() || (typeof window !== "undefined" ? window.location.origin : "")).replace(/\/$/, "");
 
     // Filebase の場合、KV に保存されているファイルもマージ（アンピン済みで容量0のファイルも表示）
@@ -3461,6 +3569,7 @@ async function fetchAndRenderR2Files() {
           statusBadgeHtml = `<span style="font-size: 10px; padding: 1px 6px; border-radius: 4px; background: rgba(34,197,94,0.15); color: #22c55e; border: 1px solid rgba(34,197,94,0.4);" title="Filebase オリジンに保存中（ストレージ容量を消費中）">⚡ オリジン保存中</span>`;
           actionButtonsHtml = `
             <button type="button" class="ghost-button copy-r2-url-btn" data-url="${escapeHtml(publicUrl)}">${escapeHtml(dict.copyUrl)}</button>
+            <button type="button" class="ghost-button rename-file-btn" data-key="${escapeHtml(item.Key)}" style="color: #a78bfa; border-color: rgba(167, 139, 250, 0.4);" title="画像再アップロードなしでファイル名（URL）を変更します">✏️ リネーム</button>
             <button type="button" class="ghost-button civitai-r2-post-btn" data-url="${escapeHtml(publicUrl)}" data-name="${escapeHtml(item.Key)}" style="color: #38bdf8; border-color: rgba(56, 189, 248, 0.4);" title="Civitai の投稿画面を開く">🎨 Civitai</button>
             <button type="button" class="ghost-button unpin-file-btn" data-key="${escapeHtml(item.Key)}" style="color: #f59e0b; border-color: rgba(245,158,11,0.4);" title="Filebaseの容量を解放します（URLリンクはそのまま使えます）">容量解放</button>
             <button type="button" class="ghost-button danger-button delete-r2-file-btn" data-key="${escapeHtml(item.Key)}" data-origin="1" title="アクセスを遮断し、KVおよびストレージから完全に削除します">リンク抹消</button>
@@ -3469,6 +3578,7 @@ async function fetchAndRenderR2Files() {
           statusBadgeHtml = `<span style="font-size: 10px; padding: 1px 6px; border-radius: 4px; background: rgba(239, 68, 68, 0.15); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.4); font-weight: 600;" title="オリジンから削除済み。IPFS/CDNキャッシュにより一時的に表示されていますが、永続性は保証されません。">⚠️ IPFS残留中 (非保証)</span>`;
           actionButtonsHtml = `
             <button type="button" class="ghost-button copy-r2-url-btn" data-url="${escapeHtml(publicUrl)}">${escapeHtml(dict.copyUrl)}</button>
+            <button type="button" class="ghost-button rename-file-btn" data-key="${escapeHtml(item.Key)}" style="color: #a78bfa; border-color: rgba(167, 139, 250, 0.4);" title="画像再アップロードなしでファイル名（URL）を変更します">✏️ リネーム</button>
             <button type="button" class="ghost-button civitai-r2-post-btn" data-url="${escapeHtml(publicUrl)}" data-name="${escapeHtml(item.Key)}" style="color: #38bdf8; border-color: rgba(56, 189, 248, 0.4);" title="Civitai の投稿画面を開く">🎨 Civitai</button>
             <button type="button" class="ghost-button danger-button delete-r2-file-btn" data-key="${escapeHtml(item.Key)}" data-origin="0" title="アクセスを遮断し、KVから完全に削除します">リンク抹消</button>
           `;
@@ -3537,22 +3647,22 @@ async function fetchAndRenderR2Files() {
 
     updateSelectedR2ActionButtonsState();
   } catch (error) {
-    console.error("R2 fetch error:", error);
-    r2FileList.innerHTML = `<span class="item-meta error" style="padding: 18px; color: var(--danger); display: block; text-align: center;">R2 エラー: ${escapeHtml(error.message)}</span>`;
+    console.error("Storage fetch error:", error);
+    r2FileList.innerHTML = `<span class="item-meta error" style="padding: 18px; color: var(--danger); display: block; text-align: center;">通信エラー: ${escapeHtml(error.message)}</span>`;
   }
 }
 
-// R2 ファイル操作イベント委譲
+// ストレージファイル操作イベント委譲
 r2FileList?.addEventListener("click", async (e) => {
   const target = e.target;
-  const s3 = getS3Client();
-  const bucketName = (localStorage.getItem("r2BucketName") || r2BucketName?.value || "").trim();
+  const isFilebase = activeStorageTab === "filebase";
+  const s3 = getS3Client(activeStorageTab);
+  const bucketName = getBucketName(activeStorageTab);
 
   if (target.classList.contains("copy-r2-url-btn")) {
     let url = target.dataset.url;
     const article = target.closest(".result-item");
     const key = article?.dataset?.key;
-    const isFilebase = getStorageProvider() === "filebase";
     const baseDomain = (getSelectedR2Domain() || (typeof window !== "undefined" ? window.location.origin : "")).replace(/\/$/, "");
 
     if (isFilebase && key) {
@@ -3563,7 +3673,7 @@ r2FileList?.addEventListener("click", async (e) => {
       const cachedCid = getStoredIpfsCid(key);
       if (cachedCid) {
         registerKvCid(key, cachedCid);
-      } else {
+      } else if (s3 && bucketName) {
         s3.send(new HeadObjectCommand({ Bucket: bucketName, Key: key })).then(headOutput => {
           const hHeaders = headOutput?.$metadata?.httpHeaders || {};
           const fetchedCid = hHeaders["x-amz-meta-cid"] ||
@@ -3573,11 +3683,80 @@ r2FileList?.addEventListener("click", async (e) => {
           if (fetchedCid) {
             storeIpfsCid(key, fetchedCid);
           }
-        }).catch(e => console.warn("Background CID lookup failed:", e));
+        }).catch(err => console.warn("Background CID lookup failed:", err));
       }
     }
 
     await copyToClipboard(url, target);
+    return;
+  }
+
+  // 🪐 ファイル名（URL）変更（ゼロ通信量リネーム）
+  if (target.classList.contains("rename-file-btn")) {
+    const oldKey = target.dataset.key;
+    if (!oldKey) return;
+
+    const oldExt = oldKey.includes(".") ? oldKey.split(".").pop() : "";
+    const defaultVal = oldKey.includes(".") ? oldKey.slice(0, oldKey.lastIndexOf(".")) : oldKey;
+    const promptMsg = `新しいファイル名を入力してください。\n（拡張子 .${oldExt} は自動付加されます）`;
+
+    let newBaseName = prompt(promptMsg, defaultVal);
+    if (newBaseName === null) return;
+    newBaseName = newBaseName.trim().replace(/[\\/:*?"<>|]/g, "-");
+    if (!newBaseName) {
+      alert("⚠️ 有効なファイル名を入力してください。");
+      return;
+    }
+
+    const newKey = oldExt ? `${newBaseName}.${oldExt}` : newBaseName;
+    if (newKey === oldKey) return;
+
+    let cid = getStoredIpfsCid(oldKey);
+    let size = 0;
+    let mime = "";
+
+    try {
+      const kvFiles = await fetchKvFiles();
+      const currentKv = kvFiles.find(f => f.name === oldKey);
+      if (currentKv) {
+        if (!cid) cid = currentKv.metadata?.cid;
+        size = currentKv.metadata?.size || 0;
+        mime = currentKv.metadata?.mime || "";
+      }
+    } catch (err) {
+      console.warn("KV fetch error during rename:", err);
+    }
+
+    if (!cid) {
+      alert("⚠️ このファイルの CID が見つからないためリネームできません。");
+      return;
+    }
+
+    target.disabled = true;
+    target.textContent = "変更中...";
+
+    try {
+      // 1. 新キーで登録
+      await registerKvCid(newKey, cid, size, mime);
+      storeIpfsCid(newKey, cid);
+
+      // 2. 旧キーを削除
+      await deleteKvCid(oldKey);
+      try {
+        const map = JSON.parse(localStorage.getItem("ipfsCidMap") || "{}");
+        delete map[oldKey];
+        localStorage.setItem("ipfsCidMap", JSON.stringify(map));
+      } catch (e) {}
+
+      alert(`✅ ファイル名を「${newKey}」に変更しました！\n画像再アップロードなしで新しいURLが即時反映されました。`);
+      await fetchAndRenderR2Files();
+    } catch (err) {
+      console.error("Rename failed:", err);
+      alert(`❌ リネームに失敗しました: ${err.message}`);
+    } finally {
+      target.disabled = false;
+      target.textContent = "✏️ リネーム";
+    }
     return;
   }
 
@@ -3616,7 +3795,6 @@ r2FileList?.addEventListener("click", async (e) => {
   if (target.classList.contains("delete-r2-file-btn")) {
     const key = target.dataset.key;
     const isFromOrigin = target.dataset.origin === "1";
-    const isFilebase = getStorageProvider() === "filebase";
 
     const confirmMsg = isFilebase
       ? `ファイル '${key}' へのアクセスを完全に遮断しますか？\n\n・Cloudflare KV からマッピングを削除します。\n・URL は即座に 404 になり、第三者が閲覧できなくなります。`
@@ -3628,7 +3806,7 @@ r2FileList?.addEventListener("click", async (e) => {
       if (isFilebase) {
         await deleteKvCid(key);
       }
-      if (isFromOrigin) {
+      if (isFromOrigin && s3 && bucketName) {
         const command = new DeleteObjectCommand({
           Bucket: bucketName,
           Key: key,
@@ -3659,18 +3837,29 @@ deleteSelectedR2FilesButton?.addEventListener("click", async () => {
   const checkboxes = Array.from(document.querySelectorAll(".r2-file-checkbox:checked"));
   if (checkboxes.length === 0) return;
 
-  if (!confirm(`選択した ${checkboxes.length} 件のファイルを R2 から削除しますか？`)) return;
+  const isFilebase = activeStorageTab === "filebase";
+  const providerLabel = isFilebase ? "Filebase / KV" : "R2";
 
-  const s3 = getS3Client();
-  const bucketName = (localStorage.getItem("r2BucketName") || r2BucketName?.value || "").trim();
-  const objects = checkboxes.map(cb => ({ Key: cb.dataset.key }));
+  if (!confirm(`選択した ${checkboxes.length} 件のファイルを ${providerLabel} から削除しますか？`)) return;
+
+  const s3 = getS3Client(activeStorageTab);
+  const bucketName = getBucketName(activeStorageTab);
+  const keys = checkboxes.map(cb => cb.dataset.key);
 
   try {
-    const command = new DeleteObjectsCommand({
-      Bucket: bucketName,
-      Delete: { Objects: objects },
-    });
-    await s3.send(command);
+    if (isFilebase) {
+      for (const key of keys) {
+        await deleteKvCid(key);
+      }
+    }
+    if (s3 && bucketName) {
+      const objects = keys.map(Key => ({ Key }));
+      const command = new DeleteObjectsCommand({
+        Bucket: bucketName,
+        Delete: { Objects: objects },
+      });
+      await s3.send(command);
+    }
     await fetchAndRenderR2Files();
   } catch (err) {
     alert(`一括削除に失敗しました: ${err.message}`);
