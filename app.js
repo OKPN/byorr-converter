@@ -3569,7 +3569,6 @@ async function fetchAndRenderR2Files() {
           statusBadgeHtml = `<span style="font-size: 10px; padding: 1px 6px; border-radius: 4px; background: rgba(34,197,94,0.15); color: #22c55e; border: 1px solid rgba(34,197,94,0.4);" title="Filebase オリジンに保存中（ストレージ容量を消費中）">⚡ オリジン保存中</span>`;
           actionButtonsHtml = `
             <button type="button" class="ghost-button copy-r2-url-btn" data-url="${escapeHtml(publicUrl)}">${escapeHtml(dict.copyUrl)}</button>
-            <button type="button" class="ghost-button rename-file-btn" data-key="${escapeHtml(item.Key)}" style="color: #a78bfa; border-color: rgba(167, 139, 250, 0.4);" title="画像再アップロードなしでファイル名（URL）を変更します">✏️ リネーム</button>
             <button type="button" class="ghost-button civitai-r2-post-btn" data-url="${escapeHtml(publicUrl)}" data-name="${escapeHtml(item.Key)}" style="color: #38bdf8; border-color: rgba(56, 189, 248, 0.4);" title="Civitai の投稿画面を開く">🎨 Civitai</button>
             <button type="button" class="ghost-button unpin-file-btn" data-key="${escapeHtml(item.Key)}" style="color: #f59e0b; border-color: rgba(245,158,11,0.4);" title="Filebaseの容量を解放します（URLリンクはそのまま使えます）">容量解放</button>
             <button type="button" class="ghost-button danger-button delete-r2-file-btn" data-key="${escapeHtml(item.Key)}" data-origin="1" title="アクセスを遮断し、KVおよびストレージから完全に削除します">リンク抹消</button>
@@ -3578,7 +3577,6 @@ async function fetchAndRenderR2Files() {
           statusBadgeHtml = `<span style="font-size: 10px; padding: 1px 6px; border-radius: 4px; background: rgba(239, 68, 68, 0.15); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.4); font-weight: 600;" title="オリジンから削除済み。IPFS/CDNキャッシュにより一時的に表示されていますが、永続性は保証されません。">⚠️ IPFS残留中 (非保証)</span>`;
           actionButtonsHtml = `
             <button type="button" class="ghost-button copy-r2-url-btn" data-url="${escapeHtml(publicUrl)}">${escapeHtml(dict.copyUrl)}</button>
-            <button type="button" class="ghost-button rename-file-btn" data-key="${escapeHtml(item.Key)}" style="color: #a78bfa; border-color: rgba(167, 139, 250, 0.4);" title="画像再アップロードなしでファイル名（URL）を変更します">✏️ リネーム</button>
             <button type="button" class="ghost-button civitai-r2-post-btn" data-url="${escapeHtml(publicUrl)}" data-name="${escapeHtml(item.Key)}" style="color: #38bdf8; border-color: rgba(56, 189, 248, 0.4);" title="Civitai の投稿画面を開く">🎨 Civitai</button>
             <button type="button" class="ghost-button danger-button delete-r2-file-btn" data-key="${escapeHtml(item.Key)}" data-origin="0" title="アクセスを遮断し、KVから完全に削除します">リンク抹消</button>
           `;
@@ -3592,6 +3590,10 @@ async function fetchAndRenderR2Files() {
         `;
       }
 
+      const renameBtnHtml = isFilebase
+        ? `<button type="button" class="rename-file-btn" data-key="${escapeHtml(item.Key)}" title="ファイル名を変更" style="background: none; border: none; cursor: pointer; padding: 2px 4px; font-size: 14px; opacity: 0.8; transition: opacity 0.15s; line-height: 1;">✏️</button>`
+        : "";
+
       article.innerHTML = `
         <input type="checkbox" class="r2-file-checkbox" data-key="${escapeHtml(item.Key)}" style="width: 18px; height: 18px; cursor: pointer; accent-color: var(--accent); align-self: center; margin-right: 4px;">
         <a href="${escapeHtml(publicUrl)}" target="_blank" rel="noopener noreferrer" class="thumb-link" title="表示">
@@ -3600,6 +3602,7 @@ async function fetchAndRenderR2Files() {
         <div style="flex: 1; min-width: 0;">
           <div class="item-name-row" style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap;">
             <span class="item-name" style="font-weight: 600; word-break: break-all;">${escapeHtml(item.Key)}</span>
+            ${renameBtnHtml}
             <span style="color: #64748b; font-size: 11px; white-space: nowrap;">${formatBytes(item.Size || 0)}</span>
             ${statusBadgeHtml}
             <span class="r2-wf-badge-placeholder" data-key="${escapeHtml(item.Key)}"></span>
@@ -3691,72 +3694,108 @@ r2FileList?.addEventListener("click", async (e) => {
     return;
   }
 
-  // 🪐 ファイル名（URL）変更（ゼロ通信量リネーム）
-  if (target.classList.contains("rename-file-btn")) {
-    const oldKey = target.dataset.key;
+  // 🪐 ファイル名（URL）変更（インライン編集: byoc スタイル）
+  if (target.classList.contains("rename-file-btn") || target.closest(".rename-file-btn")) {
+    const btn = target.classList.contains("rename-file-btn") ? target : target.closest(".rename-file-btn");
+    const oldKey = btn.dataset.key;
     if (!oldKey) return;
 
-    const oldExt = oldKey.includes(".") ? oldKey.split(".").pop() : "";
-    const defaultVal = oldKey.includes(".") ? oldKey.slice(0, oldKey.lastIndexOf(".")) : oldKey;
-    const promptMsg = `新しいファイル名を入力してください。\n（拡張子 .${oldExt} は自動付加されます）`;
+    const row = btn.closest(".item-name-row");
+    if (!row) return;
 
-    let newBaseName = prompt(promptMsg, defaultVal);
-    if (newBaseName === null) return;
-    newBaseName = newBaseName.trim().replace(/[\\/:*?"<>|]/g, "-");
-    if (!newBaseName) {
-      alert("⚠️ 有効なファイル名を入力してください。");
-      return;
+    const lastDotIndex = oldKey.lastIndexOf(".");
+    const baseName = lastDotIndex > 0 ? oldKey.substring(0, lastDotIndex) : oldKey;
+    const ext = lastDotIndex > 0 ? oldKey.substring(lastDotIndex) : "";
+
+    const originalHtml = row.innerHTML;
+
+    row.innerHTML = `
+      <div class="rename-inline-form" style="display: flex; align-items: center; gap: 6px; flex: 1; flex-wrap: wrap;">
+        <input type="text" class="rename-input" value="${escapeHtml(baseName)}" style="flex: 1; min-width: 120px; height: 28px; border: 1px solid var(--border); border-radius: 4px; background: rgba(0,0,0,0.4); color: var(--text); padding: 0 8px; font-size: 12px; outline: none;">
+        <span class="rename-ext" style="font-size: 12px; color: var(--muted); font-weight: bold;">${escapeHtml(ext)}</span>
+        <button type="button" class="primary-button rename-save-btn" data-key="${escapeHtml(oldKey)}" style="min-height: 28px; padding: 0 10px; font-size: 11.5px; font-weight: bold;">保存</button>
+        <button type="button" class="ghost-button rename-cancel-btn" style="min-height: 28px; padding: 0 10px; font-size: 11.5px;">戻る</button>
+      </div>
+    `;
+
+    const input = row.querySelector(".rename-input");
+    const saveBtn = row.querySelector(".rename-save-btn");
+    const cancelBtn = row.querySelector(".rename-cancel-btn");
+
+    if (input) {
+      input.focus();
+      input.select();
+
+      input.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          saveBtn?.click();
+        } else if (e.key === "Escape") {
+          e.preventDefault();
+          cancelBtn?.click();
+        }
+      });
     }
 
-    const newKey = oldExt ? `${newBaseName}.${oldExt}` : newBaseName;
-    if (newKey === oldKey) return;
+    cancelBtn?.addEventListener("click", () => {
+      row.innerHTML = originalHtml;
+    });
 
-    let cid = getStoredIpfsCid(oldKey);
-    let size = 0;
-    let mime = "";
-
-    try {
-      const kvFiles = await fetchKvFiles();
-      const currentKv = kvFiles.find(f => f.name === oldKey);
-      if (currentKv) {
-        if (!cid) cid = currentKv.metadata?.cid;
-        size = currentKv.metadata?.size || 0;
-        mime = currentKv.metadata?.mime || "";
+    saveBtn?.addEventListener("click", async () => {
+      const newBaseName = input?.value?.trim()?.replace(/[\\/:*?"<>|]/g, "-");
+      if (!newBaseName || newBaseName === baseName) {
+        row.innerHTML = originalHtml;
+        return;
       }
-    } catch (err) {
-      console.warn("KV fetch error during rename:", err);
-    }
 
-    if (!cid) {
-      alert("⚠️ このファイルの CID が見つからないためリネームできません。");
-      return;
-    }
+      const newKey = ext ? `${newBaseName}${ext}` : newBaseName;
 
-    target.disabled = true;
-    target.textContent = "変更中...";
+      let cid = getStoredIpfsCid(oldKey);
+      let size = 0;
+      let mime = "";
 
-    try {
-      // 1. 新キーで登録
-      await registerKvCid(newKey, cid, size, mime);
-      storeIpfsCid(newKey, cid);
-
-      // 2. 旧キーを削除
-      await deleteKvCid(oldKey);
       try {
-        const map = JSON.parse(localStorage.getItem("ipfsCidMap") || "{}");
-        delete map[oldKey];
-        localStorage.setItem("ipfsCidMap", JSON.stringify(map));
-      } catch (e) {}
+        const kvFiles = await fetchKvFiles();
+        const currentKv = kvFiles.find(f => f.name === oldKey);
+        if (currentKv) {
+          if (!cid) cid = currentKv.metadata?.cid;
+          size = currentKv.metadata?.size || 0;
+          mime = currentKv.metadata?.mime || "";
+        }
+      } catch (err) {
+        console.warn("KV fetch error during rename:", err);
+      }
 
-      alert(`✅ ファイル名を「${newKey}」に変更しました！\n画像再アップロードなしで新しいURLが即時反映されました。`);
-      await fetchAndRenderR2Files();
-    } catch (err) {
-      console.error("Rename failed:", err);
-      alert(`❌ リネームに失敗しました: ${err.message}`);
-    } finally {
-      target.disabled = false;
-      target.textContent = "✏️ リネーム";
-    }
+      if (!cid) {
+        alert("⚠️ このファイルの CID が見つからないためリネームできません。");
+        row.innerHTML = originalHtml;
+        return;
+      }
+
+      saveBtn.disabled = true;
+      saveBtn.textContent = "...";
+
+      try {
+        // 1. 新キーで登録
+        await registerKvCid(newKey, cid, size, mime);
+        storeIpfsCid(newKey, cid);
+
+        // 2. 旧キーを削除
+        await deleteKvCid(oldKey);
+        try {
+          const map = JSON.parse(localStorage.getItem("ipfsCidMap") || "{}");
+          delete map[oldKey];
+          localStorage.setItem("ipfsCidMap", JSON.stringify(map));
+        } catch (e) {}
+
+        await fetchAndRenderR2Files();
+      } catch (err) {
+        console.error("Rename failed:", err);
+        alert(`❌ リネームに失敗しました: ${err.message}`);
+        row.innerHTML = originalHtml;
+      }
+    });
+
     return;
   }
 
