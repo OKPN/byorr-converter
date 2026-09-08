@@ -3470,6 +3470,26 @@ async function fetchAndRenderR2Files() {
         LastModified: item.LastModified,
       }));
 
+      // S3 アイテムのうち CID がローカル未キャッシュのものについて HeadObject で事前解決
+      const uncachedS3Items = s3RawList.filter(item => !getStoredIpfsCid(item.Key));
+      if (uncachedS3Items.length > 0) {
+        await Promise.all(uncachedS3Items.slice(0, 30).map(async (s3Item) => {
+          try {
+            const headOutput = await s3.send(new HeadObjectCommand({ Bucket: bucketName, Key: s3Item.Key }));
+            const hHeaders = headOutput?.$metadata?.httpHeaders || {};
+            const fetchedCid = hHeaders["x-amz-meta-cid"] ||
+                               hHeaders["x-amz-meta-ipfs-hash"] ||
+                               headOutput?.Metadata?.cid ||
+                               headOutput?.Metadata?.["ipfs-hash"];
+            if (fetchedCid) {
+              storeIpfsCid(s3Item.Key, fetchedCid);
+            }
+          } catch (e) {
+            console.warn(`HeadObject lookup for ${s3Item.Key} failed:`, e);
+          }
+        }));
+      }
+
       const s3KeyToItem = new Map();
       const s3CidToItem = new Map();
       for (const s3Item of s3RawList) {
@@ -3513,6 +3533,10 @@ async function fetchAndRenderR2Files() {
             cid: kvCid || getStoredIpfsCid(matchedS3.Key),
           });
           if (kvCid) storeIpfsCid(kvName, kvCid);
+          // KV側で s3Key が未記録なら次回以降のために自動修復
+          if (!recordedS3Key && matchedS3.Key !== kvName) {
+            registerKvCid(kvName, kvCid, matchedS3.Size || 0, kvItem.metadata?.mime || "", matchedS3.Key);
+          }
         } else {
           // S3 に実体がない（アンピン後など）
           contents.push({
