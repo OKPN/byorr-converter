@@ -413,13 +413,17 @@ export async function onRequest(context) {
   const primaryBase = "https://ipfs.filebase.io/ipfs";
   const fallbackBase = "https://ipfs.io/ipfs";
 
+  const isHead = request.method === "HEAD";
+
   let upstreamResponse = null;
   for (const candidate of candidates) {
     try {
       upstreamResponse = await fetch(`${primaryBase}/${candidate}`, {
+        method: isHead ? "HEAD" : "GET",
         headers: {
           "User-Agent": "Cividge-KV-Relay/1.0",
           ...(request.headers.get("Range") ? { "Range": request.headers.get("Range") } : {}),
+          ...(request.headers.get("If-Range") ? { "If-Range": request.headers.get("If-Range") } : {}),
         },
         cf: {
           cacheEverything: !hasPassword,
@@ -431,9 +435,11 @@ export async function onRequest(context) {
 
       if (!upstreamResponse.ok) {
         upstreamResponse = await fetch(`${fallbackBase}/${candidate}`, {
+          method: isHead ? "HEAD" : "GET",
           headers: {
             "User-Agent": "Cividge-KV-Relay/1.0",
             ...(request.headers.get("Range") ? { "Range": request.headers.get("Range") } : {}),
+            ...(request.headers.get("If-Range") ? { "If-Range": request.headers.get("If-Range") } : {}),
           },
           cf: {
             cacheEverything: !hasPassword,
@@ -459,30 +465,27 @@ export async function onRequest(context) {
   const headers = new Headers();
   headers.set("Access-Control-Allow-Origin", "*");
   headers.set("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
+  headers.set("Access-Control-Expose-Headers", "Content-Range, Content-Length, Accept-Ranges");
   headers.set("Content-Disposition", `inline; filename="${encodeURIComponent(filename)}"`);
   headers.set("X-Content-Type-Options", "nosniff");
+  headers.set("Accept-Ranges", "bytes");  // 常に宣言（iOS Safari等がシーク非対応と誤判定するのを防止）
 
-  // 3層キャッシュ戦略: ブラウザ(画像1時間/動画4時間) / CDNレスポンス1時間 / 上流フェッチ1年
+  // 3層キャッシュ戦略: ブラウザ=CDNレスポンス(画像1時間/動画4時間) / 上流フェッチ1年
   const isVideo = (extMatch[1].toLowerCase() === "mp4" || extMatch[1].toLowerCase() === "webm");
-  const BROWSER_CACHE_SECONDS = isVideo ? 14400 : 3600;  // 動画4時間 / 画像1時間
-  const CDN_CACHE_SECONDS = 3600;      // CDNレスポンスは1時間（リンク抹消を最大1時間で反映）
+  const CACHE_SECONDS = isVideo ? 14400 : 3600;  // 動画4時間 / 画像1時間
   if (hasPassword) {
-    headers.set("Cache-Control", `private, max-age=${BROWSER_CACHE_SECONDS}`);
+    headers.set("Cache-Control", `private, max-age=${CACHE_SECONDS}`);
     headers.set("Cloudflare-CDN-Cache-Control", "private, no-store");
     headers.set("Vary", "Cookie, Accept-Encoding");
   } else {
-    headers.set("Cache-Control", `public, max-age=${BROWSER_CACHE_SECONDS}`);
-    headers.set("Cloudflare-CDN-Cache-Control", `public, max-age=${CDN_CACHE_SECONDS}`);
+    headers.set("Cache-Control", `public, max-age=${CACHE_SECONDS}`);
+    headers.set("Cloudflare-CDN-Cache-Control", `public, max-age=${CACHE_SECONDS}`);
     headers.set("Vary", "Accept-Encoding");
   }
 
   const contentLength = upstreamResponse.headers.get("content-length");
   if (contentLength) {
     headers.set("Content-Length", contentLength);
-  }
-  const acceptRanges = upstreamResponse.headers.get("accept-ranges");
-  if (acceptRanges) {
-    headers.set("Accept-Ranges", acceptRanges);
   }
   // 206 Partial Content 対応: 動画シーク再生に必須
   const contentRange = upstreamResponse.headers.get("content-range");
@@ -505,7 +508,7 @@ export async function onRequest(context) {
   const ext = extMatch[1].toLowerCase();
   headers.set("Content-Type", mimeMap[ext] || upstreamResponse.headers.get("content-type") || "application/octet-stream");
 
-  return new Response(upstreamResponse.body, {
+  return new Response(isHead ? null : upstreamResponse.body, {
     status: upstreamResponse.status,  // 200 or 206 をそのまま返す
     headers,
   });

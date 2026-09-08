@@ -81,6 +81,14 @@ export async function onRequestPost(context) {
       headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
     });
   }
+  // サーバー側サイズガード: クライアント側チェックのすり抜け防止
+  const contentLength = request.headers.get("content-length");
+  if (contentLength && parseInt(contentLength, 10) > 80 * 1024 * 1024) {
+    return new Response(JSON.stringify({ error: "File too large (Max: 80MB)" }), {
+      status: 413,
+      headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
+    });
+  }
 
   try {
     const body = await request.json();
