@@ -1,7 +1,7 @@
 // functions/_middleware.js
 // Cloudflare Pages Function Middleware: 静的ファイル 404 / SPA フォールバック時のスマート中継 (Catbox風ハイブリッド404 & パスワード保護ゲート)
 
-const CATBOX_404_HTML = \`<!DOCTYPE html>
+const CATBOX_404_HTML = `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -90,9 +90,9 @@ const CATBOX_404_HTML = \`<!DOCTYPE html>
     <a href="/" class="home-link">Click me to go home</a>
   </div>
 </body>
-</html>\`;
+</html>`;
 
-const CATBOX_404_SVG = \`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 300" width="400" height="300">
+const CATBOX_404_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 300" width="400" height="300">
   <rect width="100%" height="100%" fill="#f7f7f8"/>
   <rect width="96%" height="94%" x="2%" y="3%" fill="none" stroke="#cbd5e1" stroke-width="2" stroke-dasharray="6 4" rx="8"/>
   <text x="50%" y="36%" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="56" font-weight="700" fill="#2b2e35" text-anchor="middle" letter-spacing="2">404</text>
@@ -102,7 +102,7 @@ const CATBOX_404_SVG = \`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40
   <circle cx="194" cy="195" r="2.5" fill="#00bcd4"/>
   <circle cx="206" cy="195" r="2.5" fill="#00bcd4"/>
   <text x="50%" y="82%" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="13" font-weight="600" fill="#64748b" text-anchor="middle">FILE NOT FOUND OR REMOVED</text>
-</svg>\`;
+</svg>`;
 
 function parseCookies(cookieHeader) {
   const list = {};
@@ -153,7 +153,7 @@ async function verifyPassword(inputPassword, meta) {
 }
 
 function renderPasswordForm(filename, errorMsg = "") {
-  return \`<!DOCTYPE html>
+  return `<!DOCTYPE html>
 <html lang="ja">
 <head>
   <meta charset="UTF-8">
@@ -241,10 +241,10 @@ function renderPasswordForm(filename, errorMsg = "") {
       <input type="password" name="pwd" placeholder="🔑 合言葉を入力" autofocus required autocomplete="off">
       <button type="submit">閲覧する</button>
     </form>
-    ${errorMsg ? \`<div class="error">⚠️ ${errorMsg}</div>\` : ""}
+    ${errorMsg ? `<div class="error">⚠️ ${errorMsg}</div>` : ""}
   </div>
 </body>
-</html>\`;
+</html>`;
 }
 
 function renderNotFoundResponse(request) {
@@ -325,7 +325,7 @@ export async function onRequest(context) {
             status: 302,
             headers: {
               "Location": request.url,
-              "Set-Cookie": \`${cookieKey}=${encodeURIComponent(secret)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=86400\`,
+              "Set-Cookie": `${cookieKey}=${encodeURIComponent(secret)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=86400`,
             },
           });
         } else {
@@ -358,6 +358,8 @@ export async function onRequest(context) {
         },
       });
     }
+  }
+
   // 3. KV に実データ（blobKey または blob_<filename>）が直接格納されている場合は即時配信
   if (env && env.IPFS_KV) {
     try {
@@ -397,7 +399,7 @@ export async function onRequest(context) {
 
   let upstreamResponse = null;
   try {
-    upstreamResponse = await fetch(\`${primaryBase}/${ipfsTarget}\`, {
+    upstreamResponse = await fetch(`${primaryBase}/${ipfsTarget}`, {
       headers: {
         "User-Agent": "BYORR-KV-Relay/1.0",
         ...(request.headers.get("Range") ? { "Range": request.headers.get("Range") } : {}),
@@ -406,7 +408,7 @@ export async function onRequest(context) {
     });
 
     if (!upstreamResponse.ok) {
-      upstreamResponse = await fetch(\`${fallbackBase}/${ipfsTarget}\`, {
+      upstreamResponse = await fetch(`${fallbackBase}/${ipfsTarget}`, {
         headers: {
           "User-Agent": "BYORR-KV-Relay/1.0",
           ...(request.headers.get("Range") ? { "Range": request.headers.get("Range") } : {}),
@@ -425,7 +427,7 @@ export async function onRequest(context) {
   const headers = new Headers();
   headers.set("Access-Control-Allow-Origin", "*");
   headers.set("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
-  headers.set("Content-Disposition", \`inline; filename="${encodeURIComponent(filename)}"\`);
+  headers.set("Content-Disposition", `inline; filename="${encodeURIComponent(filename)}"`);
   headers.set("X-Content-Type-Options", "nosniff");
 
   if (hasPassword) {
