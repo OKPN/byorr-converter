@@ -37,10 +37,24 @@ export async function onRequest(context) {
     ? `attachment; filename="${encodeURIComponent(filename)}"`
     : "inline";
 
+  const mimeMap = {
+    png: "image/png",
+    jpg: "image/jpeg",
+    jpeg: "image/jpeg",
+    webp: "image/webp",
+    gif: "image/gif",
+    jxl: "image/jxl",
+    avif: "image/avif",
+    svg: "image/svg+xml",
+    mp4: "video/mp4",
+    webm: "video/webm",
+    zip: "application/zip",
+  };
+
   // 2. IPFS ゲートウェイへ fetch（エッジキャッシュ有効化）
-  let upstreamResponse = null;
-  try {
-    upstreamResponse = await fetch(primaryGateway, {
+  // Filebase S3 では単一ファイル単位で CID が生成されるため、まずは cid 単体で fetch
+  async function fetchGateway(baseUrl, path) {
+    return await fetch(`${baseUrl}/${path}`, {
       headers: {
         "User-Agent": "BYORR-IPFS-Relay/1.0",
         ...(request.headers.get("Range") ? { "Range": request.headers.get("Range") } : {}),
@@ -50,22 +64,35 @@ export async function onRequest(context) {
         cacheTtl: 86400 * 30, // 30 日間 Cloudflare エッジにキャッシュ
       },
     });
+  }
+
+  const primaryBase = "https://ipfs.filebase.io/ipfs";
+  const fallbackBase = "https://ipfs.io/ipfs";
+
+  let upstreamResponse = null;
+  try {
+    // 優先1: Filebase ゲートウェイに cid 単体で問い合わせ
+    upstreamResponse = await fetchGateway(primaryBase, cid);
+    
+    // 404 かつ subPath がある場合、ディレクトリ CID かもしれないので subPath 付きで試行
+    if (!upstreamResponse.ok && subPath) {
+      const dirTry = await fetchGateway(primaryBase, `${cid}/${subPath}`);
+      if (dirTry.ok) upstreamResponse = dirTry;
+    }
 
     // 失敗時は公式ゲートウェイへフォールバック
     if (!upstreamResponse.ok) {
-      upstreamResponse = await fetch(fallbackGateway, {
-        headers: { "User-Agent": "BYORR-IPFS-Relay/1.0" },
-        cf: {
-          cacheEverything: true,
-          cacheTtl: 86400 * 30,
-        },
-      });
+      const fbTry = await fetchGateway(fallbackBase, cid);
+      if (fbTry.ok) {
+        upstreamResponse = fbTry;
+      } else if (subPath) {
+        const fbDirTry = await fetchGateway(fallbackBase, `${cid}/${subPath}`);
+        if (fbDirTry.ok) upstreamResponse = fbDirTry;
+      }
     }
   } catch (err) {
     try {
-      upstreamResponse = await fetch(fallbackGateway, {
-        headers: { "User-Agent": "BYORR-IPFS-Relay/1.0" },
-      });
+      upstreamResponse = await fetchGateway(fallbackBase, cid);
     } catch (fallbackErr) {
       return new Response("502 Bad Gateway: Failed to fetch from IPFS gateways", {
         status: 502,
@@ -87,6 +114,11 @@ export async function onRequest(context) {
   headers.set("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
   headers.set("Content-Disposition", disposition);
   headers.set("X-Content-Type-Options", "nosniff");
+
+  // MIME タイプの自動補正
+  if (mimeMap[ext]) {
+    headers.set("Content-Type", mimeMap[ext]);
+  }
 
   // 成功時は長期キャッシュ（IPFS のコンテンツはイミュータブルで中身が変わらないため immutable 設定）
   if (upstreamResponse.status === 200 || upstreamResponse.status === 206) {
