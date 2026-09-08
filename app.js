@@ -3913,14 +3913,14 @@ async function fetchAndRenderR2Files() {
             <button type="button" class="ghost-button copy-r2-url-btn" data-url="${escapeHtml(publicUrl)}">${escapeHtml(dict.copyUrl)}</button>
             ${!hasPassword ? `<button type="button" class="ghost-button civitai-r2-post-btn" data-url="${escapeHtml(publicUrl)}" data-name="${escapeHtml(item.Key)}" style="color: #38bdf8; border-color: rgba(56, 189, 248, 0.4);" title="Civitai の投稿画面を開く">🎨 Civitai</button>` : ""}
             <button type="button" class="ghost-button unpin-file-btn" data-key="${escapeHtml(item.Key)}" data-s3key="${escapeHtml(item.s3Key || item.Key)}" style="color: #f59e0b; border-color: rgba(245,158,11,0.4);" title="Filebaseの容量を解放します（URLリンクはそのまま使えます）">容量解放</button>
-            <button type="button" class="ghost-button danger-button delete-r2-file-btn" data-key="${escapeHtml(item.Key)}" data-s3key="${escapeHtml(item.s3Key || item.Key)}" data-origin="1" title="アクセスを遮断し、KVおよびストレージから完全に削除します">リンク抹消</button>
+            <button type="button" class="ghost-button danger-button delete-r2-file-btn" data-key="${escapeHtml(item.Key)}" data-s3key="${escapeHtml(item.s3Key || item.Key)}" data-cid="${escapeHtml(itemCid || "")}" data-origin="1" title="アクセスを遮断します（実体が他のリンクと共有されている場合は実体を保護）">リンク抹消</button>
           `;
         } else {
           statusBadgeHtml = `<span style="font-size: 10px; padding: 1px 6px; border-radius: 4px; background: rgba(239, 68, 68, 0.15); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.4); font-weight: 600;" title="オリジンから削除済み。IPFS/CDNキャッシュにより一時的に表示されていますが、永続性は保証されません。">⚠️ IPFS残留中 (非保証)</span>`;
           actionButtonsHtml = `
             <button type="button" class="ghost-button copy-r2-url-btn" data-url="${escapeHtml(publicUrl)}">${escapeHtml(dict.copyUrl)}</button>
             ${!hasPassword ? `<button type="button" class="ghost-button civitai-r2-post-btn" data-url="${escapeHtml(publicUrl)}" data-name="${escapeHtml(item.Key)}" style="color: #38bdf8; border-color: rgba(56, 189, 248, 0.4);" title="Civitai の投稿画面を開く">🎨 Civitai</button>` : ""}
-            <button type="button" class="ghost-button danger-button delete-r2-file-btn" data-key="${escapeHtml(item.Key)}" data-s3key="${escapeHtml(item.s3Key || item.Key)}" data-origin="0" title="アクセスを遮断し、KVから完全に削除します">リンク抹消</button>
+            <button type="button" class="ghost-button danger-button delete-r2-file-btn" data-key="${escapeHtml(item.Key)}" data-s3key="${escapeHtml(item.s3Key || item.Key)}" data-cid="${escapeHtml(itemCid || "")}" data-origin="0" title="アクセスを遮断し、KVから完全に削除します">リンク抹消</button>
           `;
         }
       } else {
@@ -4245,23 +4245,81 @@ r2FileList?.addEventListener("click", async (e) => {
     return;
   }
 
-  // 🚫 リンク抹消（完全削除）：KV から削除して即座に 404 化し、S3 にあればそれも削除
+  // 🚫 リンク抹消：KV から削除して即座に 404 化し、共有リンクが無ければ S3 の実体も削除
   if (target.classList.contains("delete-r2-file-btn")) {
     const key = target.dataset.key;
     const s3Key = target.dataset.s3key || key;
+    const cid = target.dataset.cid || "";
     const isFromOrigin = target.dataset.origin === "1";
 
-    const confirmMsg = isFilebase
-      ? `ファイル '${key}' へのアクセスを完全に遮断しますか？\n\n・Cloudflare KV からマッピングを削除します。\n・URL は即座に 404 になり、第三者が閲覧できなくなります。`
-      : `ファイル '${key}' を R2 から削除しますか？`;
+    if (!key) return;
 
-    if (!key || !confirm(confirmMsg)) return;
+    if (isFilebase) {
+      // 画面上の他のアイテムで、同じ S3実体 または CID を共有している別名リンクを探索
+      const allItems = Array.from(r2FileList.querySelectorAll(".result-item"));
+      const siblingLinks = allItems
+        .filter(el => el.dataset.key !== key)
+        .filter(el => {
+          const elS3Key = el.dataset.s3key;
+          const elCid = el.dataset.cid;
+          if (s3Key && elS3Key && elS3Key === s3Key) return true;
+          if (cid && elCid && elCid === cid) return true;
+          return false;
+        })
+        .map(el => el.dataset.key);
+
+      let deleteOriginAlso = false;
+
+      if (siblingLinks.length > 0) {
+        // 他のリンクと実体を共有している場合
+        const siblingNames = siblingLinks.map(name => `'${name}'`).join("、");
+        const confirmMsg = `リンク '${key}' を抹消しますか？\n\n⚠️ このファイルの実体は、以下の他のリンクとも共有されています：\n【共有中】: ${siblingNames}\n\n・[OK] を押すと、'${key}' のアクセス権（KVマッピング）のみを抹消します。\n（他のリンク '${siblingLinks[0]}' などの閲覧・実体には影響しません）`;
+        if (!confirm(confirmMsg)) return;
+
+        // オプション: 実体ごと全部消したいか確認
+        if (isFromOrigin) {
+          deleteOriginAlso = confirm(`【完全抹消の確認】\n\n実体も Filebase から完全に削除し、共有している他のリンク（${siblingNames}）もすべて無効化しますか？\n\n・[OK]: 実体も含めてすべて完全削除\n・[キャンセル]: '${key}' のリンクのみ抹消（推奨）`);
+        }
+      } else {
+        // 単独リンクの場合
+        const confirmMsg = `ファイル '${key}' へのアクセスを完全に遮断しますか？\n\n・Cloudflare KV からマッピングを削除します。\n・URL は即座に 404 になり、第三者が閲覧できなくなります。`;
+        if (!confirm(confirmMsg)) return;
+        deleteOriginAlso = isFromOrigin;
+      }
+
+      try {
+        // 1. 対象リンクの KV マッピングを削除
+        await deleteKvCid(key);
+
+        // 2. 「すべて抹消」が選択された場合、共有している兄弟リンクの KV も一括削除
+        if (siblingLinks.length > 0 && deleteOriginAlso) {
+          for (const sKey of siblingLinks) {
+            await deleteKvCid(sKey);
+          }
+        }
+
+        // 3. 他に共有リンクがないか、あるいは「実体ごとすべて抹消」が選ばれた場合のみ S3 実体を削除
+        if (deleteOriginAlso && s3 && bucketName && s3Key) {
+          const command = new DeleteObjectCommand({
+            Bucket: bucketName,
+            Key: s3Key,
+          });
+          await s3.send(command);
+        }
+
+        await fetchAndRenderR2Files();
+      } catch (err) {
+        alert(`削除に失敗しました: ${err.message}`);
+      }
+      return;
+    }
+
+    // Cloudflare R2 モードの場合
+    const confirmMsg = `ファイル '${key}' を R2 から削除しますか？`;
+    if (!confirm(confirmMsg)) return;
 
     try {
-      if (isFilebase) {
-        await deleteKvCid(key);
-      }
-      if (isFromOrigin && s3 && bucketName && s3Key) {
+      if (s3 && bucketName && s3Key) {
         const command = new DeleteObjectCommand({
           Bucket: bucketName,
           Key: s3Key,
@@ -4303,17 +4361,42 @@ deleteSelectedR2FilesButton?.addEventListener("click", async () => {
 
   try {
     if (isFilebase) {
+      // 選択されたキーの KV マッピングを削除
       for (const key of keys) {
         await deleteKvCid(key);
       }
-    }
-    if (s3 && bucketName) {
-      const objects = keys.map(Key => ({ Key }));
-      const command = new DeleteObjectsCommand({
-        Bucket: bucketName,
-        Delete: { Objects: objects },
-      });
-      await s3.send(command);
+
+      // 未選択の残るアイテムの中に、同じ S3実体 を指している別名リンクがあるかチェック
+      const allItems = Array.from(r2FileList.querySelectorAll(".result-item"));
+      const remainingItems = allItems.filter(el => !keys.includes(el.dataset.key));
+      const remainingS3Keys = new Set(remainingItems.map(el => el.dataset.s3key).filter(Boolean));
+
+      // 選択された各アイテムに対応する S3Key のうち、残るリンクから参照されていない実体のみを S3 から削除
+      const s3KeysToDelete = new Set();
+      for (const cb of checkboxes) {
+        const itemS3Key = cb.closest(".result-item")?.dataset?.s3key || cb.dataset.key;
+        if (itemS3Key && !remainingS3Keys.has(itemS3Key)) {
+          s3KeysToDelete.add(itemS3Key);
+        }
+      }
+
+      if (s3 && bucketName && s3KeysToDelete.size > 0) {
+        const objects = Array.from(s3KeysToDelete).map(Key => ({ Key }));
+        const command = new DeleteObjectsCommand({
+          Bucket: bucketName,
+          Delete: { Objects: objects },
+        });
+        await s3.send(command);
+      }
+    } else {
+      if (s3 && bucketName) {
+        const objects = keys.map(Key => ({ Key }));
+        const command = new DeleteObjectsCommand({
+          Bucket: bucketName,
+          Delete: { Objects: objects },
+        });
+        await s3.send(command);
+      }
     }
     await fetchAndRenderR2Files();
   } catch (err) {
