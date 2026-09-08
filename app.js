@@ -2740,17 +2740,26 @@ function render() {
 
         const displayName = result ? result.name : createOutputName(file.name, formatSelect?.value || "image/webp", index);
 
-        let compressionBadgeHtml = "";
+        let metaHtml = "";
         if (result && result.size) {
-          const diff = result.size - file.size;
-          const pct = Math.abs(Math.round((diff / file.size) * 100));
-          if (diff < 0) {
-            compressionBadgeHtml = `<span class="rate-badge rate-reduced" style="font-size: 10.5px; padding: 2px 6px; border-radius: 4px; background: rgba(34, 197, 94, 0.15); color: #22c55e; border: 1px solid rgba(34, 197, 94, 0.4);">${pct}% 削減</span>`;
-          } else if (diff > 0) {
-            compressionBadgeHtml = `<span class="rate-badge rate-increased" style="font-size: 10.5px; padding: 2px 6px; border-radius: 4px; background: rgba(239, 68, 68, 0.15); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.4);">${pct}% 増加</span>`;
+          const diff = file.size - result.size;
+          const savedRate = file.size ? Math.round((diff / file.size) * 100) : 0;
+
+          if (isNonConverted) {
+            metaHtml = `${formatBytes(result.size)} · <span style="color: var(--muted);">${escapeHtml(dict.nonConverted || "非変換")}</span>`;
           } else {
-            compressionBadgeHtml = `<span class="rate-badge rate-unchanged" style="font-size: 10.5px; padding: 2px 6px; border-radius: 4px; background: rgba(148, 163, 184, 0.15); color: #94a3b8; border: 1px solid rgba(148, 163, 184, 0.4);">±0%</span>`;
+            let rateText = "";
+            if (savedRate > 0) {
+              rateText = `<span style="color: #22c55e; font-weight: bold;">${savedRate}% 削減</span>`;
+            } else if (savedRate < 0) {
+              rateText = `<span style="color: #f87171; font-weight: bold;">${Math.abs(savedRate)}% 増加</span>`;
+            } else {
+              rateText = `<span style="color: var(--muted);">±0%</span>`;
+            }
+            metaHtml = `${formatBytes(file.size)} ➔ <strong style="color: #fff;">${formatBytes(result.size)}</strong> (${rateText})`;
           }
+        } else {
+          metaHtml = `${formatBytes(file.size)} · <span style="color: var(--muted);">${escapeHtml(dict.statusWaiting || "待機中")}</span>`;
         }
 
         let wfBadgeHtml = "";
@@ -2770,13 +2779,10 @@ function render() {
           <div class="card-main-area">
             <div class="card-title-row">
               <span class="file-name" title="${escapeHtml(displayName)}">${escapeHtml(displayName)}</span>
-              ${isNonConverted ? `<span class="badge badge-non-converted" style="font-size: 10px; padding: 1px 5px; border-radius: 3px; background: rgba(100,116,139,0.2); color: #94a3b8;">非変換</span>` : ""}
               ${wfBadgeHtml}
-              ${compressionBadgeHtml}
             </div>
             <div class="card-meta-row">
-              <span>元: ${formatBytes(file.size)}</span>
-              ${result && result.size ? `<span>➔ <strong>${formatBytes(result.size)}</strong></span>` : ""}
+              ${metaHtml}
             </div>
           </div>
           <div class="card-actions-area">
@@ -4386,11 +4392,16 @@ function escapeHtml(str) {
 }
 
 function formatBytes(bytes) {
-  if (bytes === 0) return "0 B";
-  const k = 1024;
-  const sizes = ["B", "KB", "MB", "GB", "TB"];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i];
+  if (!bytes || bytes === 0) return "0 B";
+  if (bytes < 1024) return `${bytes} B`;
+  const units = ["KB", "MB", "GB", "TB"];
+  let value = bytes / 1024;
+  let unit = units.shift();
+  while (value >= 1024 && units.length) {
+    value /= 1024;
+    unit = units.shift();
+  }
+  return `${value.toFixed(value >= 10 ? 1 : 2)} ${unit}`;
 }
 
 function loadImage(file) {
