@@ -137,7 +137,6 @@ export async function onRequestPost(context) {
         .join("");
 
       passwordMeta = {
-        password: cleanPwd,
         passwordHash: hashHex,
         passwordSalt: saltHex,
         sessionSecret,

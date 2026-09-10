@@ -276,6 +276,20 @@ function renderNotFoundResponse(request, cdnCacheSeconds = 300) {
 
 export async function onRequest(context) {
   const { request, env } = context;
+
+  // ⚡ CORS プリフライト（OPTIONS）は最前線で即時204返却（無駄な処理・待機時間を完全排除）
+  if (request.method === "OPTIONS") {
+    return new Response(null, {
+      status: 204,
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS",
+        "Access-Control-Allow-Headers": "Range, If-Range, Content-Type",
+        "Access-Control-Max-Age": "86400",
+      },
+    });
+  }
+
   const url = new URL(request.url);
   const pathname = url.pathname;
 
@@ -390,19 +404,20 @@ export async function onRequest(context) {
         const headers = new Headers();
         headers.set("Access-Control-Allow-Origin", "*");
         headers.set("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
+        headers.set("Access-Control-Expose-Headers", "Content-Range, Content-Length, Accept-Ranges");
         headers.set("Content-Disposition", `inline; filename="${encodeURIComponent(filename)}"`);
         headers.set("X-Content-Type-Options", "nosniff");
+        headers.set("Accept-Ranges", "bytes");
         const extLower = extMatch[1].toLowerCase();
         const isVideo = (extLower === "mp4" || extLower === "webm");
-        const BROWSER_CACHE_SECONDS = isVideo ? 14400 : 3600; // 動画4時間 / 画像1時間
-        const CDN_CACHE_SECONDS = 3600;     // CDNレスポンスキャッシュは1時間（リンク抹消を即時反映するため）
+        const CACHE_SECONDS = isVideo ? 14400 : 3600; // 動画4時間 / 画像1時間
         if (hasPassword) {
-          headers.set("Cache-Control", `private, max-age=${BROWSER_CACHE_SECONDS}`);
+          headers.set("Cache-Control", `private, max-age=${CACHE_SECONDS}`);
           headers.set("Cloudflare-CDN-Cache-Control", "private, no-store");
           headers.set("Vary", "Cookie, Accept-Encoding");
         } else {
-          headers.set("Cache-Control", `public, max-age=${BROWSER_CACHE_SECONDS}`);
-          headers.set("Cloudflare-CDN-Cache-Control", `public, max-age=${CDN_CACHE_SECONDS}`);
+          headers.set("Cache-Control", `public, max-age=${CACHE_SECONDS}`);
+          headers.set("Cloudflare-CDN-Cache-Control", `public, max-age=${CACHE_SECONDS}`);
           headers.set("Vary", "Accept-Encoding");
         }
         headers.set("Content-Length", String(directData.byteLength));
