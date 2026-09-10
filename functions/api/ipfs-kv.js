@@ -157,6 +157,19 @@ export async function onRequestPost(context) {
 
     const calculatedExpiresAt = expiresAt || (ttl && Number(ttl) > 0 ? Date.now() + Number(ttl) * 1000 : null);
 
+    // 既存の kuboStatus を引き継ぐ、または body から取得
+    let existingKuboStatus = body.kuboStatus;
+    let existingLastKuboPinAttempt = body.lastKuboPinAttempt;
+    if (existingKuboStatus === undefined) {
+      try {
+        const existing = await env.IPFS_KV.getWithMetadata(key);
+        if (existing && existing.metadata) {
+          existingKuboStatus = existing.metadata.kuboStatus;
+          existingLastKuboPinAttempt = existing.metadata.lastKuboPinAttempt;
+        }
+      } catch (e) {}
+    }
+
     const metadata = {
       cid: safeCid,
       size: size || 0,
@@ -165,6 +178,8 @@ export async function onRequestPost(context) {
       registeredAt: Date.now(),
       s3Key: body.s3Key || key,
       unpinned: Boolean(body.unpinned),
+      ...(existingKuboStatus ? { kuboStatus: existingKuboStatus } : {}),
+      ...(existingLastKuboPinAttempt ? { lastKuboPinAttempt: existingLastKuboPinAttempt } : {}),
       ...(calculatedExpiresAt ? { expiresAt: calculatedExpiresAt, ttl: Number(ttl) } : {}),
       ...passwordMeta,
     };

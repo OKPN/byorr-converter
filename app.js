@@ -442,6 +442,13 @@ const filebaseBucket = document.querySelector("#filebaseBucket");
 const filebaseApiKey = document.querySelector("#filebaseApiKey");
 const filebaseSecretKey = document.querySelector("#filebaseSecretKey");
 
+// 🏠 Kubo IPFS ノード接続設定要素
+const kuboRpcUrl = document.querySelector("#kuboRpcUrl");
+const kuboAutoPinCheck = document.querySelector("#kuboAutoPinCheck");
+const kuboTestButton = document.querySelector("#kuboTestButton");
+const kuboWebUiLink = document.querySelector("#kuboWebUiLink");
+const kuboStatusIndicator = document.querySelector("#kuboStatusIndicator");
+
 const cfStatus = document.querySelector("#cfStatus");
 const cfSettingsAccordion = document.querySelector("#cfSettingsAccordion");
 const cfSaveButton = document.querySelector("#cfSaveButton");
@@ -699,12 +706,16 @@ function blobToBase64(blobOrBytes) {
   });
 }
 
-async function registerKvCid(key, cid = "", size = 0, mime = "", s3Key = "", password = "", blobOrBytes = null, ttl = 0, expiresAt = null, unpinned = false) {
+async function registerKvCid(key, cid = "", size = 0, mime = "", s3Key = "", password = "", blobOrBytes = null, ttl = 0, expiresAt = null, unpinned = false, kuboStatus = null) {
   if (!key) return;
   try {
     const payload = { key, cid: cid || "", size, mime, s3Key: s3Key || key };
     if (unpinned) {
       payload.unpinned = true;
+    }
+    if (kuboStatus) {
+      payload.kuboStatus = kuboStatus;
+      payload.lastKuboPinAttempt = Date.now();
     }
     if (ttl && ttl > 0) {
       payload.ttl = ttl;
@@ -736,6 +747,74 @@ async function deleteKvCid(key) {
     });
   } catch (e) {
     console.warn("Failed to delete CID from KV:", e);
+  }
+}
+
+// --- 🏠 自宅 Kubo (IPFSノード) RPC ヘルパー ---
+function getKuboRpcEndpoint() {
+  const custom = (localStorage.getItem("kuboRpcUrl") || kuboRpcUrl?.value || "").trim().replace(/\/$/, "");
+  return custom || "http://127.0.0.1:5001";
+}
+
+async function checkKuboOnline(timeoutMs = 1500) {
+  const endpoint = getKuboRpcEndpoint();
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(`${endpoint}/api/v0/id`, {
+      method: "POST",
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
+    if (!res.ok) return { online: false, error: `HTTP ${res.status}` };
+    const data = await res.json();
+    return {
+      online: true,
+      id: data.ID || "",
+      agentVersion: data.AgentVersion || "",
+      addresses: data.Addresses || [],
+    };
+  } catch (err) {
+    clearTimeout(timeoutId);
+    return { online: false, error: err.name === "AbortError" ? "Timeout" : err.message };
+  }
+}
+
+async function pinToKubo(cid) {
+  if (!cid) return { success: false, error: "Missing CID" };
+  const endpoint = getKuboRpcEndpoint();
+  try {
+    const res = await fetch(`${endpoint}/api/v0/pin/add?arg=${encodeURIComponent(cid)}&recursive=true`, {
+      method: "POST",
+    });
+    if (!res.ok) {
+      const errText = await res.text();
+      return { success: false, error: errText || `HTTP ${res.status}` };
+    }
+    const data = await res.json();
+    return { success: true, pins: data.Pins || [] };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+}
+
+async function checkKuboPinned(cid, timeoutMs = 2000) {
+  if (!cid) return false;
+  const endpoint = getKuboRpcEndpoint();
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(`${endpoint}/api/v0/pin/ls?arg=${encodeURIComponent(cid)}&type=recursive`, {
+      method: "POST",
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
+    if (!res.ok) return false;
+    const data = await res.json();
+    return Boolean(data.Keys && data.Keys[cid]);
+  } catch (e) {
+    clearTimeout(timeoutId);
+    return false;
   }
 }
 
@@ -833,7 +912,8 @@ function updateR2Status() {
   const step2Notice = document.querySelector("#step2Notice");
   const step2Inputs = [
     r2AccountId, r2BucketName, r2AccessKeyId, r2SecretAccessKey,
-    filebaseBucket, filebaseApiKey, filebaseSecretKey
+    filebaseBucket, filebaseApiKey, filebaseSecretKey,
+    kuboRpcUrl, kuboAutoPinCheck
   ];
 
   if (step2Box) {
@@ -1366,6 +1446,12 @@ function loadSettings() {
     autoFifoCheckbox.checked = savedAutoFifo !== "false"; // デフォルトでON
   }
 
+  // 🏠 Kubo設定ロード
+  const savedKuboUrl = localStorage.getItem("kuboRpcUrl") || "http://127.0.0.1:5001";
+  if (kuboRpcUrl) kuboRpcUrl.value = savedKuboUrl;
+  const savedKuboAutoPin = localStorage.getItem("kuboAutoPin");
+  if (kuboAutoPinCheck) kuboAutoPinCheck.checked = savedKuboAutoPin !== "false"; // デフォルトでON
+
   loadTemplates();
 }
 
@@ -1636,6 +1722,15 @@ function saveR2SettingsAuto() {
   if (fbKeyId) localStorage.setItem("filebaseApiKey", fbKeyId);
   if (fbSecret) localStorage.setItem("filebaseSecretKey", fbSecret);
 
+  const kUrl = kuboRpcUrl?.value?.trim() || "";
+  if (kUrl) {
+    localStorage.setItem("kuboRpcUrl", kUrl);
+    if (kuboWebUiLink) kuboWebUiLink.href = `${kUrl.replace(/\/$/, "")}/webui`;
+  }
+  if (kuboAutoPinCheck) {
+    localStorage.setItem("kuboAutoPin", kuboAutoPinCheck.checked ? "true" : "false");
+  }
+
   const isConfigured = updateR2Status();
   render();
 
@@ -1649,6 +1744,35 @@ function saveR2SettingsAuto() {
 
 filebaseCorsButton?.addEventListener("click", configureFilebaseCors);
 
+// 🏠 自宅 Kubo 接続テストハンドラ
+kuboTestButton?.addEventListener("click", async () => {
+  if (!kuboTestButton) return;
+  const origText = kuboTestButton.textContent;
+  kuboTestButton.disabled = true;
+  kuboTestButton.textContent = "🔌 確認中...";
+  if (kuboStatusIndicator) {
+    kuboStatusIndicator.innerHTML = '<span style="color: #fcd34d;">🟡 接続中...</span>';
+  }
+
+  saveR2SettingsAuto();
+  const info = await checkKuboOnline(2500);
+
+  if (info.online) {
+    if (kuboStatusIndicator) {
+      kuboStatusIndicator.innerHTML = `<span style="color: #4caf50; font-weight: bold;">🟢 オンライン (${info.agentVersion || "Kubo"})</span>`;
+    }
+    alert(`✅ 自宅 Kubo ノードへの接続に成功しました！\n\n・Node ID: ${info.id}\n・Agent: ${info.agentVersion}\n・RPC: ${getKuboRpcEndpoint()}`);
+  } else {
+    if (kuboStatusIndicator) {
+      kuboStatusIndicator.innerHTML = `<span style="color: #f87171;">🔴 オフライン (${info.error})</span>`;
+    }
+    alert(`❌ 自宅 Kubo ノードに接続できませんでした。\n\n・エラー: ${info.error}\n・接続先: ${getKuboRpcEndpoint()}\n\n【確認事項】\n1. DockerまたはWSL上で Kubo が起動しているか\n2. CORS許可設定（ipfs config API.HTTPHeaders...）が済んでいるか\n3. ポート5001が解放されているか`);
+  }
+
+  kuboTestButton.disabled = false;
+  kuboTestButton.textContent = origText;
+});
+
 r2AccountId?.addEventListener("input", saveR2SettingsAuto);
 r2BucketName?.addEventListener("input", saveR2SettingsAuto);
 r2AccessKeyId?.addEventListener("input", saveR2SettingsAuto);
@@ -1657,6 +1781,9 @@ r2SecretAccessKey?.addEventListener("input", saveR2SettingsAuto);
 filebaseBucket?.addEventListener("input", saveR2SettingsAuto);
 filebaseApiKey?.addEventListener("input", saveR2SettingsAuto);
 filebaseSecretKey?.addEventListener("input", saveR2SettingsAuto);
+
+kuboRpcUrl?.addEventListener("input", saveR2SettingsAuto);
+kuboAutoPinCheck?.addEventListener("change", saveR2SettingsAuto);
 
 // 🌐 ドメイン選択変更リスナー
 r2DomainSelect?.addEventListener("change", (e) => {
@@ -1756,6 +1883,9 @@ cfClearButton?.addEventListener("click", () => {
   localStorage.removeItem("filebaseApiKey");
   localStorage.removeItem("filebaseSecretKey");
 
+  localStorage.removeItem("kuboRpcUrl");
+  localStorage.removeItem("kuboAutoPin");
+
   if (r2AccountId) r2AccountId.value = "";
   if (r2BucketName) r2BucketName.value = "";
   if (r2AccessKeyId) r2AccessKeyId.value = "";
@@ -1764,6 +1894,10 @@ cfClearButton?.addEventListener("click", () => {
   if (filebaseBucket) filebaseBucket.value = "";
   if (filebaseApiKey) filebaseApiKey.value = "";
   if (filebaseSecretKey) filebaseSecretKey.value = "";
+
+  if (kuboRpcUrl) kuboRpcUrl.value = "http://127.0.0.1:5001";
+  if (kuboAutoPinCheck) kuboAutoPinCheck.checked = true;
+  if (kuboStatusIndicator) kuboStatusIndicator.textContent = "⚪ 未確認";
 
   renderR2DomainSelect();
   updateR2Status();
@@ -3839,6 +3973,17 @@ async function ensureStorageCapacityFilebase(s3, bucketName, requiredBytes = 0) 
         }));
       }
 
+      // 🏠 Kubo 自動ピン留め設定の確認
+      const isKuboAutoPin = localStorage.getItem("kuboAutoPin") !== "false";
+      let isKuboAvailable = false;
+      if (isKuboAutoPin) {
+        const kuboCheck = await checkKuboOnline(1500);
+        isKuboAvailable = kuboCheck.online;
+        if (isKuboAvailable) {
+          console.log("🏠 自宅 Kubo ノード検出: アンピン対象ファイルをローカルKuboへ救出Pin開始");
+        }
+      }
+
       // KV 側のメタデータを unpinned: true に更新（7日間キャッシュ & マルチゲートウェイ配信へ切り替え）
       for (const unpinnedKey of filesToUnpin) {
         try {
@@ -3846,6 +3991,23 @@ async function ensureStorageCapacityFilebase(s3, bucketName, requiredBytes = 0) 
           if (kvRes.ok) {
             const kvData = await kvRes.json();
             if (kvData.found && kvData.cid) {
+              let kuboStatus = kvData.metadata?.kuboStatus || "not_pinned";
+
+              // KuboがオンラインならPin試行
+              if (isKuboAvailable && kuboStatus !== "pinned") {
+                try {
+                  const pinRes = await pinToKubo(kvData.cid);
+                  if (pinRes.success) {
+                    kuboStatus = "pinned";
+                    console.log(`🏠 Kubo Pin成功: ${unpinnedKey} (${kvData.cid})`);
+                  } else {
+                    console.warn(`🏠 Kubo Pin失敗: ${unpinnedKey}:`, pinRes.error);
+                  }
+                } catch (pErr) {
+                  console.warn(`🏠 Kubo Pin通信エラー:`, pErr);
+                }
+              }
+
               await registerKvCid(
                 unpinnedKey,
                 kvData.cid,
@@ -3856,7 +4018,8 @@ async function ensureStorageCapacityFilebase(s3, bucketName, requiredBytes = 0) 
                 null,
                 kvData.metadata?.ttl || 0,
                 kvData.metadata?.expiresAt || null,
-                true // unpinned: true
+                true, // unpinned: true
+                kuboStatus
               );
             }
           }
@@ -4428,6 +4591,49 @@ async function fetchAndRenderR2Files() {
       }
     }
 
+    // 🏠 自宅 Kubo 遅延マイグレーション（Lazy Migration）:
+    // S3からアンピン済み（!isFromS3）かつ Kubo未PinのファイルをバックグラウンドでPin試行
+    if (isFilebase && contents.length > 0) {
+      const isKuboAutoPin = localStorage.getItem("kuboAutoPin") !== "false";
+      const unpinnedNeedKubo = contents.filter(c => !c.isFromS3 && c.cid && c.metadata?.kuboStatus !== "pinned");
+      if (isKuboAutoPin && unpinnedNeedKubo.length > 0) {
+        (async () => {
+          const kuboCheck = await checkKuboOnline(1200);
+          if (!kuboCheck.online) return;
+          console.log(`🏠 Kubo 遅延マイグレーション開始: ${unpinnedNeedKubo.length}件の未Pinファイルを救出`);
+          for (const item of unpinnedNeedKubo) {
+            try {
+              const pRes = await pinToKubo(item.cid);
+              if (pRes.success) {
+                console.log(`🏠 Kubo 遅延Pin成功: ${item.Key} (${item.cid})`);
+                await registerKvCid(
+                  item.Key,
+                  item.cid,
+                  item.Size || 0,
+                  item.metadata?.mime || "",
+                  item.s3Key || item.Key,
+                  "",
+                  null,
+                  item.ttl || 0,
+                  item.expiresAt || null,
+                  true,
+                  "pinned"
+                );
+                item.metadata.kuboStatus = "pinned";
+                // 画面上のバッジを即座に更新
+                const badgeEl = document.querySelector(`.kubo-badge-${CSS.escape(item.Key)}`);
+                if (badgeEl) {
+                  badgeEl.outerHTML = `<span class="kubo-badge-${escapeHtml(item.Key)}" style="font-size: 10px; padding: 1px 6px; border-radius: 4px; background: rgba(168, 85, 247, 0.15); color: #c084fc; border: 1px solid rgba(168, 85, 247, 0.4); font-weight: 600;" title="自宅KuboノードにPin留め済み（永久長期保存中）">🟣 自宅Kubo保護</span>`;
+                }
+              }
+            } catch (kErr) {
+              console.warn("Lazy pin error for " + item.Key + ":", kErr);
+            }
+          }
+        })();
+      }
+    }
+
     paletteFiles = contents.map(item => ({
       key: item.Key,
       url: isFilebase ? `${baseDomain}/${encodeURIComponent(item.Key)}` : getPublicUrl(item.Key),
@@ -4521,10 +4727,16 @@ async function fetchAndRenderR2Files() {
             <button type="button" class="ghost-button danger-button delete-r2-file-btn" data-key="${escapeHtml(item.Key)}" data-s3key="${escapeHtml(item.s3Key || item.Key)}" data-cid="${escapeHtml(itemCid || "")}" data-origin="1" title="アクセスを遮断します（実体が他のリンクと共有されている場合は実体を保護）">リンク抹消</button>
           `;
         } else {
-          statusBadgeHtml = `<span style="font-size: 10px; padding: 1px 6px; border-radius: 4px; background: rgba(239, 68, 68, 0.15); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.4); font-weight: 600;" title="オリジンから削除済み。IPFS/CDNキャッシュにより一時的に表示されていますが、永続性は保証されません。">⚠️ IPFS残留中 (非保証)</span>`;
+          const isKuboPinned = item.metadata?.kuboStatus === "pinned";
+          if (isKuboPinned) {
+            statusBadgeHtml = `<span class="kubo-badge-${escapeHtml(item.Key)}" style="font-size: 10px; padding: 1px 6px; border-radius: 4px; background: rgba(168, 85, 247, 0.15); color: #c084fc; border: 1px solid rgba(168, 85, 247, 0.4); font-weight: 600;" title="自宅KuboノードにPin留め済み（永久長期保存中）">🟣 自宅Kubo保護</span>`;
+          } else {
+            statusBadgeHtml = `<span class="kubo-badge-${escapeHtml(item.Key)}" style="font-size: 10px; padding: 1px 6px; border-radius: 4px; background: rgba(245, 158, 11, 0.15); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.4); font-weight: 600;" title="オリジン解放済み（7日間公共IPFSキャッシュ中）。Kubo起動時に永続Pin可能">🟡 IPFSキャッシュ</span>`;
+          }
           actionButtonsHtml = `
             <button type="button" class="ghost-button copy-r2-url-btn" data-url="${escapeHtml(publicUrl)}">${escapeHtml(dict.copyUrl)}</button>
             ${!hasPassword ? `<button type="button" class="ghost-button civitai-r2-post-btn" data-url="${escapeHtml(publicUrl)}" data-name="${escapeHtml(item.Key)}" style="color: #38bdf8; border-color: rgba(56, 189, 248, 0.4);" title="Civitai の投稿画面を開く">🎨 Civitai</button>` : ""}
+            ${!isKuboPinned && itemCid ? `<button type="button" class="ghost-button kubo-pin-manual-btn" data-key="${escapeHtml(item.Key)}" data-cid="${escapeHtml(itemCid)}" style="color: #c084fc; border-color: rgba(168, 85, 247, 0.4);" title="手動で自宅KuboノードへPin留めします">🏠 Kubo Pin</button>` : ""}
             <button type="button" class="ghost-button danger-button delete-r2-file-btn" data-key="${escapeHtml(item.Key)}" data-s3key="${escapeHtml(item.s3Key || item.Key)}" data-cid="${escapeHtml(itemCid || "")}" data-origin="0" title="アクセスを遮断し、KVから完全に削除します">リンク抹消</button>
           `;
         }
@@ -4813,11 +5025,68 @@ r2FileList?.addEventListener("click", async (e) => {
     return;
   }
 
+  // 🏠 自宅 Kubo への手動 Pin留めボタン
+  if (target.classList.contains("kubo-pin-manual-btn")) {
+    const key = target.dataset.key;
+    const cid = target.dataset.cid;
+    if (!cid) return;
+
+    target.disabled = true;
+    const origText = target.textContent;
+    target.textContent = "Pin中...";
+
+    const online = await checkKuboOnline(1500);
+    if (!online.online) {
+      alert(`❌ 自宅 Kubo ノードに接続できませんでした（${online.error}）。\nWSL/Docker上でKuboが稼働しているか確認してください。`);
+      target.disabled = false;
+      target.textContent = origText;
+      return;
+    }
+
+    try {
+      const pinRes = await pinToKubo(cid);
+      if (pinRes.success) {
+        // KV を更新
+        const kvRes = await fetch(`/api/ipfs-kv?key=${encodeURIComponent(key)}`);
+        if (kvRes.ok) {
+          const kvData = await kvRes.json();
+          await registerKvCid(
+            key,
+            cid,
+            kvData.metadata?.size || 0,
+            kvData.metadata?.mime || "",
+            kvData.metadata?.s3Key || key,
+            "",
+            null,
+            kvData.metadata?.ttl || 0,
+            kvData.metadata?.expiresAt || null,
+            true,
+            "pinned"
+          );
+        }
+        alert(`✅ 自宅 Kubo ノードへ Pin留め（長期保存）が完了しました！\nCID: ${cid}`);
+        await fetchAndRenderR2Files();
+      } else {
+        alert(`❌ Kubo Pin留めに失敗しました: ${pinRes.error}`);
+        target.disabled = false;
+        target.textContent = origText;
+      }
+    } catch (err) {
+      alert(`エラー: ${err.message}`);
+      target.disabled = false;
+      target.textContent = origText;
+    }
+    return;
+  }
+
   // ⚡ 容量解放（アンピン）：Filebase S3 からのみ削除し、KVとURLは維持
   if (target.classList.contains("unpin-file-btn")) {
     const key = target.dataset.key;
     const s3Key = target.dataset.s3key || key;
-    if (!key || !confirm(`ファイル '${key}' を Filebase から削除して容量を解放しますか？\n\n・Filebase のストレージ容量が 0 になります（無料枠節約）。\n・IPFS/CDNキャッシュにより一時的に『残留』しますが、永続性は保証されません。`)) return;
+    const article = target.closest(".result-item");
+    const cid = target.dataset.cid || article?.dataset?.cid || getStoredIpfsCid(key) || getStoredIpfsCid(s3Key);
+
+    if (!key || !confirm(`ファイル '${key}' を Filebase から削除して容量を解放しますか？\n\n・Filebase のストレージ容量が 0 になります（無料枠節約）。\n・IPFS/CDNキャッシュにより維持され、自宅Kuboがオンラインなら自動で永続保護されます。`)) return;
 
     try {
       const command = new DeleteObjectCommand({
@@ -4825,6 +5094,42 @@ r2FileList?.addEventListener("click", async (e) => {
         Key: s3Key,
       });
       await s3.send(command);
+
+      // KV 側の unpinned を true に更新し、Kubo が起動していれば即座に Pin
+      let kuboStatus = "not_pinned";
+      const isKuboAutoPin = localStorage.getItem("kuboAutoPin") !== "false";
+      if (isKuboAutoPin && cid) {
+        const kuboCheck = await checkKuboOnline(1500);
+        if (kuboCheck.online) {
+          const pinRes = await pinToKubo(cid);
+          if (pinRes.success) {
+            kuboStatus = "pinned";
+          }
+        }
+      }
+
+      if (key && cid) {
+        const kvRes = await fetch(`/api/ipfs-kv?key=${encodeURIComponent(key)}`);
+        let meta = {};
+        if (kvRes.ok) {
+          const kvData = await kvRes.json();
+          meta = kvData.metadata || {};
+        }
+        await registerKvCid(
+          key,
+          cid,
+          meta.size || 0,
+          meta.mime || "",
+          meta.s3Key || s3Key || key,
+          "",
+          null,
+          meta.ttl || 0,
+          meta.expiresAt || null,
+          true,
+          kuboStatus
+        );
+      }
+
       await fetchAndRenderR2Files();
     } catch (err) {
       alert(`容量解放に失敗しました: ${err.message}`);
