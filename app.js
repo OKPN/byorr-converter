@@ -2545,23 +2545,56 @@ async function injectMetadataChunksIntoPng(pngBlobOrBuffer, chunks) {
   }
 }
 
-// 変換後の WebP (RIFF) バイナリに ComfyUI メタデータ (EXIF チャンク) を再注入
-async function injectMetadataIntoWebp(webpBlobOrBuffer, texts) {
+// 変換後の WebP (RIFF) バイナリに ComfyUI メタデータ (VP8X + EXIF チャンク) を再注入
+async function injectMetadataIntoWebp(webpBlobOrBuffer, texts, width = 0, height = 0) {
   if (!texts || (!texts.workflow && !texts.prompt && !texts.parameters)) {
     return webpBlobOrBuffer;
   }
 
+  const originalBlob = (webpBlobOrBuffer instanceof Blob) ? webpBlobOrBuffer : new Blob([webpBlobOrBuffer], { type: "image/webp" });
+
   try {
     const buffer = (webpBlobOrBuffer instanceof ArrayBuffer) ? webpBlobOrBuffer : await webpBlobOrBuffer.arrayBuffer();
     const view = new DataView(buffer);
-    if (buffer.byteLength < 12) return webpBlobOrBuffer;
+    if (buffer.byteLength < 12) return originalBlob;
 
     const riff = String.fromCharCode(view.getUint8(0), view.getUint8(1), view.getUint8(2), view.getUint8(3));
     const webp = String.fromCharCode(view.getUint8(8), view.getUint8(9), view.getUint8(10), view.getUint8(11));
-    if (riff !== "RIFF" || webp !== "WEBP") return webpBlobOrBuffer;
+    if (riff !== "RIFF" || webp !== "WEBP") return originalBlob;
+
+    // 元WebPから画像チャンク（VP8 または VP8L）の位置とサイズを特定
+    let offset = 12;
+    let imageChunkType = "";
+    let imageChunkOffset = -1;
+    let imageChunkTotalSize = 0;
+    let hasAlpha = false;
+
+    while (offset < buffer.byteLength - 8) {
+      const chunkType = String.fromCharCode(
+        view.getUint8(offset),
+        view.getUint8(offset + 1),
+        view.getUint8(offset + 2),
+        view.getUint8(offset + 3)
+      );
+      const chunkSize = view.getUint32(offset + 4, true);
+      const paddedSize = chunkSize + (chunkSize % 2 === 1 ? 1 : 0);
+
+      if (chunkType === "VP8 " || chunkType === "VP8L") {
+        imageChunkType = chunkType;
+        imageChunkOffset = offset;
+        imageChunkTotalSize = 8 + paddedSize;
+        if (chunkType === "VP8L") hasAlpha = true;
+        break;
+      } else if (chunkType === "VP8X") {
+        // 既にVP8Xがある場合はスキップ
+        return originalBlob;
+      }
+      offset += 8 + paddedSize;
+    }
+
+    if (imageChunkOffset === -1) return originalBlob;
 
     // ComfyUI が解釈できる形式の Exif UserComment を構築
-    // prompt と workflow の JSON オブジェクト
     const payload = {};
     if (texts.prompt) {
       try { payload.prompt = JSON.parse(texts.prompt); } catch (e) { payload.prompt = texts.prompt; }
@@ -2574,86 +2607,110 @@ async function injectMetadataIntoWebp(webpBlobOrBuffer, texts) {
     const payloadJsonStr = JSON.stringify(payload);
     const commentBytes = new TextEncoder().encode(payloadJsonStr);
 
-    // Exif バッファの構築 (TIFF Little-Endian 'II')
-    // 構造:
-    // [0..6] 'Exif\0\0'
-    // [6..14] TIFF Header: 49 49 2A 00 08 00 00 00
-    // [14..16] IFD0 項目数: 1
-    // [16..28] IFD0 エントリ 0x8769 (ExifIFDPointer, LONG=4, count=1, offset=26)
-    // [28..32] 次のIFD: 00 00 00 00
-    // [32..34] ExifIFD 項目数: 1
-    // [34..46] ExifIFD エントリ 0x9286 (UserComment, UNDEFINED=7, count=commentSize, offset=44)
-    // [46..50] 次のIFD: 00 00 00 00
-    // [50..58] UserCommentヘッダー: 'UNICODE\0'
-    // [58..]   UTF-8 JSONデータ
-
     const userCommentHeader = new Uint8Array([0x55, 0x4E, 0x49, 0x43, 0x4F, 0x44, 0x45, 0x00]); // 'UNICODE\0'
     const totalCommentDataLen = userCommentHeader.length + commentBytes.length;
-    const tiffBase = 6;
-    const exifIfdOffset = 26; // TIFF先頭からのオフセット (14 + 12 = 26)
-    const userCommentDataOffset = 44; // TIFF先頭からのオフセット (32 + 12 = 44)
+    const exifIfdOffset = 26;
+    const userCommentDataOffset = 44;
 
     const exifPayloadSize = 6 + 8 + 2 + 12 + 4 + 2 + 12 + 4 + totalCommentDataLen;
-    // 偶数バイトパディング
     const exifChunkDataSize = exifPayloadSize + (exifPayloadSize % 2 === 1 ? 1 : 0);
     const exifData = new Uint8Array(exifChunkDataSize);
     const eView = new DataView(exifData.buffer);
 
-    // 'Exif\0\0'
-    exifData.set([0x45, 0x78, 0x69, 0x66, 0x00, 0x00], 0);
-
-    // TIFF Header: 'II', 42, offset 8
-    eView.setUint8(6, 0x49); eView.setUint8(7, 0x49);
+    exifData.set([0x45, 0x78, 0x69, 0x66, 0x00, 0x00], 0); // 'Exif\0\0'
+    eView.setUint8(6, 0x49); eView.setUint8(7, 0x49); // 'II'
     eView.setUint16(8, 42, true);
-    eView.setUint32(10, 8, true); // IFD0 offset from TIFF header
+    eView.setUint32(10, 8, true);
 
-    // IFD0: 1 entry
+    // IFD0
     eView.setUint16(14, 1, true);
-    // tag 0x8769 (ExifOffset), type 4 (LONG), count 1, value = exifIfdOffset
     eView.setUint16(16, 0x8769, true);
     eView.setUint16(18, 4, true);
     eView.setUint32(20, 1, true);
     eView.setUint32(24, exifIfdOffset, true);
-    eView.setUint32(28, 0, true); // next IFD
+    eView.setUint32(28, 0, true);
 
-    // ExifIFD: 1 entry
+    // ExifIFD
     eView.setUint16(32, 1, true);
-    // tag 0x9286 (UserComment), type 7 (UNDEFINED), count = totalCommentDataLen, value = userCommentDataOffset
     eView.setUint16(34, 0x9286, true);
     eView.setUint16(36, 7, true);
     eView.setUint32(38, totalCommentDataLen, true);
     eView.setUint32(42, userCommentDataOffset, true);
-    eView.setUint32(46, 0, true); // next IFD
+    eView.setUint32(46, 0, true);
 
-    // UserComment データ部
     exifData.set(userCommentHeader, 50);
     exifData.set(commentBytes, 58);
 
-    // WebP RIFF構造の先頭ヘッダー直後（12バイト目）に EXIF チャンクを挿入
-    // EXIF チャンク: [ 'E', 'X', 'I', 'F' (4B) ] + [ size (4B, LE) ] + [ exifData (size B) ]
-    const newFileSize = buffer.byteLength + 8 + exifChunkDataSize;
-    const finalBuffer = new Uint8Array(newFileSize);
-    const fView = new DataView(finalBuffer.buffer);
+    // WebP Extended Header (VP8X): 10 バイトデータ
+    // Flags (1B): Exifフラグ (0x08) | (hasAlpha ? 0x10 : 0)
+    // Reserved (3B): 00 00 00
+    // Canvas Width - 1 (24-bit LE, 3B)
+    // Canvas Height - 1 (24-bit LE, 3B)
+    const vp8xChunkSize = 8 + 10; // 18 bytes
+    const vp8xData = new Uint8Array(18);
+    const vpView = new DataView(vp8xData.buffer);
+    vp8xData.set([0x56, 0x50, 0x38, 0x58], 0); // 'VP8X'
+    vpView.setUint32(4, 10, true); // size = 10
+    vp8xData[8] = 0x08 | (hasAlpha ? 0x10 : 0); // Exif flag (+ Alpha if any)
+    vp8xData[9] = 0; vp8xData[10] = 0; vp8xData[11] = 0; // Reserved
 
-    // 'RIFF'
-    finalBuffer.set(new Uint8Array(buffer, 0, 4), 0);
-    // ファイル全体サイズ - 8 (LE)
-    fView.setUint32(4, newFileSize - 8, true);
-    // 'WEBP'
-    finalBuffer.set(new Uint8Array(buffer, 8, 4), 8);
+    const wMinus1 = Math.max(0, width - 1);
+    const hMinus1 = Math.max(0, height - 1);
+    vp8xData[12] = wMinus1 & 0xFF;
+    vp8xData[13] = (wMinus1 >> 8) & 0xFF;
+    vp8xData[14] = (wMinus1 >> 16) & 0xFF;
+    vp8xData[15] = hMinus1 & 0xFF;
+    vp8xData[16] = (hMinus1 >> 8) & 0xFF;
+    vp8xData[17] = (hMinus1 >> 16) & 0xFF;
 
     // EXIF チャンクヘッダー
-    finalBuffer.set([0x45, 0x58, 0x49, 0x46], 12); // 'EXIF'
-    fView.setUint32(16, exifChunkDataSize, true);  // チャンクサイズ (LE)
-    finalBuffer.set(exifData, 20);
+    const exifChunkHeader = new Uint8Array(8);
+    exifChunkHeader.set([0x45, 0x58, 0x49, 0x46], 0); // 'EXIF'
+    new DataView(exifChunkHeader.buffer).setUint32(4, exifChunkDataSize, true);
 
-    // 残りの元WebPデータをコピー
-    finalBuffer.set(new Uint8Array(buffer, 12), 20 + exifChunkDataSize);
+    // 全体組み立て: [RIFF] + [VP8X] + [画像データ(VP8/VP8L)] + [EXIF]
+    const imageBytes = new Uint8Array(buffer, imageChunkOffset, imageChunkTotalSize);
+    const totalNewSize = 12 + vp8xChunkSize + imageBytes.byteLength + 8 + exifChunkDataSize;
+    const finalBuffer = new Uint8Array(totalNewSize);
+    const fView = new DataView(finalBuffer.buffer);
 
-    return new Blob([finalBuffer], { type: "image/webp" });
+    finalBuffer.set([0x52, 0x49, 0x46, 0x46], 0); // 'RIFF'
+    fView.setUint32(4, totalNewSize - 8, true);
+    finalBuffer.set([0x57, 0x45, 0x42, 0x50], 8); // 'WEBP'
+
+    let cur = 12;
+    finalBuffer.set(vp8xData, cur);
+    cur += vp8xChunkSize;
+
+    finalBuffer.set(imageBytes, cur);
+    cur += imageBytes.byteLength;
+
+    finalBuffer.set(exifChunkHeader, cur);
+    cur += 8;
+
+    finalBuffer.set(exifData, cur);
+
+    const injectedBlob = new Blob([finalBuffer], { type: "image/webp" });
+
+    // 🛡️ ロードテスト・セーフガード: ブラウザで正常に描画できるか検証
+    const testUrl = URL.createObjectURL(injectedBlob);
+    try {
+      await new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => resolve(true);
+        img.onerror = () => reject(new Error("Decoded image broken"));
+        img.src = testUrl;
+      });
+      URL.revokeObjectURL(testUrl);
+      return injectedBlob; // 検証OK！
+    } catch (testErr) {
+      console.warn("Injected WebP verification failed, safely falling back to clean WebP:", testErr);
+      URL.revokeObjectURL(testUrl);
+      return originalBlob; // 壊れていた場合は元の正常なWebPを返す
+    }
   } catch (err) {
-    console.warn("Failed to inject WebP metadata:", err);
-    return webpBlobOrBuffer;
+    console.warn("Failed to inject WebP metadata, fallback:", err);
+    return originalBlob;
   }
 }
 
@@ -3701,7 +3758,7 @@ async function convertImage(file, index = 0) {
     if (options.mimeType === "image/png" && rescued.chunks.length > 0) {
       convertedBlob = await injectMetadataChunksIntoPng(convertedBlob, rescued.chunks);
     } else if (options.mimeType === "image/webp" && (rescued.texts.workflow || rescued.texts.prompt || rescued.texts.parameters)) {
-      convertedBlob = await injectMetadataIntoWebp(convertedBlob, rescued.texts);
+      convertedBlob = await injectMetadataIntoWebp(convertedBlob, rescued.texts, canvas.width, canvas.height);
     }
 
     finalBlob = convertedBlob;
