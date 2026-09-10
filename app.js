@@ -780,58 +780,40 @@ async function checkKuboOnline(timeoutMs = 1500) {
   }
 }
 
-async function pinToKubo(cid, publicFetchUrl = "", timeoutMs = 15000) {
+async function pinToKubo(cid) {
   if (!cid) return { success: false, error: "Missing CID" };
   const endpoint = getKuboRpcEndpoint();
 
-  // 戦略1: すでにKuboがブロックを持っている、またはP2Pで見つかる場合は pin/add (15秒タイムアウト)
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  // 純粋なP2P Pin留め要求 (Kuboに非同期ダウンロード・Pin留めを指示)
+  // ブラウザが数分〜数十分の完了待ちでフリーズしないよう、fetchを開始して裏で実行させます
   try {
-    const res = await fetch(`${endpoint}/api/v0/pin/add?arg=${encodeURIComponent(cid)}&recursive=true`, {
+    const p = fetch(`${endpoint}/api/v0/pin/add?arg=${encodeURIComponent(cid)}&recursive=true`, {
       method: "POST",
-      signal: controller.signal,
-    });
-    clearTimeout(timeoutId);
-    if (res.ok) {
-      const data = await res.json();
-      return { success: true, pins: data.Pins || [] };
-    }
-  } catch (err) {
-    clearTimeout(timeoutId);
-  }
-
-  // 戦略2（爆速ダイレクト取り込み）: P2P探索が遅い場合、ブラウザ経由で公共ゲートウェイ/エッジからデータを吸い出し、ローカルKuboの /api/v0/add へ直接インポート
-  if (publicFetchUrl) {
-    try {
-      console.log(`🏠 Kubo P2P探索迂回: ${publicFetchUrl} から直接データを取得してKuboへインポート中...`);
-      const fileRes = await fetch(publicFetchUrl);
-      if (fileRes.ok) {
-        const blob = await fileRes.blob();
-        const formData = new FormData();
-        formData.append("file", blob);
-
-        // pin=true で直接Kuboへ追加（同一データなら全く同一のCIDになりPin留めされる）
-        const addRes = await fetch(`${endpoint}/api/v0/add?pin=true&cid-version=1`, {
-          method: "POST",
-          body: formData,
-        });
-
-        if (addRes.ok) {
-          const addText = await addRes.text();
-          // Kuboの /api/v0/add は行区切りJSON
-          const lines = addText.trim().split("\n");
-          const lastLine = JSON.parse(lines[lines.length - 1]);
-          console.log(`🏠 Kubo 直接インポート＆Pin留め完了:`, lastLine);
-          return { success: true, pins: [lastLine.Hash || cid] };
-        }
+    }).then(async (res) => {
+      if (res.ok) {
+        console.log(`🏠 Kubo P2P Pin留め完了: ${cid}`);
+        return { success: true };
+      } else {
+        const t = await res.text();
+        console.warn(`🏠 Kubo P2P Pin失敗: ${cid}`, t);
+        return { success: false, error: t };
       }
-    } catch (importErr) {
-      console.warn("Direct import to Kubo failed:", importErr);
-    }
-  }
+    }).catch(err => {
+      console.warn(`🏠 Kubo P2P Pin通信エラー: ${cid}`, err);
+      return { success: false, error: err.message };
+    });
 
-  return { success: false, error: "KuboでのPin留め（P2P取得および直接インポート）に失敗しました。" };
+    // 既にローカルに存在するか、即座に終わった場合はすぐ返却
+    const checkAlready = await checkKuboPinned(cid, 800);
+    if (checkAlready) {
+      return { success: true, alreadyPinned: true };
+    }
+
+    // バックグラウンドでP2P探索・ダウンロードを継続
+    return { success: true, inProgress: true };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
 }
 
 async function checkKuboPinned(cid, timeoutMs = 2000) {
@@ -4639,10 +4621,10 @@ async function fetchAndRenderR2Files() {
           console.log(`🏠 Kubo 遅延マイグレーション開始: ${unpinnedNeedKubo.length}件の未Pinファイルを救出`);
           for (const item of unpinnedNeedKubo) {
             try {
-              const fetchUrl = `${baseDomain}/${encodeURIComponent(item.Key)}`;
-              const pRes = await pinToKubo(item.cid, fetchUrl, 15000);
-              if (pRes.success) {
-                console.log(`🏠 Kubo 遅延Pin成功: ${item.Key} (${item.cid})`);
+              // 既にPin済みかチェック
+              const alreadyPinned = await checkKuboPinned(item.cid, 1000);
+              if (alreadyPinned) {
+                console.log(`🏠 Kubo 既存Pin確認: ${item.Key} (${item.cid})`);
                 await registerKvCid(
                   item.Key,
                   item.cid,
@@ -4657,12 +4639,15 @@ async function fetchAndRenderR2Files() {
                   "pinned"
                 );
                 item.metadata.kuboStatus = "pinned";
-                // 画面上のバッジを即座に更新
                 const badgeEl = document.querySelector(`.kubo-badge-${CSS.escape(item.Key)}`);
                 if (badgeEl) {
                   badgeEl.outerHTML = `<span class="kubo-badge-${escapeHtml(item.Key)}" style="font-size: 10px; padding: 1px 6px; border-radius: 4px; background: rgba(168, 85, 247, 0.15); color: #c084fc; border: 1px solid rgba(168, 85, 247, 0.4); font-weight: 600;" title="自宅KuboノードにPin留め済み（永久長期保存中）">🟣 自宅Kubo保護</span>`;
                 }
+                continue;
               }
+
+              // 未Pinの場合はP2P Pin留め要求をトリガー（非同期進行）
+              await pinToKubo(item.cid);
             } catch (kErr) {
               console.warn("Lazy pin error for " + item.Key + ":", kErr);
             }
@@ -5081,31 +5066,44 @@ r2FileList?.addEventListener("click", async (e) => {
     }
 
     try {
-      const publicUrl = target.dataset.url || "";
-      const pinRes = await pinToKubo(cid, publicUrl, 15000);
+      const pinRes = await pinToKubo(cid);
       if (pinRes.success) {
-        // KV を更新
-        const kvRes = await fetch(`/api/ipfs-kv?key=${encodeURIComponent(key)}`);
-        if (kvRes.ok) {
-          const kvData = await kvRes.json();
-          await registerKvCid(
-            key,
-            cid,
-            kvData.metadata?.size || 0,
-            kvData.metadata?.mime || "",
-            kvData.metadata?.s3Key || key,
-            "",
-            null,
-            kvData.metadata?.ttl || 0,
-            kvData.metadata?.expiresAt || null,
-            true,
-            "pinned"
-          );
-        }
-        alert(`✅ 自宅 Kubo ノードへ Pin留め（長期保存）が完了しました！\nCID: ${cid}`);
-        await fetchAndRenderR2Files();
+        target.textContent = "同期中...";
+        target.title = "KuboがP2Pでブロックをダウンロード中...";
+
+        // バックグラウンドで完了をポーリング検知
+        const pollInterval = setInterval(async () => {
+          const isPinned = await checkKuboPinned(cid, 1000);
+          if (isPinned) {
+            clearInterval(pollInterval);
+            console.log(`🏠 Kubo P2P同期完了を検知: ${key}`);
+            const kvRes = await fetch(`/api/ipfs-kv?key=${encodeURIComponent(key)}`);
+            if (kvRes.ok) {
+              const kvData = await kvRes.json();
+              await registerKvCid(
+                key,
+                cid,
+                kvData.metadata?.size || 0,
+                kvData.metadata?.mime || "",
+                kvData.metadata?.s3Key || key,
+                "",
+                null,
+                kvData.metadata?.ttl || 0,
+                kvData.metadata?.expiresAt || null,
+                true,
+                "pinned"
+              );
+            }
+            await fetchAndRenderR2Files();
+          }
+        }, 3000);
+
+        // 3分経過したら定期ポーリング停止（次回リロード時等に再判定）
+        setTimeout(() => clearInterval(pollInterval), 180000);
+
+        alert(`📡 自宅 Kubo ノードへ P2P Pin留め要求を送信しました！\n\nKuboがバックグラウンドで世界中のIPFSノードからブロックを取得・同期しています。\n完了すると自動的に『🟣 自宅Kubo保護』へ昇格します。`);
       } else {
-        alert(`❌ Kubo Pin留めに失敗しました: ${pinRes.error}`);
+        alert(`❌ Kubo Pin要求に失敗しました: ${pinRes.error}`);
         target.disabled = false;
         target.textContent = origText;
       }
