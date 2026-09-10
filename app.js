@@ -3005,7 +3005,11 @@ function createComfyBadgeHtml(file, result) {
   const isVideo = ["mp4", "webm", "mov"].includes(fileExt) || file.type?.startsWith("video/");
   let statusNotice = "";
   if (meta.hasWorkflow || meta.hasPrompt) {
-    statusNotice = '<span style="font-size: 10px; color: #34d399; margin-left: 4px;" title="変換後もComfyUIワークフローを自動再注入して保持します（生写真のGPS Exifは完全消滅）。">🛡️ ワークフロー保持のまま保存/共有されます</span>';
+    if (isConvertOn && !isVideo) {
+      statusNotice = '<span style="font-size: 10px; color: #f87171; margin-left: 4px;" title="画像を変換（再エンコード）するとブラウザの仕様によりワークフローは削除されます。保持したい場合は『画像を変換する』をOFFにしてください。">⚠️ 変換ONのためExif/WFは削除されます</span>';
+    } else {
+      statusNotice = '<span style="font-size: 10px; color: #34d399; margin-left: 4px;">🛡️ ワークフロー保持のまま保存/共有されます</span>';
+    }
   }
 
   return `<div class="comfy-meta-row" style="margin-top: 3px; display: flex; align-items: center; gap: 4px; flex-wrap: wrap;">${badge}${statusNotice}</div>`;
@@ -3740,9 +3744,6 @@ async function convertImage(file, index = 0) {
   let finalBlob = null;
 
   try {
-    // 🧬 1. 救出: 変換前の元画像から ComfyUI/A1111 メタデータ (workflow/prompt/parameters) を退避
-    const rescued = await extractMetadataChunksFromPng(file);
-
     const image = await loadImage(file);
     const canvas = document.createElement("canvas");
     canvas.width = image.naturalWidth;
@@ -3751,17 +3752,8 @@ async function convertImage(file, index = 0) {
     const context = canvas.getContext("2d", { alpha: true });
     context.drawImage(image, 0, 0);
 
-    // 🛡️ 2. 更地化: Canvasを通すことで、生写真のGPS位置情報や撮影機材Exifは100%完全抹消
-    let convertedBlob = await canvasToBlob(canvas, options.mimeType, options.quality);
-
-    // 💉 3. 再注入: 救出したComfyUIメタデータを変換後フォーマットに合わせて再注入
-    if (options.mimeType === "image/png" && rescued.chunks.length > 0) {
-      convertedBlob = await injectMetadataChunksIntoPng(convertedBlob, rescued.chunks);
-    } else if (options.mimeType === "image/webp" && (rescued.texts.workflow || rescued.texts.prompt || rescued.texts.parameters)) {
-      convertedBlob = await injectMetadataIntoWebp(convertedBlob, rescued.texts, canvas.width, canvas.height);
-    }
-
-    finalBlob = convertedBlob;
+    // Canvas変換（生写真のGPS位置情報・Exifは自動更地化）
+    finalBlob = await canvasToBlob(canvas, options.mimeType, options.quality);
   } catch (err) {
     console.warn("Canvas conversion fallback failed, using original blob:", err);
     finalBlob = file;
@@ -3998,11 +3990,20 @@ async function uploadImage(result, targetProvider = "r2", customPassword = null)
       }
     }
 
-    // 🧬 アップロードされたファイルのワークフロー有無をローカルストレージに確実に記録
+    // 🧬 アップロードされたファイルのワークフロー有無をローカルストレージに記録
+    // （※画像変換ONの画像はCanvasでExif/WFが削除されるため、非変換時または動画のみ保持）
     try {
+      const isConvertOn = enableConvertCheck?.checked ?? true;
+      const fileExt = (result.name || "").split('.').pop().toLowerCase();
+      const isVideo = ["mp4", "webm", "mov"].includes(fileExt);
+      const retainsWorkflow = (!isConvertOn || isVideo) && (result.metaStatus?.hasWorkflow || result.metaStatus?.hasPrompt);
+
       const wfStore = JSON.parse(localStorage.getItem("comfyWfMap") || "{}");
-      if (result.hasRescuedWf || result.metaStatus?.hasWorkflow || result.metaStatus?.hasPrompt) {
+      if (retainsWorkflow) {
         wfStore[result.name] = true;
+        localStorage.setItem("comfyWfMap", JSON.stringify(wfStore));
+      } else if (wfStore[result.name]) {
+        delete wfStore[result.name];
         localStorage.setItem("comfyWfMap", JSON.stringify(wfStore));
       }
     } catch (wfSaveErr) {}
