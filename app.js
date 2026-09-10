@@ -699,10 +699,13 @@ function blobToBase64(blobOrBytes) {
   });
 }
 
-async function registerKvCid(key, cid = "", size = 0, mime = "", s3Key = "", password = "", blobOrBytes = null, ttl = 0, expiresAt = null) {
+async function registerKvCid(key, cid = "", size = 0, mime = "", s3Key = "", password = "", blobOrBytes = null, ttl = 0, expiresAt = null, unpinned = false) {
   if (!key) return;
   try {
     const payload = { key, cid: cid || "", size, mime, s3Key: s3Key || key };
+    if (unpinned) {
+      payload.unpinned = true;
+    }
     if (ttl && ttl > 0) {
       payload.ttl = ttl;
       payload.expiresAt = expiresAt || (Date.now() + ttl * 1000);
@@ -3834,6 +3837,32 @@ async function ensureStorageCapacityFilebase(s3, bucketName, requiredBytes = 0) 
           Bucket: bucketName,
           Delete: { Objects: filesToUnpin.map(k => ({ Key: k })) },
         }));
+      }
+
+      // KV 側のメタデータを unpinned: true に更新（7日間キャッシュ & マルチゲートウェイ配信へ切り替え）
+      for (const unpinnedKey of filesToUnpin) {
+        try {
+          const kvRes = await fetch(`/api/ipfs-kv?key=${encodeURIComponent(unpinnedKey)}`);
+          if (kvRes.ok) {
+            const kvData = await kvRes.json();
+            if (kvData.found && kvData.cid) {
+              await registerKvCid(
+                unpinnedKey,
+                kvData.cid,
+                kvData.metadata?.size || 0,
+                kvData.metadata?.mime || "",
+                kvData.metadata?.s3Key || unpinnedKey,
+                "", // パスワードは既存のものがKV側で維持されるか、必要に応じて保持
+                null,
+                kvData.metadata?.ttl || 0,
+                kvData.metadata?.expiresAt || null,
+                true // unpinned: true
+              );
+            }
+          }
+        } catch (kvErr) {
+          console.warn(`Failed to update unpinned status in KV for ${unpinnedKey}:`, kvErr);
+        }
       }
     }
   } catch (err) {

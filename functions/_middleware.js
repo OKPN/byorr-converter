@@ -442,31 +442,32 @@ export async function onRequest(context) {
   if (meta.s3Key && !candidates.includes(meta.s3Key)) candidates.push(meta.s3Key);
   if (!candidates.includes(filename)) candidates.push(filename);
 
-  const primaryBase = "https://ipfs.filebase.io/ipfs";
-  const fallbackBase = "https://ipfs.io/ipfs";
+  // 🪐 複数公共IPFSゲートウェイへのアクセス分散（マルチキャッシュ伝播 & Filebase転送量節約）
+  const ipfsGateways = [
+    "https://ipfs.filebase.io/ipfs",
+    "https://cloudflare-ipfs.com/ipfs",
+    "https://ipfs.io/ipfs",
+    "https://dweb.link/ipfs",
+  ];
+
+  // アンピン状態の判定: FIFO等でアンピンされたファイルは 7日間（604,800秒）キャッシュ
+  // （週1回の上流アクセスでIPFSノードのGC消去を回避・延命し、Filebase転送枠も死守）
+  // 通常ピン留め中は 1年間（31,536,000秒）キャッシュ
+  const isUnpinned = Boolean(meta.unpinned);
+  const UPSTREAM_CACHE_SECONDS = isUnpinned ? (7 * 86400) : 31536000;
+
+  // ゲートウェイの優先順位を分散（アンピン時は公共ノードにも均等にアクセスを散らす）
+  const orderedGateways = isUnpinned
+    ? [...ipfsGateways].sort(() => Math.random() - 0.5)
+    : ipfsGateways;
 
   const isHead = request.method === "HEAD";
 
   let upstreamResponse = null;
   for (const candidate of candidates) {
-    try {
-      upstreamResponse = await fetch(`${primaryBase}/${candidate}`, {
-        method: isHead ? "HEAD" : "GET",
-        headers: {
-          "User-Agent": "Cividge-KV-Relay/1.0",
-          ...(request.headers.get("Range") ? { "Range": request.headers.get("Range") } : {}),
-          ...(request.headers.get("If-Range") ? { "If-Range": request.headers.get("If-Range") } : {}),
-        },
-        cf: {
-          cacheEverything: !hasPassword,
-          ...(hasPassword ? { cacheTtl: 0 } : {
-            cacheTtlByStatus: { "200-299": 31536000, "404": 60, "500-599": 0 }
-          }),
-        },
-      });
-
-      if (!upstreamResponse.ok) {
-        upstreamResponse = await fetch(`${fallbackBase}/${candidate}`, {
+    for (const gw of orderedGateways) {
+      try {
+        upstreamResponse = await fetch(`${gw}/${candidate}`, {
           method: isHead ? "HEAD" : "GET",
           headers: {
             "User-Agent": "Cividge-KV-Relay/1.0",
@@ -476,19 +477,23 @@ export async function onRequest(context) {
           cf: {
             cacheEverything: !hasPassword,
             ...(hasPassword ? { cacheTtl: 0 } : {
-              cacheTtlByStatus: { "200-299": 31536000, "404": 60, "500-599": 0 }
+              cacheTtlByStatus: { "200-299": UPSTREAM_CACHE_SECONDS, "404": 60, "500-599": 0 }
             }),
           },
         });
-      }
 
-      if (upstreamResponse && upstreamResponse.ok) {
-        break;
+        if (upstreamResponse && upstreamResponse.ok) {
+          break;
+        }
+      } catch (err) {
+        console.warn(`Upstream fetch attempt failed for ${gw}/${candidate}:`, err);
       }
-    } catch (err) {
-      console.warn(`Upstream fetch attempt failed for ${candidate}:`, err);
+    }
+    if (upstreamResponse && upstreamResponse.ok) {
+      break;
     }
   }
+
 
   if (!upstreamResponse || !upstreamResponse.ok) {
     return renderNotFoundResponse(request);

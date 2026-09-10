@@ -141,6 +141,18 @@ export async function onRequestPost(context) {
         passwordSalt: saltHex,
         sessionSecret,
       };
+    } else {
+      // パスワードが未指定の場合、既存レコードのパスワード設定を維持する
+      try {
+        const existing = await env.IPFS_KV.getWithMetadata(key);
+        if (existing && existing.metadata && existing.metadata.passwordHash) {
+          passwordMeta = {
+            passwordHash: existing.metadata.passwordHash,
+            passwordSalt: existing.metadata.passwordSalt,
+            sessionSecret: existing.metadata.sessionSecret,
+          };
+        }
+      } catch (e) {}
     }
 
     const calculatedExpiresAt = expiresAt || (ttl && Number(ttl) > 0 ? Date.now() + Number(ttl) * 1000 : null);
@@ -152,6 +164,7 @@ export async function onRequestPost(context) {
       lastModified: lastModified || Date.now(),
       registeredAt: Date.now(),
       s3Key: body.s3Key || key,
+      unpinned: Boolean(body.unpinned),
       ...(calculatedExpiresAt ? { expiresAt: calculatedExpiresAt, ttl: Number(ttl) } : {}),
       ...passwordMeta,
     };
