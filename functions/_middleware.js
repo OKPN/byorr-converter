@@ -312,9 +312,10 @@ export async function onRequest(context) {
     return response;
   }
 
+  // 🔒 POST リクエストはパスワード送信のため静的アセットサーバーの 405 を受け付けずにパスワード検証へ直行
   const contentType = response.headers.get("content-type") || "";
   const isSpaFallback = response.status === 200 && contentType.includes("text/html");
-  if (response.status !== 404 && !isSpaFallback) {
+  if (request.method !== "POST" && response.status !== 404 && response.status !== 405 && !isSpaFallback) {
     return response;
   }
 
@@ -353,7 +354,7 @@ export async function onRequest(context) {
         if (await verifyPassword(pwd, meta)) {
           const secret = meta.sessionSecret || ("sec_" + Math.random().toString(36).slice(2));
           return new Response(null, {
-            status: 302,
+            status: 303,
             headers: {
               "Location": request.url,
               "Set-Cookie": `${cookieKey}=${encodeURIComponent(secret)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=86400`,
