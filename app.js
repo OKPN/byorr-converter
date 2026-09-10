@@ -780,9 +780,11 @@ async function checkKuboOnline(timeoutMs = 1500) {
   }
 }
 
-async function pinToKubo(cid, timeoutMs = 60000) {
+async function pinToKubo(cid, publicFetchUrl = "", timeoutMs = 15000) {
   if (!cid) return { success: false, error: "Missing CID" };
   const endpoint = getKuboRpcEndpoint();
+
+  // 戦略1: すでにKuboがブロックを持っている、またはP2Pで見つかる場合は pin/add (15秒タイムアウト)
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -791,19 +793,45 @@ async function pinToKubo(cid, timeoutMs = 60000) {
       signal: controller.signal,
     });
     clearTimeout(timeoutId);
-    if (!res.ok) {
-      const errText = await res.text();
-      return { success: false, error: errText || `HTTP ${res.status}` };
+    if (res.ok) {
+      const data = await res.json();
+      return { success: true, pins: data.Pins || [] };
     }
-    const data = await res.json();
-    return { success: true, pins: data.Pins || [] };
   } catch (err) {
     clearTimeout(timeoutId);
-    if (err.name === "AbortError") {
-      return { success: false, timeout: true, error: `Pin処理がタイムアウト（${Math.round(timeoutMs/1000)}秒）しました。Kuboがネットワークからブロックを取得中か、ピア未接続の可能性があります。` };
-    }
-    return { success: false, error: err.message };
   }
+
+  // 戦略2（爆速ダイレクト取り込み）: P2P探索が遅い場合、ブラウザ経由で公共ゲートウェイ/エッジからデータを吸い出し、ローカルKuboの /api/v0/add へ直接インポート
+  if (publicFetchUrl) {
+    try {
+      console.log(`🏠 Kubo P2P探索迂回: ${publicFetchUrl} から直接データを取得してKuboへインポート中...`);
+      const fileRes = await fetch(publicFetchUrl);
+      if (fileRes.ok) {
+        const blob = await fileRes.blob();
+        const formData = new FormData();
+        formData.append("file", blob);
+
+        // pin=true で直接Kuboへ追加（同一データなら全く同一のCIDになりPin留めされる）
+        const addRes = await fetch(`${endpoint}/api/v0/add?pin=true&cid-version=1`, {
+          method: "POST",
+          body: formData,
+        });
+
+        if (addRes.ok) {
+          const addText = await addRes.text();
+          // Kuboの /api/v0/add は行区切りJSON
+          const lines = addText.trim().split("\n");
+          const lastLine = JSON.parse(lines[lines.length - 1]);
+          console.log(`🏠 Kubo 直接インポート＆Pin留め完了:`, lastLine);
+          return { success: true, pins: [lastLine.Hash || cid] };
+        }
+      }
+    } catch (importErr) {
+      console.warn("Direct import to Kubo failed:", importErr);
+    }
+  }
+
+  return { success: false, error: "KuboでのPin留め（P2P取得および直接インポート）に失敗しました。" };
 }
 
 async function checkKuboPinned(cid, timeoutMs = 2000) {
@@ -4611,7 +4639,8 @@ async function fetchAndRenderR2Files() {
           console.log(`🏠 Kubo 遅延マイグレーション開始: ${unpinnedNeedKubo.length}件の未Pinファイルを救出`);
           for (const item of unpinnedNeedKubo) {
             try {
-              const pRes = await pinToKubo(item.cid);
+              const fetchUrl = `${baseDomain}/${encodeURIComponent(item.Key)}`;
+              const pRes = await pinToKubo(item.cid, fetchUrl, 15000);
               if (pRes.success) {
                 console.log(`🏠 Kubo 遅延Pin成功: ${item.Key} (${item.cid})`);
                 await registerKvCid(
@@ -4744,7 +4773,7 @@ async function fetchAndRenderR2Files() {
           actionButtonsHtml = `
             <button type="button" class="ghost-button copy-r2-url-btn" data-url="${escapeHtml(publicUrl)}">${escapeHtml(dict.copyUrl)}</button>
             ${!hasPassword ? `<button type="button" class="ghost-button civitai-r2-post-btn" data-url="${escapeHtml(publicUrl)}" data-name="${escapeHtml(item.Key)}" style="color: #38bdf8; border-color: rgba(56, 189, 248, 0.4);" title="Civitai の投稿画面を開く">🎨 Civitai</button>` : ""}
-            ${!isKuboPinned && itemCid ? `<button type="button" class="ghost-button kubo-pin-manual-btn" data-key="${escapeHtml(item.Key)}" data-cid="${escapeHtml(itemCid)}" style="color: #c084fc; border-color: rgba(168, 85, 247, 0.4);" title="手動で自宅KuboノードへPin留めします">🏠 Kubo Pin</button>` : ""}
+            ${!isKuboPinned && itemCid ? `<button type="button" class="ghost-button kubo-pin-manual-btn" data-key="${escapeHtml(item.Key)}" data-cid="${escapeHtml(itemCid)}" data-url="${escapeHtml(publicUrl)}" style="color: #c084fc; border-color: rgba(168, 85, 247, 0.4);" title="手動で自宅KuboノードへPin留めします">🏠 Kubo Pin</button>` : ""}
             <button type="button" class="ghost-button danger-button delete-r2-file-btn" data-key="${escapeHtml(item.Key)}" data-s3key="${escapeHtml(item.s3Key || item.Key)}" data-cid="${escapeHtml(itemCid || "")}" data-origin="0" title="アクセスを遮断し、KVから完全に削除します">リンク抹消</button>
           `;
         }
@@ -5052,7 +5081,8 @@ r2FileList?.addEventListener("click", async (e) => {
     }
 
     try {
-      const pinRes = await pinToKubo(cid);
+      const publicUrl = target.dataset.url || "";
+      const pinRes = await pinToKubo(cid, publicUrl, 15000);
       if (pinRes.success) {
         // KV を更新
         const kvRes = await fetch(`/api/ipfs-kv?key=${encodeURIComponent(key)}`);
