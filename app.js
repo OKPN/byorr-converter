@@ -2412,6 +2412,239 @@ function parseNovelAiComment(raw) {
   return null;
 }
 
+// ==========================================
+// 🧬 PNG メタデータ救出・再注入エンジン (ComfyUI / A1111 互換)
+// ==========================================
+const CRC32_TABLE = (() => {
+  const table = new Uint32Array(256);
+  for (let i = 0; i < 256; i++) {
+    let c = i;
+    for (let k = 0; k < 8; k++) {
+      c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+    }
+    table[i] = c >>> 0;
+  }
+  return table;
+})();
+
+function calculateCrc32(bytes) {
+  let crc = 0xFFFFFFFF;
+  for (let i = 0; i < bytes.length; i++) {
+    crc = (crc >>> 8) ^ CRC32_TABLE[(crc ^ bytes[i]) & 0xFF];
+  }
+  return (crc ^ 0xFFFFFFFF) >>> 0;
+}
+
+// 元画像から ComfyUI / A1111 のメタデータチャンク (tEXt / iTXt) を救出
+async function extractMetadataChunksFromPng(fileOrBuffer) {
+  try {
+    const buffer = (fileOrBuffer instanceof ArrayBuffer) ? fileOrBuffer : await fileOrBuffer.arrayBuffer();
+    const view = new DataView(buffer);
+    if (view.byteLength < 8 || view.getUint32(0) !== 0x89504e47 || view.getUint32(4) !== 0x0d0a1a0a) {
+      return [];
+    }
+
+    const chunks = [];
+    let offset = 8;
+    const length = buffer.byteLength;
+
+    while (offset < length - 8) {
+      const chunkLength = view.getUint32(offset);
+      const chunkType = String.fromCharCode(
+        view.getUint8(offset + 4),
+        view.getUint8(offset + 5),
+        view.getUint8(offset + 6),
+        view.getUint8(offset + 7)
+      );
+
+      if (chunkType === "IEND") break;
+
+      // ComfyUI (prompt, workflow) および A1111 (parameters), NovelAI (Comment) 等のテキストメタデータを救出
+      // ※ 位置情報・撮影機材情報が含まれうる "eXIf" チャンクは意図的に除外（プライバシー更地化）
+      if (chunkType === "tEXt" || chunkType === "iTXt") {
+        const fullChunk = new Uint8Array(buffer, offset, chunkLength + 12);
+        chunks.push(new Uint8Array(fullChunk)); // コピーして保持
+      }
+
+      offset += chunkLength + 12;
+    }
+    return chunks;
+  } catch (err) {
+    console.warn("Failed to extract PNG metadata chunks:", err);
+    return [];
+  }
+}
+
+// 変換後の PNG バイナリの IEND 直前に救出したメタデータチャンクを再注入
+async function injectMetadataChunksIntoPng(pngBlobOrBuffer, chunks) {
+  if (!chunks || chunks.length === 0) return pngBlobOrBuffer;
+  try {
+    const buffer = (pngBlobOrBuffer instanceof ArrayBuffer) ? pngBlobOrBuffer : await pngBlobOrBuffer.arrayBuffer();
+    const view = new DataView(buffer);
+    if (view.byteLength < 8 || view.getUint32(0) !== 0x89504e47 || view.getUint32(4) !== 0x0d0a1a0a) {
+      return pngBlobOrBuffer;
+    }
+
+    // IEND チャンクの位置を探索
+    let offset = 8;
+    let iendOffset = -1;
+    const length = buffer.byteLength;
+
+    while (offset < length - 8) {
+      const chunkLength = view.getUint32(offset);
+      const chunkType = String.fromCharCode(
+        view.getUint8(offset + 4),
+        view.getUint8(offset + 5),
+        view.getUint8(offset + 6),
+        view.getUint8(offset + 7)
+      );
+      if (chunkType === "IEND") {
+        iendOffset = offset;
+        break;
+      }
+      offset += chunkLength + 12;
+    }
+
+    if (iendOffset === -1) return pngBlobOrBuffer;
+
+    let extraSize = 0;
+    for (const c of chunks) extraSize += c.byteLength;
+
+    const newBuffer = new Uint8Array(buffer.byteLength + extraSize);
+    // IENDの手前までコピー
+    newBuffer.set(new Uint8Array(buffer, 0, iendOffset), 0);
+
+    // 救出したメタデータチャンク群を挿入
+    let cur = iendOffset;
+    for (const c of chunks) {
+      newBuffer.set(c, cur);
+      cur += c.byteLength;
+    }
+
+    // 残りのIENDチャンクをコピー
+    newBuffer.set(new Uint8Array(buffer, iendOffset), cur);
+
+    return new Blob([newBuffer], { type: "image/png" });
+  } catch (err) {
+    console.warn("Failed to inject PNG metadata chunks:", err);
+    return pngBlobOrBuffer;
+  }
+}
+
+// ==========================================
+// 🎬 MP4 FastStart 最適化エンジン (moov atom 先頭再配置)
+// ==========================================
+async function applyFastStartToMp4(mp4BlobOrBuffer) {
+  try {
+    const buffer = (mp4BlobOrBuffer instanceof ArrayBuffer) ? mp4BlobOrBuffer : await mp4BlobOrBuffer.arrayBuffer();
+    const view = new DataView(buffer);
+    const length = buffer.byteLength;
+
+    let offset = 0;
+    let ftypAtom = null;
+    let moovAtom = null;
+    let moovOffset = -1;
+    let mdatOffset = -1;
+
+    while (offset < length - 8) {
+      let atomSize = view.getUint32(offset);
+      const atomType = String.fromCharCode(
+        view.getUint8(offset + 4),
+        view.getUint8(offset + 5),
+        view.getUint8(offset + 6),
+        view.getUint8(offset + 7)
+      );
+
+      if (atomSize === 1) {
+        // 64-bit extended size
+        atomSize = Number(view.getBigUint64(offset + 8));
+      } else if (atomSize === 0) {
+        atomSize = length - offset;
+      }
+
+      if (atomSize <= 0 || offset + atomSize > length) break;
+
+      if (atomType === "ftyp" && !ftypAtom) {
+        ftypAtom = new Uint8Array(buffer, offset, atomSize);
+      } else if (atomType === "moov") {
+        moovAtom = new Uint8Array(buffer, offset, atomSize);
+        moovOffset = offset;
+      } else if (atomType === "mdat" && mdatOffset === -1) {
+        mdatOffset = offset;
+      }
+
+      offset += atomSize;
+    }
+
+    // moov が存在し、mdat より後ろにある場合のみ先頭（ftypの直後）へ引っ越しさせる
+    if (!moovAtom || mdatOffset === -1 || moovOffset < mdatOffset) {
+      return mp4BlobOrBuffer; // 既に先頭にあるか、未対応
+    }
+
+    const moovSize = moovAtom.byteLength;
+    // moov 内の stco (32-bit offset) と co64 (64-bit offset) を moovSize 分だけ前方シフト修正
+    const patchedMoov = new Uint8Array(moovAtom);
+    const moovView = new DataView(patchedMoov.buffer, patchedMoov.byteOffset, patchedMoov.byteLength);
+
+    for (let i = 0; i < patchedMoov.length - 8; i++) {
+      const tag = String.fromCharCode(
+        patchedMoov[i],
+        patchedMoov[i + 1],
+        patchedMoov[i + 2],
+        patchedMoov[i + 3]
+      );
+
+      if (tag === "stco") {
+        const count = moovView.getUint32(i + 8);
+        let entryOffset = i + 12;
+        for (let c = 0; c < count; c++) {
+          const curVal = moovView.getUint32(entryOffset);
+          moovView.setUint32(entryOffset, curVal + moovSize);
+          entryOffset += 4;
+        }
+      } else if (tag === "co64") {
+        const count = moovView.getUint32(i + 8);
+        let entryOffset = i + 12;
+        for (let c = 0; c < count; c++) {
+          const curVal = moovView.getBigUint64(entryOffset);
+          moovView.setBigUint64(entryOffset, curVal + BigInt(moovSize));
+          entryOffset += 8;
+        }
+      }
+    }
+
+    // 新しい MP4 の組み立て: [ftyp] + [patchedMoov] + [mdat以降のデータ(moov以外)]
+    const newLength = length;
+    const resultBuffer = new Uint8Array(newLength);
+    let writePos = 0;
+
+    if (ftypAtom) {
+      resultBuffer.set(ftypAtom, writePos);
+      writePos += ftypAtom.byteLength;
+    }
+
+    resultBuffer.set(patchedMoov, writePos);
+    writePos += patchedMoov.byteLength;
+
+    // ftyp 以降から moov 以外の部分をコピー
+    const startAfterFtyp = ftypAtom ? ftypAtom.byteLength : 0;
+    const beforeMoov = new Uint8Array(buffer, startAfterFtyp, moovOffset - startAfterFtyp);
+    resultBuffer.set(beforeMoov, writePos);
+    writePos += beforeMoov.byteLength;
+
+    const afterMoovOffset = moovOffset + moovSize;
+    if (afterMoovOffset < length) {
+      const afterMoov = new Uint8Array(buffer, afterMoovOffset, length - afterMoovOffset);
+      resultBuffer.set(afterMoov, writePos);
+    }
+
+    return new Blob([resultBuffer], { type: "video/mp4" });
+  } catch (err) {
+    console.warn("MP4 FastStart optimization skipped due to error:", err);
+    return mp4BlobOrBuffer;
+  }
+}
+
 async function detectComfyMetadata(file) {
   if (!file) return { hasWorkflow: false, hasPrompt: false, hasA1111: false, type: "none" };
 
@@ -3328,6 +3561,9 @@ async function convertImage(file, index = 0) {
   let finalBlob = null;
 
   try {
+    // 🧬 1. 救出: 変換前の元画像から ComfyUI/A1111 メタデータ (workflow/prompt/parameters) を退避
+    const savedMetadataChunks = await extractMetadataChunksFromPng(file);
+
     const image = await loadImage(file);
     const canvas = document.createElement("canvas");
     canvas.width = image.naturalWidth;
@@ -3336,7 +3572,15 @@ async function convertImage(file, index = 0) {
     const context = canvas.getContext("2d", { alpha: true });
     context.drawImage(image, 0, 0);
 
-    finalBlob = await canvasToBlob(canvas, options.mimeType, options.quality);
+    // 🛡️ 2. 更地化: Canvasを通すことで、生写真のGPS位置情報や撮影機材Exifは100%完全抹消
+    let convertedBlob = await canvasToBlob(canvas, options.mimeType, options.quality);
+
+    // 💉 3. 再注入: 出力がPNG形式で救出したComfyUIメタデータがある場合、バイナリに再注入
+    if (options.mimeType === "image/png" && savedMetadataChunks.length > 0) {
+      convertedBlob = await injectMetadataChunksIntoPng(convertedBlob, savedMetadataChunks);
+    }
+
+    finalBlob = convertedBlob;
   } catch (err) {
     console.warn("Canvas conversion fallback failed, using original blob:", err);
     finalBlob = file;
@@ -3466,21 +3710,29 @@ async function uploadImage(result, targetProvider = "r2", customPassword = null)
       return false;
     }
 
-    // TODO: FastStart（moov atom 先頭配置）最適化
-    // MP4ファイルの「moov atom」がファイル末尾にあると、動画全体をDLしないと再生が始まらない。
-    // moov atomを先頭に移動（ffmpegの -movflags +faststart 相当）すれば、リンクを開いた瞬間に再生開始できる。
-    // 実装方法:
-    //   1. mp4box.js (軽量): MP4のbox構造を解析し moov を先頭に再配置。ブラウザで動作。
-    //      https://github.com/niclas/mp4box.js (or gpac/mp4box.js)
-    //   2. ffmpeg.wasm (重量): フルのffmpegをWASMで実行。faststart以外の変換も可能だが ~25MB のロードが必要。
-    // 対象: ext === "mp4" かつ変換なしでそのままアップロードされるファイル（既にエンコード済みの動画）。
-    // WebM (VP9/AV1) は仕様上この問題が発生しにくい（Cuesが先頭に来る構造）。
-    let contentType = result.blob.type || "";
+    let uploadBlob = result.blob;
+    let uploadBytes = bytes;
+
+    const ext = result.name ? result.name.split('.').pop().toLowerCase() : "";
+
+    // 🎬 MP4 FastStart 最適化:
+    // moov atom を先頭に引っ越しさせ、リンクを開いた瞬間の即座シーク再生を可能にする
+    if (ext === "mp4" || (result.blob.type && result.blob.type === "video/mp4")) {
+      try {
+        const optimizedBlob = await applyFastStartToMp4(uploadBlob);
+        if (optimizedBlob && optimizedBlob !== uploadBlob) {
+          uploadBlob = optimizedBlob;
+          uploadBytes = new Uint8Array(await uploadBlob.arrayBuffer());
+        }
+      } catch (fastStartErr) {
+        console.warn("FastStart optimization error:", fastStartErr);
+      }
+    }
+
+    let contentType = uploadBlob.type || "";
     if (!contentType || contentType === "application/octet-stream") {
       contentType = getContentTypeFromFilename(result.name);
     }
-
-    const ext = result.name ? result.name.split('.').pop().toLowerCase() : "";
     const isAttachment = ["zip", "7z", "rar", "tar", "gz"].includes(ext);
     const contentDisposition = isAttachment
       ? `attachment; filename="${encodeURIComponent(result.name)}"`
@@ -3488,11 +3740,11 @@ async function uploadImage(result, targetProvider = "r2", customPassword = null)
 
     // 🪐 Filebase (IPFS): 容量上限に近づいている場合、最も古い実体を自動アンピン (FIFO)
     if (isFilebase) {
-      await ensureStorageCapacityFilebase(s3, bucketName, bytes.length);
+      await ensureStorageCapacityFilebase(s3, bucketName, uploadBytes.length);
     }
 
     const s3Metadata = {
-      size: String(result.size || bytes.length),
+      size: String(uploadBytes.length),
     };
     if (expiresAt) {
       s3Metadata["expires-at"] = String(expiresAt);
@@ -3502,7 +3754,7 @@ async function uploadImage(result, targetProvider = "r2", customPassword = null)
     const command = new PutObjectCommand({
       Bucket: bucketName,
       Key: result.name,
-      Body: bytes,
+      Body: uploadBytes,
       ContentType: contentType,
       ContentDisposition: contentDisposition,
       Metadata: s3Metadata,
@@ -3551,13 +3803,13 @@ async function uploadImage(result, targetProvider = "r2", customPassword = null)
         storeIpfsCid(result.name, ipfsCid);
       }
       // CID の有無に関わらず、KV にメタデータ（パスワード含む）を確実に登録
-      await registerKvCid(result.name, ipfsCid || "", result.size || bytes.length, contentType, result.name, password, result.blob || bytes, ttlSeconds, expiresAt);
+      await registerKvCid(result.name, ipfsCid || "", uploadBytes.length, contentType, result.name, password, uploadBlob || uploadBytes, ttlSeconds, expiresAt);
       result.proxyUrl = `${baseDomain}/${encodeURIComponent(result.name)}`;
       console.log(`🪐 Filebase URL 生成完了 (KV連携): CID=${ipfsCid} -> ${result.proxyUrl}`);
     } else {
       // ⚡ Cloudflare R2: パスワードまたは時限付きの場合は KV に保護メタデータ＆実体を登録
       if (password || ttlSeconds > 0) {
-        await registerKvCid(result.name, "", result.size || bytes.length, contentType, result.name, password, result.blob || bytes, ttlSeconds, expiresAt);
+        await registerKvCid(result.name, "", uploadBytes.length, contentType, result.name, password, uploadBlob || uploadBytes, ttlSeconds, expiresAt);
         result.proxyUrl = `${baseDomain}/${encodeURIComponent(result.name)}`;
       } else {
         result.proxyUrl = getPublicUrl(result.name);

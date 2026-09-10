@@ -164,6 +164,9 @@ export async function onRequestPost(context) {
     }
     await env.IPFS_KV.put(key, safeCid, putOptions);
 
+    // 🚀 URL再利用・即時反映: 直前までの404エッジキャッシュを即時パージ
+    context.waitUntil?.(purgeHybridCache(request, env, key)) || purgeHybridCache(request, env, key);
+
     return new Response(JSON.stringify({ success: true, key, cid: safeCid, metadata }), {
       status: 200,
       headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
@@ -204,9 +207,10 @@ export async function onRequestDelete(context) {
       await env.IPFS_KV.delete("blob_" + key).catch(() => {});
     }
     await env.IPFS_KV.delete(key);
-    // TODO: 即時キャッシュパージ（Purge by URL API）を使えば削除が数秒で反映されるが、
-    // pages.dev ドメインでは zone_id がないため利用不可。独自ドメイン導入時に実装を検討。
-    // 現状はCDNキャッシュTTL（1時間）経過後に自然反映される。
+
+    // 🚀 リンク抹消: エッジに残っている画像キャッシュを即座に消滅させる
+    context.waitUntil?.(purgeHybridCache(request, env, key)) || purgeHybridCache(request, env, key);
+
     return new Response(JSON.stringify({ success: true, deletedKey: key }), {
       status: 200,
       headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
@@ -216,5 +220,50 @@ export async function onRequestDelete(context) {
       status: 500,
       headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
     });
+  }
+}
+
+// 🌐 ハイブリッド Cache Purge ヘルパー
+// プランA (独自ドメイン設定時): REST Purge API で世界300箇所の全エッジから即時抹消
+// プランB (pages.dev無料運用時): Cache API (caches.default) でローカルPoPから即時抹消
+async function purgeHybridCache(request, env, key) {
+  if (!key) return;
+  const reqUrl = new URL(request.url);
+  const targetPath = `/${encodeURIComponent(key)}`;
+  const targetUrl = `${reqUrl.origin}${targetPath}`;
+
+  // content-relay ドメインのURLも対象に含める
+  const urlsToPurge = [targetUrl];
+  if (!reqUrl.hostname.includes("content-relay")) {
+    urlsToPurge.push(`https://content-relay.pages.dev${targetPath}`);
+  }
+
+  // 1. プランA: REST Purge API (独自ドメインの Zone ID & API Token がある場合)
+  const zoneId = env.CLOUDFLARE_ZONE_ID;
+  const purgeToken = env.CLOUDFLARE_PURGE_TOKEN || env.CLOUDFLARE_API_TOKEN;
+  if (zoneId && purgeToken) {
+    try {
+      await fetch(`https://api.cloudflare.com/client/v4/zones/${zoneId}/purge_cache`, {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${purgeToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ files: urlsToPurge }),
+      });
+    } catch (apiErr) {
+      console.warn("REST Purge API error:", apiErr);
+    }
+  }
+
+  // 2. プランB: Cache API (caches.default.delete) - pages.dev 環境でも動作
+  try {
+    if (typeof caches !== "undefined" && caches.default) {
+      for (const u of urlsToPurge) {
+        await caches.default.delete(u).catch(() => {});
+      }
+    }
+  } catch (cacheErr) {
+    console.warn("Cache API delete error:", cacheErr);
   }
 }

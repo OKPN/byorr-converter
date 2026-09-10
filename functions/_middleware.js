@@ -247,14 +247,19 @@ function renderPasswordForm(filename, errorMsg = "") {
 </html>`;
 }
 
-function renderNotFoundResponse(request) {
+function renderNotFoundResponse(request, cdnCacheSeconds = 300) {
   const accept = request.headers.get("accept") || "";
+  const headers = {
+    "Cache-Control": "no-cache",
+    ...(cdnCacheSeconds > 0 ? { "Cloudflare-CDN-Cache-Control": `public, max-age=${cdnCacheSeconds}` } : {}),
+  };
+
   if (accept.includes("text/html")) {
     return new Response(CATBOX_404_HTML, {
       status: 404,
       headers: {
+        ...headers,
         "Content-Type": "text/html; charset=utf-8",
-        "Cache-Control": "no-cache",
       },
     });
   }
@@ -262,8 +267,8 @@ function renderNotFoundResponse(request) {
   return new Response(CATBOX_404_SVG, {
     status: 404,
     headers: {
+      ...headers,
       "Content-Type": "image/svg+xml; charset=utf-8",
-      "Cache-Control": "no-cache",
       "Access-Control-Allow-Origin": "*",
     },
   });
@@ -281,8 +286,15 @@ export async function onRequest(context) {
     return response;
   }
 
+  // 🛡️ content-relay ドメインはファイル配信専用エッジ
+  // トップページ（/）や管理画面・非メディアURLへのアクセスは、アプリ画面を出さず即座に404返却（1日CDNキャッシュでFunctions完全防衛）
+  const isContentRelay = url.hostname.includes("content-relay");
+
   const extMatch = pathname.match(/\.(webp|png|jpe?g|gif|jxl|avif|mp4|webm|zip)$/i);
   if (!extMatch) {
+    if (isContentRelay) {
+      return renderNotFoundResponse(request, 86400); // 1日エッジキャッシュ
+    }
     return response;
   }
 
@@ -334,6 +346,9 @@ export async function onRequest(context) {
             },
           });
         } else {
+          // 🛡️ パスワード総当たり・辞書攻撃対策:
+          // KVの書き込み枠（1日1,000回）を浪費せず、1秒強制スリープでツールの高速試行を無力化
+          await new Promise((resolve) => setTimeout(resolve, 1000));
           return new Response(renderPasswordForm(filename, "合言葉（パスワード）が正しくありません"), {
             status: 403,
             headers: {
@@ -343,6 +358,7 @@ export async function onRequest(context) {
           });
         }
       } catch (postErr) {
+        await new Promise((resolve) => setTimeout(resolve, 1000));
         return new Response(renderPasswordForm(filename, "入力処理でエラーが発生しました"), {
           status: 400,
           headers: {
