@@ -780,13 +780,17 @@ async function checkKuboOnline(timeoutMs = 1500) {
   }
 }
 
-async function pinToKubo(cid) {
+async function pinToKubo(cid, timeoutMs = 60000) {
   if (!cid) return { success: false, error: "Missing CID" };
   const endpoint = getKuboRpcEndpoint();
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const res = await fetch(`${endpoint}/api/v0/pin/add?arg=${encodeURIComponent(cid)}&recursive=true`, {
       method: "POST",
+      signal: controller.signal,
     });
+    clearTimeout(timeoutId);
     if (!res.ok) {
       const errText = await res.text();
       return { success: false, error: errText || `HTTP ${res.status}` };
@@ -794,6 +798,10 @@ async function pinToKubo(cid) {
     const data = await res.json();
     return { success: true, pins: data.Pins || [] };
   } catch (err) {
+    clearTimeout(timeoutId);
+    if (err.name === "AbortError") {
+      return { success: false, timeout: true, error: `Pin処理がタイムアウト（${Math.round(timeoutMs/1000)}秒）しました。Kuboがネットワークからブロックを取得中か、ピア未接続の可能性があります。` };
+    }
     return { success: false, error: err.message };
   }
 }
