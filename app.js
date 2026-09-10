@@ -2435,16 +2435,17 @@ function calculateCrc32(bytes) {
   return (crc ^ 0xFFFFFFFF) >>> 0;
 }
 
-// 元画像から ComfyUI / A1111 のメタデータチャンク (tEXt / iTXt) を救出
+// 元画像から ComfyUI / A1111 のメタデータ (tEXt / iTXt チャンクおよびテキスト) を救出
 async function extractMetadataChunksFromPng(fileOrBuffer) {
   try {
     const buffer = (fileOrBuffer instanceof ArrayBuffer) ? fileOrBuffer : await fileOrBuffer.arrayBuffer();
     const view = new DataView(buffer);
     if (view.byteLength < 8 || view.getUint32(0) !== 0x89504e47 || view.getUint32(4) !== 0x0d0a1a0a) {
-      return [];
+      return { chunks: [], texts: {} };
     }
 
     const chunks = [];
+    const texts = {};
     let offset = 8;
     const length = buffer.byteLength;
 
@@ -2464,14 +2465,27 @@ async function extractMetadataChunksFromPng(fileOrBuffer) {
       if (chunkType === "tEXt" || chunkType === "iTXt") {
         const fullChunk = new Uint8Array(buffer, offset, chunkLength + 12);
         chunks.push(new Uint8Array(fullChunk)); // コピーして保持
+
+        const chunkData = new Uint8Array(buffer, offset + 8, chunkLength);
+        let nullIndex = -1;
+        for (let i = 0; i < chunkData.length; i++) {
+          if (chunkData[i] === 0) { nullIndex = i; break; }
+        }
+        if (nullIndex > 0) {
+          const keyword = new TextDecoder("utf-8").decode(chunkData.subarray(0, nullIndex));
+          try {
+            const valText = new TextDecoder("utf-8").decode(chunkData.subarray(nullIndex + 1));
+            texts[keyword] = valText;
+          } catch (e) {}
+        }
       }
 
       offset += chunkLength + 12;
     }
-    return chunks;
+    return { chunks, texts };
   } catch (err) {
     console.warn("Failed to extract PNG metadata chunks:", err);
-    return [];
+    return { chunks: [], texts: {} };
   }
 }
 
@@ -2528,6 +2542,118 @@ async function injectMetadataChunksIntoPng(pngBlobOrBuffer, chunks) {
   } catch (err) {
     console.warn("Failed to inject PNG metadata chunks:", err);
     return pngBlobOrBuffer;
+  }
+}
+
+// 変換後の WebP (RIFF) バイナリに ComfyUI メタデータ (EXIF チャンク) を再注入
+async function injectMetadataIntoWebp(webpBlobOrBuffer, texts) {
+  if (!texts || (!texts.workflow && !texts.prompt && !texts.parameters)) {
+    return webpBlobOrBuffer;
+  }
+
+  try {
+    const buffer = (webpBlobOrBuffer instanceof ArrayBuffer) ? webpBlobOrBuffer : await webpBlobOrBuffer.arrayBuffer();
+    const view = new DataView(buffer);
+    if (buffer.byteLength < 12) return webpBlobOrBuffer;
+
+    const riff = String.fromCharCode(view.getUint8(0), view.getUint8(1), view.getUint8(2), view.getUint8(3));
+    const webp = String.fromCharCode(view.getUint8(8), view.getUint8(9), view.getUint8(10), view.getUint8(11));
+    if (riff !== "RIFF" || webp !== "WEBP") return webpBlobOrBuffer;
+
+    // ComfyUI が解釈できる形式の Exif UserComment を構築
+    // prompt と workflow の JSON オブジェクト
+    const payload = {};
+    if (texts.prompt) {
+      try { payload.prompt = JSON.parse(texts.prompt); } catch (e) { payload.prompt = texts.prompt; }
+    }
+    if (texts.workflow) {
+      try { payload.workflow = JSON.parse(texts.workflow); } catch (e) { payload.workflow = texts.workflow; }
+    }
+    if (texts.parameters) payload.parameters = texts.parameters;
+
+    const payloadJsonStr = JSON.stringify(payload);
+    const commentBytes = new TextEncoder().encode(payloadJsonStr);
+
+    // Exif バッファの構築 (TIFF Little-Endian 'II')
+    // 構造:
+    // [0..6] 'Exif\0\0'
+    // [6..14] TIFF Header: 49 49 2A 00 08 00 00 00
+    // [14..16] IFD0 項目数: 1
+    // [16..28] IFD0 エントリ 0x8769 (ExifIFDPointer, LONG=4, count=1, offset=26)
+    // [28..32] 次のIFD: 00 00 00 00
+    // [32..34] ExifIFD 項目数: 1
+    // [34..46] ExifIFD エントリ 0x9286 (UserComment, UNDEFINED=7, count=commentSize, offset=44)
+    // [46..50] 次のIFD: 00 00 00 00
+    // [50..58] UserCommentヘッダー: 'UNICODE\0'
+    // [58..]   UTF-8 JSONデータ
+
+    const userCommentHeader = new Uint8Array([0x55, 0x4E, 0x49, 0x43, 0x4F, 0x44, 0x45, 0x00]); // 'UNICODE\0'
+    const totalCommentDataLen = userCommentHeader.length + commentBytes.length;
+    const tiffBase = 6;
+    const exifIfdOffset = 26; // TIFF先頭からのオフセット (14 + 12 = 26)
+    const userCommentDataOffset = 44; // TIFF先頭からのオフセット (32 + 12 = 44)
+
+    const exifPayloadSize = 6 + 8 + 2 + 12 + 4 + 2 + 12 + 4 + totalCommentDataLen;
+    // 偶数バイトパディング
+    const exifChunkDataSize = exifPayloadSize + (exifPayloadSize % 2 === 1 ? 1 : 0);
+    const exifData = new Uint8Array(exifChunkDataSize);
+    const eView = new DataView(exifData.buffer);
+
+    // 'Exif\0\0'
+    exifData.set([0x45, 0x78, 0x69, 0x66, 0x00, 0x00], 0);
+
+    // TIFF Header: 'II', 42, offset 8
+    eView.setUint8(6, 0x49); eView.setUint8(7, 0x49);
+    eView.setUint16(8, 42, true);
+    eView.setUint32(10, 8, true); // IFD0 offset from TIFF header
+
+    // IFD0: 1 entry
+    eView.setUint16(14, 1, true);
+    // tag 0x8769 (ExifOffset), type 4 (LONG), count 1, value = exifIfdOffset
+    eView.setUint16(16, 0x8769, true);
+    eView.setUint16(18, 4, true);
+    eView.setUint32(20, 1, true);
+    eView.setUint32(24, exifIfdOffset, true);
+    eView.setUint32(28, 0, true); // next IFD
+
+    // ExifIFD: 1 entry
+    eView.setUint16(32, 1, true);
+    // tag 0x9286 (UserComment), type 7 (UNDEFINED), count = totalCommentDataLen, value = userCommentDataOffset
+    eView.setUint16(34, 0x9286, true);
+    eView.setUint16(36, 7, true);
+    eView.setUint32(38, totalCommentDataLen, true);
+    eView.setUint32(42, userCommentDataOffset, true);
+    eView.setUint32(46, 0, true); // next IFD
+
+    // UserComment データ部
+    exifData.set(userCommentHeader, 50);
+    exifData.set(commentBytes, 58);
+
+    // WebP RIFF構造の先頭ヘッダー直後（12バイト目）に EXIF チャンクを挿入
+    // EXIF チャンク: [ 'E', 'X', 'I', 'F' (4B) ] + [ size (4B, LE) ] + [ exifData (size B) ]
+    const newFileSize = buffer.byteLength + 8 + exifChunkDataSize;
+    const finalBuffer = new Uint8Array(newFileSize);
+    const fView = new DataView(finalBuffer.buffer);
+
+    // 'RIFF'
+    finalBuffer.set(new Uint8Array(buffer, 0, 4), 0);
+    // ファイル全体サイズ - 8 (LE)
+    fView.setUint32(4, newFileSize - 8, true);
+    // 'WEBP'
+    finalBuffer.set(new Uint8Array(buffer, 8, 4), 8);
+
+    // EXIF チャンクヘッダー
+    finalBuffer.set([0x45, 0x58, 0x49, 0x46], 12); // 'EXIF'
+    fView.setUint32(16, exifChunkDataSize, true);  // チャンクサイズ (LE)
+    finalBuffer.set(exifData, 20);
+
+    // 残りの元WebPデータをコピー
+    finalBuffer.set(new Uint8Array(buffer, 12), 20 + exifChunkDataSize);
+
+    return new Blob([finalBuffer], { type: "image/webp" });
+  } catch (err) {
+    console.warn("Failed to inject WebP metadata:", err);
+    return webpBlobOrBuffer;
   }
 }
 
@@ -2822,11 +2948,7 @@ function createComfyBadgeHtml(file, result) {
   const isVideo = ["mp4", "webm", "mov"].includes(fileExt) || file.type?.startsWith("video/");
   let statusNotice = "";
   if (meta.hasWorkflow || meta.hasPrompt) {
-    if (isConvertOn && !isVideo) {
-      statusNotice = '<span style="font-size: 10px; color: #f87171; margin-left: 4px;" title="画像を変換（再エンコード）するとブラウザの仕様によりワークフローは削除されます。保持したい場合は『画像を変換する』をOFFにしてください。">⚠️ 変換ONのためExif/WFは削除されます</span>';
-    } else {
-      statusNotice = '<span style="font-size: 10px; color: #34d399; margin-left: 4px;">🛡️ ワークフロー保持のまま保存/共有されます</span>';
-    }
+    statusNotice = '<span style="font-size: 10px; color: #34d399; margin-left: 4px;" title="変換後もComfyUIワークフローを自動再注入して保持します（生写真のGPS Exifは完全消滅）。">🛡️ ワークフロー保持のまま保存/共有されます</span>';
   }
 
   return `<div class="comfy-meta-row" style="margin-top: 3px; display: flex; align-items: center; gap: 4px; flex-wrap: wrap;">${badge}${statusNotice}</div>`;
@@ -3562,7 +3684,7 @@ async function convertImage(file, index = 0) {
 
   try {
     // 🧬 1. 救出: 変換前の元画像から ComfyUI/A1111 メタデータ (workflow/prompt/parameters) を退避
-    const savedMetadataChunks = await extractMetadataChunksFromPng(file);
+    const rescued = await extractMetadataChunksFromPng(file);
 
     const image = await loadImage(file);
     const canvas = document.createElement("canvas");
@@ -3575,9 +3697,11 @@ async function convertImage(file, index = 0) {
     // 🛡️ 2. 更地化: Canvasを通すことで、生写真のGPS位置情報や撮影機材Exifは100%完全抹消
     let convertedBlob = await canvasToBlob(canvas, options.mimeType, options.quality);
 
-    // 💉 3. 再注入: 出力がPNG形式で救出したComfyUIメタデータがある場合、バイナリに再注入
-    if (options.mimeType === "image/png" && savedMetadataChunks.length > 0) {
-      convertedBlob = await injectMetadataChunksIntoPng(convertedBlob, savedMetadataChunks);
+    // 💉 3. 再注入: 救出したComfyUIメタデータを変換後フォーマットに合わせて再注入
+    if (options.mimeType === "image/png" && rescued.chunks.length > 0) {
+      convertedBlob = await injectMetadataChunksIntoPng(convertedBlob, rescued.chunks);
+    } else if (options.mimeType === "image/webp" && (rescued.texts.workflow || rescued.texts.prompt || rescued.texts.parameters)) {
+      convertedBlob = await injectMetadataIntoWebp(convertedBlob, rescued.texts);
     }
 
     finalBlob = convertedBlob;
@@ -3598,6 +3722,7 @@ async function convertImage(file, index = 0) {
     size: finalBlob.size,
     originalSize: file.size,
     isNonImage: false,
+    hasRescuedWf: Boolean(file.metaStatus?.hasWorkflow || file.metaStatus?.hasPrompt),
   };
 }
 
@@ -3815,6 +3940,15 @@ async function uploadImage(result, targetProvider = "r2", customPassword = null)
         result.proxyUrl = getPublicUrl(result.name);
       }
     }
+
+    // 🧬 アップロードされたファイルのワークフロー有無をローカルストレージに確実に記録
+    try {
+      const wfStore = JSON.parse(localStorage.getItem("comfyWfMap") || "{}");
+      if (result.hasRescuedWf || result.metaStatus?.hasWorkflow || result.metaStatus?.hasPrompt) {
+        wfStore[result.name] = true;
+        localStorage.setItem("comfyWfMap", JSON.stringify(wfStore));
+      }
+    } catch (wfSaveErr) {}
 
     paletteFiles.unshift({ key: result.name, url: result.proxyUrl });
     renderUrlPalette();
