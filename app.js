@@ -5065,18 +5065,36 @@ r2FileList?.addEventListener("click", async (e) => {
 
       try {
         // 1. 新キーで登録（実体 S3 キー名 originalS3Key を引き継ぐ）
-        await registerKvCid(newKey, cid, size, mime, originalS3Key);
+        // unpinned / kuboStatus などの状態もそのまま継承
+        let unpinned = false;
+        let kuboStatus = null;
+        let ttl = 0;
+        let expiresAt = null;
+        let password = "";
+        try {
+          const kvFiles = await fetchKvFiles();
+          const currentKv = kvFiles.find(f => f.name === oldKey);
+          if (currentKv && currentKv.metadata) {
+            unpinned = Boolean(currentKv.metadata.unpinned);
+            kuboStatus = currentKv.metadata.kuboStatus || null;
+            ttl = currentKv.metadata.ttl || 0;
+            expiresAt = currentKv.metadata.expiresAt || null;
+            password = currentKv.metadata.password || "";
+          }
+        } catch (e) {}
+
+        await registerKvCid(newKey, cid, size, mime, originalS3Key, password, null, ttl, expiresAt, unpinned, kuboStatus);
         storeIpfsCid(newKey, cid);
         storeIpfsCid(originalS3Key, cid);
+        storeIpfsCid(oldKey, cid);
 
-        // 2. 旧キーを KV から削除（KVの旧エイリアスを消す。S3実体オブジェクトは消さない）
-        await deleteKvCid(oldKey);
+        // 2. 以前の名前のリンクも維持（即404化させず、エイリアスとして永続両立）
+        // ※ deleteKvCid(oldKey) は実行せず、古いURLを踏んだ人も引き続き閲覧可能にする
+
         try {
           const map = JSON.parse(localStorage.getItem("ipfsCidMap") || "{}");
-          if (oldKey !== originalS3Key) {
-            delete map[oldKey];
-          }
           map[originalS3Key] = cid;
+          map[oldKey] = cid;
           map[newKey] = cid;
           localStorage.setItem("ipfsCidMap", JSON.stringify(map));
         } catch (e) {}
