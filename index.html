@@ -541,6 +541,18 @@
       </div>
     </div>
 
+    <!-- 汎用センター配置モーダルダイアログ (confirm / alert 代替) -->
+    <div id="centerAppModal" class="modal-backdrop" style="display: none;">
+      <div class="modal-content" style="max-width: 440px; text-align: left; padding: 22px 24px;">
+        <h3 id="centerAppModalTitle" style="margin-top: 0; font-size: 16px; font-weight: 700; color: var(--text); display: flex; align-items: center; gap: 8px;">確認</h3>
+        <div id="centerAppModalBody" style="font-size: 13px; color: var(--muted); margin: 16px 0 24px; line-height: 1.6; white-space: pre-wrap; word-break: break-word;"></div>
+        <div id="centerAppModalActions" style="display: flex; gap: 10px; justify-content: flex-end;">
+          <button class="ghost-button" id="centerAppModalCancelBtn" type="button" style="min-width: 90px;">キャンセル</button>
+          <button class="primary-button" id="centerAppModalOkBtn" type="button" style="min-width: 90px; margin: 0;">OK</button>
+        </div>
+      </div>
+    </div>
+
     <script type="module" src="./app.js"></script>
   </body>
 </html>

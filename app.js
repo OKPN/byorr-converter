@@ -838,6 +838,25 @@ async function checkKuboPinned(cid, timeoutMs = 2000) {
   }
 }
 
+async function getKuboPinnedCids(timeoutMs = 3000) {
+  const endpoint = getKuboRpcEndpoint();
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(`${endpoint}/api/v0/pin/ls?type=recursive`, {
+      method: "POST",
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
+    if (!res.ok) return null;
+    const data = await res.json();
+    return new Set(Object.keys(data.Keys || {}));
+  } catch (e) {
+    clearTimeout(timeoutId);
+    return null;
+  }
+}
+
 async function unpinFromKubo(cid) {
   if (!cid) return { success: false, error: "Missing CID" };
   const endpoint = getKuboRpcEndpoint();
@@ -849,6 +868,11 @@ async function unpinFromKubo(cid) {
       return { success: true };
     }
     const t = await res.text();
+    // 💡 既にノード上にPinされていない場合（not pinned or pinned indirectly）は、目的の状態（未Pin）であるため成功とみなす
+    if (t.includes("not pinned") || t.includes("pinned indirectly")) {
+      console.log(`🏠 Kubo: '${cid}' は既にPin留めされていないため、Pin解除成功とみなします。`);
+      return { success: true, alreadyUnpinned: true };
+    }
     return { success: false, error: t };
   } catch (err) {
     return { success: false, error: err.message };
@@ -4738,12 +4762,15 @@ async function fetchAndRenderR2Files() {
     // 🏠 Kubo の連携設定とオンライン状態を事前チェック（未設定時・オフライン時のUI制御用）
     const isKuboAutoPin = localStorage.getItem("kuboAutoPin") !== "false";
     let isKuboOnline = false;
+    let actualKuboPinnedSet = null;
     if (isFilebase && isKuboAutoPin) {
       const checkRes = await checkKuboOnline(800);
       isKuboOnline = checkRes.online;
       if (isKuboOnline) {
         // 自宅ノード起動時に未回収の墓標（外出先等で削除されたファイルのUnpin予約）をバックグラウンド処理
         drainKuboTombstones();
+        // 🏠 Kubo がオンラインの場合、現在の実際の Pin リストを取得して KV 側の誤認（Pin されていないのに保持中表示）を訂正
+        actualKuboPinnedSet = await getKuboPinnedCids(1500);
       }
     }
 
@@ -4754,13 +4781,22 @@ async function fetchAndRenderR2Files() {
     state.r2TotalSize = contents.filter(c => c.isFromS3).reduce((acc, cur) => acc + (cur.Size || 0), 0);
     updateStorageUsageUI();
 
-    // 🔗 同一 CID 状態統合（CID State Unification）:
+    // 🔗 同一 CID 状態統合（CID State Unification） & 実体 Kubo 状態同期:
     // IPFSでは同一CID＝同一実体。同じCIDを持つ別名ファイル同士で Filebase保持状態・Kubo保持状態を完全同期
     if (isFilebase && contents.length > 0) {
       const cidStatusMap = new Map();
       for (const item of contents) {
         const c = item.cid || getStoredIpfsCid(item.Key) || (item.s3Key ? getStoredIpfsCid(item.s3Key) : null);
         if (!c) continue;
+
+        // Kuboがオンラインかつ実Pinリストが取得できている場合、実際のKubo実態を優先
+        if (actualKuboPinnedSet) {
+          const reallyPinnedOnKubo = actualKuboPinnedSet.has(c);
+          if (item.metadata) {
+            item.metadata.kuboStatus = reallyPinnedOnKubo ? "pinned" : "not_pinned";
+          }
+        }
+
         const current = cidStatusMap.get(c) || { hasS3: false, isKuboPinned: false };
         if (item.isFromS3) current.hasS3 = true;
         if (item.metadata?.kuboStatus === "pinned") current.isKuboPinned = true;
@@ -4774,9 +4810,7 @@ async function fetchAndRenderR2Files() {
         const unified = cidStatusMap.get(c);
         item.isFromS3 = unified.hasS3;
         if (!item.metadata) item.metadata = {};
-        if (unified.isKuboPinned) {
-          item.metadata.kuboStatus = "pinned";
-        }
+        item.metadata.kuboStatus = unified.isKuboPinned ? "pinned" : "not_pinned";
       }
     }
 
@@ -5211,7 +5245,12 @@ r2FileList?.addEventListener("click", async (e) => {
   if (target.classList.contains("kubo-unpin-manual-btn")) {
     const key = target.dataset.key;
     const cid = target.dataset.cid;
-    if (!cid || !confirm(`Kuboノードから '${key}' のPinを解除しますか？\n\n（Filebaseやエッジキャッシュの配信には影響しません）`)) return;
+    if (!cid) return;
+    const ok = await showCustomConfirm(
+      `Kuboノードから '${key}' のPinを解除しますか？\n\n（Filebaseやエッジキャッシュの配信には影響しません）`,
+      "🏠 Kubo Pin解除の確認"
+    );
+    if (!ok) return;
 
     target.disabled = true;
     const origText = target.textContent;
@@ -5240,12 +5279,12 @@ r2FileList?.addEventListener("click", async (e) => {
         }
         await fetchAndRenderR2Files();
       } else {
-        alert(`❌ Kubo Pin解除に失敗しました: ${res.error}`);
+        await showCustomAlert(`Kubo Pin解除に失敗しました: ${res.error}`, "❌ エラー");
         target.disabled = false;
         target.textContent = origText;
       }
     } catch (err) {
-      alert(`エラー: ${err.message}`);
+      await showCustomAlert(`エラー: ${err.message}`, "❌ エラー");
       target.disabled = false;
       target.textContent = origText;
     }
@@ -5264,7 +5303,10 @@ r2FileList?.addEventListener("click", async (e) => {
 
     const online = await checkKuboOnline(1500);
     if (!online.online) {
-      alert(`❌ 自宅 Kubo ノードに接続できませんでした（${online.error}）。\nWSL/Docker上でKuboが稼働しているか確認してください。`);
+      await showCustomAlert(
+        `自宅 Kubo ノードに接続できませんでした（${online.error}）。\nWSL/Docker上でKuboが稼働しているか確認してください。`,
+        "❌ ノード未検出"
+      );
       target.disabled = false;
       target.textContent = origText;
       return;
@@ -5307,14 +5349,17 @@ r2FileList?.addEventListener("click", async (e) => {
         // 3分経過したら定期ポーリング停止（次回リロード時等に再判定）
         setTimeout(() => clearInterval(pollInterval), 180000);
 
-        alert(`📡 自宅 Kubo ノードへ P2P Pin留め要求を送信しました！\n\nKuboがバックグラウンドで世界中のIPFSノードからブロックを取得・同期しています。\n完了すると自動的に『🏠 Kubo: 保持中』へ変わります。`);
+        await showCustomAlert(
+          `自宅 Kubo ノードへ P2P Pin留め要求を送信しました！\n\nKuboがバックグラウンドで世界中のIPFSノードからブロックを取得・同期しています。\n完了すると自動的に『🏠 Kubo: 保持中』へ変わります。`,
+          "📡 P2P 同期開始"
+        );
       } else {
-        alert(`❌ Kubo Pin要求に失敗しました: ${pinRes.error}`);
+        await showCustomAlert(`Kubo Pin要求に失敗しました: ${pinRes.error}`, "❌ エラー");
         target.disabled = false;
         target.textContent = origText;
       }
     } catch (err) {
-      alert(`エラー: ${err.message}`);
+      await showCustomAlert(`エラー: ${err.message}`, "❌ エラー");
       target.disabled = false;
       target.textContent = origText;
     }
@@ -5328,7 +5373,12 @@ r2FileList?.addEventListener("click", async (e) => {
     const article = target.closest(".result-item");
     const cid = target.dataset.cid || article?.dataset?.cid || getStoredIpfsCid(key) || getStoredIpfsCid(s3Key);
 
-    if (!key || !confirm(`ファイル '${key}' を Filebase から削除しますか？\n\n・Filebase から実体を削除（アンピン）します。\n・URL は維持され、IPFS/自宅Kuboから配信されます。`)) return;
+    if (!key) return;
+    const ok = await showCustomConfirm(
+      `ファイル '${key}' を Filebase から削除しますか？\n\n・Filebase から実体を削除（アンピン）します。\n・URL は維持され、IPFS/自宅Kuboから配信されます。`,
+      "☁️ Filebase 削除の確認"
+    );
+    if (!ok) return;
 
     try {
       const command = new DeleteObjectCommand({
@@ -5378,7 +5428,7 @@ r2FileList?.addEventListener("click", async (e) => {
 
       await fetchAndRenderR2Files();
     } catch (err) {
-      alert(`容量解放に失敗しました: ${err.message}`);
+      await showCustomAlert(`削除に失敗しました: ${err.message}`, "❌ エラー");
     }
     return;
   }
@@ -5412,16 +5462,23 @@ r2FileList?.addEventListener("click", async (e) => {
         // 他のリンクと実体を共有している場合
         const siblingNames = siblingLinks.map(name => `'${name}'`).join("、");
         const confirmMsg = `ファイル（リンク）'${key}' を削除しますか？\n\n⚠️ このファイルの実体は、以下の他の名前（エイリアス）とも共有されています：\n【共有中】: ${siblingNames}\n\n・[OK] を押すと、'${key}' のURLのみを削除（即座に404化）します。\n（他のリンク '${siblingLinks[0]}' などは引き続き閲覧できます）`;
-        if (!confirm(confirmMsg)) return;
+        const ok = await showCustomConfirm(confirmMsg, "⚠️ リンク削除の確認");
+        if (!ok) return;
 
         // オプション: 実体ごと全部消したいか確認
         if (isFromOrigin) {
-          deleteOriginAlso = confirm(`【完全削除の確認】\n\nクラウド実体（Filebase）も完全に削除し、共有している他のリンク（${siblingNames}）もすべて無効化しますか？\n\n・[OK]: 実体も含めてすべて完全削除\n・[キャンセル]: '${key}' のリンクのみ削除（推奨）`);
+          deleteOriginAlso = await showCustomConfirm(
+            `【完全削除の確認】\n\nクラウド実体（Filebase）も完全に削除し、共有している他のリンク（${siblingNames}）もすべて無効化しますか？\n\n・[すべて完全削除]: 実体も含めてすべて完全削除\n・[リンクのみ削除]: '${key}' のリンクのみ削除（推奨）`,
+            "🗑️ 完全削除の確認",
+            "すべて完全削除",
+            "リンクのみ削除"
+          );
         }
       } else {
         // 単独リンクの場合
         const confirmMsg = `ファイル '${key}' を削除しますか？\n\n・URL は即座に 404 になり閲覧できなくなります。\n・クラウドおよび自宅Kuboからも安全に消去されます。`;
-        if (!confirm(confirmMsg)) return;
+        const ok = await showCustomConfirm(confirmMsg, "🗑️ ファイル削除の確認", "削除する");
+        if (!ok) return;
         deleteOriginAlso = isFromOrigin;
       }
 
@@ -5457,14 +5514,15 @@ r2FileList?.addEventListener("click", async (e) => {
 
         await fetchAndRenderR2Files();
       } catch (err) {
-        alert(`削除に失敗しました: ${err.message}`);
+        await showCustomAlert(`削除に失敗しました: ${err.message}`, "❌ エラー");
       }
       return;
     }
 
     // Cloudflare R2 モードの場合
     const confirmMsg = `ファイル '${key}' を R2 から削除しますか？`;
-    if (!confirm(confirmMsg)) return;
+    const ok = await showCustomConfirm(confirmMsg, "🗑️ R2 削除の確認", "削除する");
+    if (!ok) return;
 
     try {
       if (s3 && bucketName && s3Key) {
@@ -5476,7 +5534,7 @@ r2FileList?.addEventListener("click", async (e) => {
       }
       await fetchAndRenderR2Files();
     } catch (err) {
-      alert(`削除に失敗しました: ${err.message}`);
+      await showCustomAlert(`削除に失敗しました: ${err.message}`, "❌ エラー");
     }
     return;
   }
@@ -5501,7 +5559,12 @@ deleteSelectedR2FilesButton?.addEventListener("click", async () => {
   const isFilebase = activeStorageTab === "filebase";
   const providerLabel = isFilebase ? "Filebase / KV" : "R2";
 
-  if (!confirm(`選択した ${checkboxes.length} 件のファイルを ${providerLabel} から削除しますか？`)) return;
+  const ok = await showCustomConfirm(
+    `選択した ${checkboxes.length} 件のファイルを ${providerLabel} から削除しますか？`,
+    "🗑️ 一括削除の確認",
+    "一括削除する"
+  );
+  if (!ok) return;
 
   const s3 = getS3Client(activeStorageTab);
   const bucketName = getBucketName(activeStorageTab);
@@ -5566,7 +5629,7 @@ deleteSelectedR2FilesButton?.addEventListener("click", async () => {
     }
     await fetchAndRenderR2Files();
   } catch (err) {
-    alert(`一括削除に失敗しました: ${err.message}`);
+    await showCustomAlert(`一括削除に失敗しました: ${err.message}`, "❌ エラー");
   }
 });
 
@@ -5822,6 +5885,99 @@ function escapeHtml(str) {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#039;");
+}
+
+/**
+ * 画面中央に表示するカスタム確認モーダル（ブラウザ最上部alert/confirmの代替）
+ * @param {string} message - 表示メッセージ
+ * @param {string} title - モーダル見出し
+ * @param {string} okText - OKボタンのテキスト
+ * @param {string} cancelText - キャンセルボタンのテキスト
+ * @returns {Promise<boolean>} - OKならtrue、キャンセルならfalse
+ */
+function showCustomConfirm(message, title = "確認", okText = "OK", cancelText = "キャンセル") {
+  return new Promise((resolve) => {
+    const modal = document.getElementById("centerAppModal");
+    const titleEl = document.getElementById("centerAppModalTitle");
+    const bodyEl = document.getElementById("centerAppModalBody");
+    const okBtn = document.getElementById("centerAppModalOkBtn");
+    const cancelBtn = document.getElementById("centerAppModalCancelBtn");
+
+    if (!modal || !bodyEl || !okBtn || !cancelBtn) {
+      resolve(confirm(message));
+      return;
+    }
+
+    titleEl.textContent = title;
+    bodyEl.textContent = message;
+    okBtn.textContent = okText;
+    cancelBtn.textContent = cancelText;
+    cancelBtn.style.display = "inline-flex";
+
+    modal.style.display = "grid";
+
+    const cleanup = (res) => {
+      modal.style.display = "none";
+      okBtn.removeEventListener("click", onOk);
+      cancelBtn.removeEventListener("click", onCancel);
+      modal.removeEventListener("click", onBackdrop);
+      resolve(res);
+    };
+
+    const onOk = () => cleanup(true);
+    const onCancel = () => cleanup(false);
+    const onBackdrop = (e) => {
+      if (e.target === modal) cleanup(false);
+    };
+
+    okBtn.addEventListener("click", onOk);
+    cancelBtn.addEventListener("click", onCancel);
+    modal.addEventListener("click", onBackdrop);
+  });
+}
+
+/**
+ * 画面中央に表示するカスタム通知モーダル（OKボタンのみ）
+ * @param {string} message - 表示メッセージ
+ * @param {string} title - モーダル見出し
+ * @returns {Promise<void>}
+ */
+function showCustomAlert(message, title = "お知らせ") {
+  return new Promise((resolve) => {
+    const modal = document.getElementById("centerAppModal");
+    const titleEl = document.getElementById("centerAppModalTitle");
+    const bodyEl = document.getElementById("centerAppModalBody");
+    const okBtn = document.getElementById("centerAppModalOkBtn");
+    const cancelBtn = document.getElementById("centerAppModalCancelBtn");
+
+    if (!modal || !bodyEl || !okBtn) {
+      alert(message);
+      resolve();
+      return;
+    }
+
+    titleEl.textContent = title;
+    bodyEl.textContent = message;
+    okBtn.textContent = "OK";
+    if (cancelBtn) cancelBtn.style.display = "none";
+
+    modal.style.display = "grid";
+
+    const cleanup = () => {
+      modal.style.display = "none";
+      okBtn.removeEventListener("click", onOk);
+      modal.removeEventListener("click", onBackdrop);
+      resolve();
+    };
+
+    const onOk = () => cleanup();
+    const onBackdrop = (e) => {
+      if (e.target === modal) cleanup();
+    };
+
+    okBtn.addEventListener("click", onOk);
+    modal.addEventListener("click", onBackdrop);
+  });
 }
 
 function formatBytes(bytes) {
