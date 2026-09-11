@@ -334,8 +334,9 @@ export async function onRequest(context) {
     }
   }
 
-  // ⏳ 時限アップロードの有効期限チェック（期限切れは即座に404）
-  if (meta.expiresAt && Date.now() > Number(meta.expiresAt)) {
+  // ⏳ 時限アップロードの有効期限チェック（期限切れは即座に404、短縮キー e にも対応）
+  const expiresTimestamp = meta.e ? (meta.e * 1000) : meta.expiresAt;
+  if (expiresTimestamp && Date.now() > Number(expiresTimestamp)) {
     return renderNotFoundResponse(request);
   }
 
@@ -440,7 +441,8 @@ export async function onRequest(context) {
   // 候補ターゲット（CID、S3Key、ファイル名）を順次試行
   const candidates = [];
   if (targetCid) candidates.push(targetCid);
-  if (meta.s3Key && !candidates.includes(meta.s3Key)) candidates.push(meta.s3Key);
+  const effectiveS3Key = meta.k_s3 || meta.s3Key;
+  if (effectiveS3Key && !candidates.includes(effectiveS3Key)) candidates.push(effectiveS3Key);
   if (!candidates.includes(filename)) candidates.push(filename);
 
   // 🪐 複数公共IPFSゲートウェイへのアクセス分散（マルチキャッシュ伝播 & Filebase転送量節約）
@@ -454,7 +456,7 @@ export async function onRequest(context) {
   // アンピン状態の判定: FIFO等でアンピンされたファイルは 7日間（604,800秒）キャッシュ
   // （週1回の上流アクセスでIPFSノードのGC消去を回避・延命し、Filebase転送枠も死守）
   // 通常ピン留め中は 1年間（31,536,000秒）キャッシュ
-  const isUnpinned = Boolean(meta.unpinned);
+  const isUnpinned = Boolean(meta.unpinned) || Boolean((meta.f || 0) & 1);
   const UPSTREAM_CACHE_SECONDS = isUnpinned ? (7 * 86400) : 31536000;
 
   // ゲートウェイの優先順位を分散（アンピン時は公共ノードにも均等にアクセスを散らす）

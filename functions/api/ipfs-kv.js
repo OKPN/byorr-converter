@@ -12,6 +12,31 @@ export async function onRequestOptions() {
   });
 }
 
+function unpackMetadata(name, cid, meta = {}) {
+  const flags = meta.f || 0;
+  const isUnpinned = meta.unpinned !== undefined ? Boolean(meta.unpinned) : Boolean(flags & 1);
+  const kuboStatus = meta.kuboStatus || (flags & 2 ? "pinned" : (flags & 4 ? "not_pinned" : null));
+  const size = meta.s !== undefined ? meta.s : (meta.size || 0);
+  const lastModified = meta.t !== undefined ? meta.t * 1000 : (meta.lastModified || Date.now());
+  const expiresAt = meta.e !== undefined ? meta.e * 1000 : (meta.expiresAt || null);
+  const s3Key = meta.k_s3 || meta.s3Key || name;
+  const lastKuboPinAttempt = meta.k !== undefined ? meta.k * 1000 : (meta.lastKuboPinAttempt || null);
+
+  return {
+    ...meta,
+    cid: cid || meta.cid || "",
+    size,
+    s: size,
+    lastModified,
+    t: Math.floor(lastModified / 1000),
+    unpinned: isUnpinned,
+    kuboStatus,
+    s3Key,
+    ...(expiresAt ? { expiresAt, e: Math.floor(expiresAt / 1000) } : {}),
+    ...(lastKuboPinAttempt ? { lastKuboPinAttempt } : {}),
+  };
+}
+
 // GET: 単一キーの照会、または全キーの一覧取得
 export async function onRequestGet(context) {
   const { request, env } = context;
@@ -31,7 +56,7 @@ export async function onRequestGet(context) {
       const list = await env.IPFS_KV.list({ limit: 1000 });
       const items = (list.keys || []).map(k => ({
         name: k.name,
-        metadata: k.metadata || {},
+        metadata: unpackMetadata(k.name, "", k.metadata),
       }));
       return new Response(JSON.stringify({ success: true, files: items }), {
         status: 200,
@@ -58,7 +83,7 @@ export async function onRequestGet(context) {
       found: true,
       key,
       cid: value.value,
-      metadata: value.metadata || {},
+      metadata: unpackMetadata(key, value.value, value.metadata),
     }), {
       status: 200,
       headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
@@ -160,36 +185,60 @@ export async function onRequestPost(context) {
     // 既存の kuboStatus を引き継ぐ、または body から取得
     let existingKuboStatus = body.kuboStatus;
     let existingLastKuboPinAttempt = body.lastKuboPinAttempt;
+    let existingFlags = 0;
     if (existingKuboStatus === undefined) {
       try {
         const existing = await env.IPFS_KV.getWithMetadata(key);
         if (existing && existing.metadata) {
-          existingKuboStatus = existing.metadata.kuboStatus;
-          existingLastKuboPinAttempt = existing.metadata.lastKuboPinAttempt;
+          const m = existing.metadata;
+          existingKuboStatus = m.kuboStatus || (m.f & 2 ? "pinned" : (m.f & 4 ? "not_pinned" : undefined));
+          existingLastKuboPinAttempt = m.lastKuboPinAttempt || (m.k ? m.k * 1000 : undefined);
+          existingFlags = m.f || 0;
         }
       } catch (e) {}
     }
 
-    const metadata = {
-      cid: safeCid,
-      size: size || 0,
-      mime: mime || "",
-      lastModified: lastModified || Date.now(),
-      registeredAt: Date.now(),
-      s3Key: body.s3Key || key,
-      unpinned: Boolean(body.unpinned),
-      ...(existingKuboStatus ? { kuboStatus: existingKuboStatus } : {}),
-      ...(existingLastKuboPinAttempt ? { lastKuboPinAttempt: existingLastKuboPinAttempt } : {}),
-      ...(calculatedExpiresAt ? { expiresAt: calculatedExpiresAt, ttl: Number(ttl) } : {}),
+    // 🗜️ 台帳データ圧縮（スカスカ化）:
+    // フラグビット: 1 = unpinned (Filebase解放済み), 2 = kuboStatus:pinned, 4 = kuboStatus:not_pinned
+    let flags = 0;
+    const isUnpinned = Boolean(body.unpinned) || Boolean(existingFlags & 1);
+    if (isUnpinned) flags |= 1;
+
+    const finalKuboStatus = existingKuboStatus || (existingFlags & 2 ? "pinned" : (existingFlags & 4 ? "not_pinned" : null));
+    if (finalKuboStatus === "pinned") flags |= 2;
+    else if (finalKuboStatus === "not_pinned") flags |= 4;
+
+    // 圧縮メタデータオブジェクト（1レコード数十バイトに極小化）
+    // s: size, t: lastModified(秒), f: flags(ビット), e: expiresAt(秒), k: lastKuboPinAttempt(秒)
+    const compressedMeta = {
+      s: Number(size) || 0,
+      t: Math.floor((lastModified || Date.now()) / 1000),
+      ...(flags > 0 ? { f: flags } : {}),
+      ...(body.s3Key && body.s3Key !== key ? { k_s3: body.s3Key } : {}),
+      ...(calculatedExpiresAt ? { e: Math.floor(Number(calculatedExpiresAt) / 1000) } : {}),
+      ...(existingLastKuboPinAttempt ? { k: Math.floor(Number(existingLastKuboPinAttempt) / 1000) } : {}),
       ...passwordMeta,
     };
 
     // KV に登録 (value: safeCid, metadata, expirationTtl)
-    const putOptions = { metadata };
+    const putOptions = { metadata: compressedMeta };
     if (ttl && Number(ttl) > 0) {
       putOptions.expirationTtl = Math.max(60, Number(ttl));
     }
     await env.IPFS_KV.put(key, safeCid, putOptions);
+
+    // クライアント側へは旧形式互換のオブジェクトも含めて返却
+    const returnedMeta = {
+      cid: safeCid,
+      size: compressedMeta.s,
+      mime: mime || "",
+      lastModified: compressedMeta.t * 1000,
+      s3Key: body.s3Key || key,
+      unpinned: Boolean(flags & 1),
+      kuboStatus: finalKuboStatus,
+      ...(calculatedExpiresAt ? { expiresAt: calculatedExpiresAt } : {}),
+      ...compressedMeta,
+    };
 
     // 🚀 URL再利用・即時反映: 直前までの404エッジキャッシュを即時パージ
     context.waitUntil?.(purgeHybridCache(request, env, key)) || purgeHybridCache(request, env, key);
