@@ -853,6 +853,33 @@ async function unpinFromKubo(cid) {
   }
 }
 
+// 🪦 墓標（Unpin予約キュー）の回収処理
+async function drainKuboTombstones() {
+  try {
+    const res = await fetch("/api/ipfs-kv?tombstones=1");
+    if (!res.ok) return;
+    const data = await res.json();
+    const tombstones = data.tombstones || [];
+    if (tombstones.length === 0) return;
+
+    console.log(`🪦 墓標回収（ゴーストUnpin）開始: ${tombstones.length}件の削除キューを処理中...`);
+    for (const cid of tombstones) {
+      try {
+        await unpinFromKubo(cid);
+        // KVから墓標を消去
+        await fetch(`/api/ipfs-kv?tombstone=${encodeURIComponent(cid)}`, {
+          method: "DELETE",
+        });
+        console.log(`🪦 墓標回収完了: ${cid}`);
+      } catch (err) {
+        console.warn(`🪦 墓標回収エラー (${cid}):`, err);
+      }
+    }
+  } catch (e) {
+    console.warn("drainKuboTombstones error:", e);
+  }
+}
+
 async function fetchKvFiles() {
   try {
     const res = await fetch("/api/ipfs-kv");
@@ -4703,6 +4730,10 @@ async function fetchAndRenderR2Files() {
     if (isFilebase && isKuboAutoPin) {
       const checkRes = await checkKuboOnline(800);
       isKuboOnline = checkRes.online;
+      if (isKuboOnline) {
+        // 自宅ノード起動時に未回収の墓標（外出先等で削除されたファイルのUnpin予約）をバックグラウンド処理
+        drainKuboTombstones();
+      }
     }
 
     // 更新日時の降順ソート
@@ -4810,7 +4841,7 @@ async function fetchAndRenderR2Files() {
         actionButtonsHtml = `
           <button type="button" class="ghost-button copy-r2-url-btn" data-url="${escapeHtml(publicUrl)}">${escapeHtml(dict.copyUrl)}</button>
           ${!hasPassword ? `<button type="button" class="ghost-button civitai-r2-post-btn" data-url="${escapeHtml(publicUrl)}" data-name="${escapeHtml(item.Key)}" style="color: #38bdf8; border-color: rgba(56, 189, 248, 0.4);" title="Civitai の投稿画面を開く">🎨 Civitai</button>` : ""}
-          <button type="button" class="ghost-button danger-button delete-r2-file-btn" data-key="${escapeHtml(item.Key)}" data-s3key="${escapeHtml(item.s3Key || item.Key)}" data-cid="${escapeHtml(itemCid || "")}" data-origin="${isFromS3 ? '1' : '0'}" title="アクセスを遮断し、KVおよび実体を完全抹消します">リンク抹消</button>
+          <button type="button" class="ghost-button danger-button delete-r2-file-btn" data-key="${escapeHtml(item.Key)}" data-s3key="${escapeHtml(item.s3Key || item.Key)}" data-cid="${escapeHtml(itemCid || "")}" data-origin="${isFromS3 ? '1' : '0'}" title="ファイルを削除し、KVマッピング・ストレージ実体を抹消します（自宅Kuboも自動回収・GC）">削除</button>
         `;
       } else {
         actionButtonsHtml = `
@@ -5336,22 +5367,22 @@ r2FileList?.addEventListener("click", async (e) => {
       if (siblingLinks.length > 0) {
         // 他のリンクと実体を共有している場合
         const siblingNames = siblingLinks.map(name => `'${name}'`).join("、");
-        const confirmMsg = `リンク '${key}' を抹消しますか？\n\n⚠️ このファイルの実体は、以下の他のリンクとも共有されています：\n【共有中】: ${siblingNames}\n\n・[OK] を押すと、'${key}' のアクセス権（KVマッピング）のみを抹消します。\n（他のリンク '${siblingLinks[0]}' などの閲覧・実体には影響しません）`;
+        const confirmMsg = `ファイル（リンク）'${key}' を削除しますか？\n\n⚠️ このファイルの実体は、以下の他の名前（エイリアス）とも共有されています：\n【共有中】: ${siblingNames}\n\n・[OK] を押すと、'${key}' のURLのみを削除（即座に404化）します。\n（他のリンク '${siblingLinks[0]}' などは引き続き閲覧できます）`;
         if (!confirm(confirmMsg)) return;
 
         // オプション: 実体ごと全部消したいか確認
         if (isFromOrigin) {
-          deleteOriginAlso = confirm(`【完全抹消の確認】\n\n実体も Filebase から完全に削除し、共有している他のリンク（${siblingNames}）もすべて無効化しますか？\n\n・[OK]: 実体も含めてすべて完全削除\n・[キャンセル]: '${key}' のリンクのみ抹消（推奨）`);
+          deleteOriginAlso = confirm(`【完全削除の確認】\n\nクラウド実体（Filebase）も完全に削除し、共有している他のリンク（${siblingNames}）もすべて無効化しますか？\n\n・[OK]: 実体も含めてすべて完全削除\n・[キャンセル]: '${key}' のリンクのみ削除（推奨）`);
         }
       } else {
         // 単独リンクの場合
-        const confirmMsg = `ファイル '${key}' へのアクセスを完全に遮断しますか？\n\n・Cloudflare KV からマッピングを削除します。\n・URL は即座に 404 になり、第三者が閲覧できなくなります。`;
+        const confirmMsg = `ファイル '${key}' を削除しますか？\n\n・URL は即座に 404 になり閲覧できなくなります。\n・クラウドおよび自宅Kuboからも安全に消去されます。`;
         if (!confirm(confirmMsg)) return;
         deleteOriginAlso = isFromOrigin;
       }
 
       try {
-        // 1. 対象リンクの KV マッピングを削除
+        // 1. 対象リンクの KV マッピングを削除（バックエンドで墓標キュー tombstone_<cid> も自動登録）
         await deleteKvCid(key);
 
         // 2. 「すべて抹消」が選択された場合、共有している兄弟リンクの KV も一括削除
@@ -5368,6 +5399,16 @@ r2FileList?.addEventListener("click", async (e) => {
             Key: s3Key,
           });
           await s3.send(command);
+        }
+
+        // 4. 自宅 Kubo が現在オンラインであれば、その場で即座にアンピン＆ガベージコレクション
+        if (cid && (siblingLinks.length === 0 || deleteOriginAlso)) {
+          const kuboCheck = await checkKuboOnline(800);
+          if (kuboCheck.online) {
+            await unpinFromKubo(cid);
+            // 墓標も即時クリア
+            await fetch(`/api/ipfs-kv?tombstone=${encodeURIComponent(cid)}`, { method: "DELETE" }).catch(() => {});
+          }
         }
 
         await fetchAndRenderR2Files();

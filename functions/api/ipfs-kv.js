@@ -50,14 +50,33 @@ export async function onRequestGet(context) {
     });
   }
 
-  // 1. key パラメータがない場合は、KV に登録されている全キーの一覧を返却
+  // 0. tombstones パラメータがある場合は未回収の墓標（アンピン予約）一覧を返却
+  if (url.searchParams.get("tombstones") === "1") {
+    try {
+      const list = await env.IPFS_KV.list({ prefix: "tombstone_", limit: 1000 });
+      const tombstones = (list.keys || []).map(k => k.name.replace(/^tombstone_/, ""));
+      return new Response(JSON.stringify({ success: true, tombstones }), {
+        status: 200,
+        headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
+      });
+    } catch (err) {
+      return new Response(JSON.stringify({ error: err.message }), {
+        status: 500,
+        headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
+      });
+    }
+  }
+
+  // 1. key パラメータがない場合は、KV に登録されている全キーの一覧を返却（墓標・BLOBは除外）
   if (!key) {
     try {
       const list = await env.IPFS_KV.list({ limit: 1000 });
-      const items = (list.keys || []).map(k => ({
-        name: k.name,
-        metadata: unpackMetadata(k.name, "", k.metadata),
-      }));
+      const items = (list.keys || [])
+        .filter(k => !k.name.startsWith("tombstone_") && !k.name.startsWith("blob_"))
+        .map(k => ({
+          name: k.name,
+          metadata: unpackMetadata(k.name, "", k.metadata),
+        }));
       return new Response(JSON.stringify({ success: true, files: items }), {
         status: 200,
         headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
@@ -255,11 +274,12 @@ export async function onRequestPost(context) {
   }
 }
 
-// DELETE: キーの削除（リンク抹消 / 遮断）
+// DELETE: キーの削除（リンク抹消 / 遮断）および 墓標（アンピン予約）の回収
 export async function onRequestDelete(context) {
   const { request, env } = context;
   const url = new URL(request.url);
   const key = url.searchParams.get("key");
+  const tombstoneCid = url.searchParams.get("tombstone");
 
   if (!env || !env.IPFS_KV) {
     return new Response(JSON.stringify({ error: "IPFS_KV binding not configured" }), {
@@ -268,8 +288,24 @@ export async function onRequestDelete(context) {
     });
   }
 
+  // 1. 墓標の回収完了（KuboでのUnpin完了通知）
+  if (tombstoneCid) {
+    try {
+      await env.IPFS_KV.delete("tombstone_" + tombstoneCid);
+      return new Response(JSON.stringify({ success: true, clearedTombstone: tombstoneCid }), {
+        status: 200,
+        headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
+      });
+    } catch (err) {
+      return new Response(JSON.stringify({ error: err.message }), {
+        status: 500,
+        headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
+      });
+    }
+  }
+
   if (!key) {
-    return new Response(JSON.stringify({ error: "Missing 'key' query parameter" }), {
+    return new Response(JSON.stringify({ error: "Missing 'key' or 'tombstone' query parameter" }), {
       status: 400,
       headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
     });
@@ -277,12 +313,32 @@ export async function onRequestDelete(context) {
 
   try {
     const existing = await env.IPFS_KV.getWithMetadata(key);
+    const existingCid = existing?.value || "";
+
     if (existing?.metadata?.blobKey) {
       await env.IPFS_KV.delete(existing.metadata.blobKey).catch(() => {});
     } else {
       await env.IPFS_KV.delete("blob_" + key).catch(() => {});
     }
     await env.IPFS_KV.delete(key);
+
+    // 🪦 墓標（Tombstone / Unpin予約）の発行判定:
+    // CID が存在する場合、他のキーが同じ CID を参照していなければ、将来 Kubo 起動時にアンピンできるよう墓標を登録
+    if (existingCid) {
+      const allKeys = await env.IPFS_KV.list({ limit: 1000 });
+      const isCidShared = (allKeys.keys || []).some(k => {
+        if (k.name === key || k.name.startsWith("tombstone_") || k.name.startsWith("blob_")) return false;
+        // metadata に CID が入っているか、あるいはキーが残っているか
+        return k.metadata?.cid === existingCid;
+      });
+
+      if (!isCidShared) {
+        // 30日間のTTLを設定して墓標を保存
+        await env.IPFS_KV.put("tombstone_" + existingCid, "1", {
+          expirationTtl: 86400 * 30,
+        }).catch(() => {});
+      }
+    }
 
     // 🚀 リンク抹消: エッジに残っている画像キャッシュを即座に消滅させる
     context.waitUntil?.(purgeHybridCache(request, env, key)) || purgeHybridCache(request, env, key);
