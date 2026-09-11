@@ -4695,6 +4695,14 @@ async function fetchAndRenderR2Files() {
       return;
     }
 
+    // 🏠 Kubo の連携設定とオンライン状態を事前チェック（未設定時・オフライン時のUI制御用）
+    const isKuboAutoPin = localStorage.getItem("kuboAutoPin") !== "false";
+    let isKuboOnline = false;
+    if (isFilebase && isKuboAutoPin) {
+      const checkRes = await checkKuboOnline(800);
+      isKuboOnline = checkRes.online;
+    }
+
     // 更新日時の降順ソート
     contents.sort((a, b) => new Date(b.LastModified || 0) - new Date(a.LastModified || 0));
 
@@ -4773,12 +4781,21 @@ async function fetchAndRenderR2Files() {
           ? `<button type="button" class="unpin-file-btn" data-key="${escapeHtml(item.Key)}" data-s3key="${escapeHtml(item.s3Key || item.Key)}" data-cid="${escapeHtml(itemCid || "")}" style="cursor: pointer; font-size: 10px; padding: 2px 7px; border-radius: 4px; background: rgba(34,197,94,0.15); color: #22c55e; border: 1px solid rgba(34,197,94,0.4); font-weight: 600; display: inline-flex; align-items: center; gap: 3px;" title="Filebaseオリジンに保存中（クリックで容量解放）">☁️ Filebase: 保持中</button>`
           : `<span style="font-size: 10px; padding: 2px 7px; border-radius: 4px; background: rgba(148,163,184,0.12); color: #94a3b8; border: 1px dashed rgba(148,163,184,0.3); font-weight: 500;" title="Filebaseストレージから解放済み（容量0B消費）">☁️ Filebase: 未保持</span>`;
 
-        // 自宅 Kubo 状態バッジ（クリックでPinまたは解除可能）
+        // 自宅 Kubo 状態バッジ（未設定・オフライン時はグレーアウト/disabled）
         let kuboBadgeHtml = "";
-        if (isKuboPinned) {
-          kuboBadgeHtml = `<button type="button" class="kubo-unpin-manual-btn kubo-badge-${escapeHtml(item.Key)}" data-key="${escapeHtml(item.Key)}" data-cid="${escapeHtml(itemCid || "")}" style="cursor: pointer; font-size: 10px; padding: 2px 7px; border-radius: 4px; background: rgba(168,85,247,0.15); color: #c084fc; border: 1px solid rgba(168,85,247,0.4); font-weight: 600; display: inline-flex; align-items: center; gap: 3px;" title="自宅KuboにPin留め済み（クリックでKuboからPin解除）">🏠 Kubo: 保持中</button>`;
+        if (!isKuboAutoPin) {
+          // Kubo連携が無効（チェックOFF）
+          kuboBadgeHtml = `<span class="kubo-badge-${escapeHtml(item.Key)}" style="font-size: 10px; padding: 2px 7px; border-radius: 4px; background: rgba(148,163,184,0.08); color: #64748b; border: 1px dashed rgba(148,163,184,0.25); font-weight: 500; cursor: not-allowed; display: inline-flex; align-items: center; gap: 3px;" title="自宅Kubo機能は無効（設定で有効化可能）">🏠 Kubo: 未設定</span>`;
+        } else if (isKuboPinned) {
+          // 保持中（Kuboがオンラインなら解除可能、オフラインなら情報バッジとして表示）
+          kuboBadgeHtml = isKuboOnline
+            ? `<button type="button" class="kubo-unpin-manual-btn kubo-badge-${escapeHtml(item.Key)}" data-key="${escapeHtml(item.Key)}" data-cid="${escapeHtml(itemCid || "")}" style="cursor: pointer; font-size: 10px; padding: 2px 7px; border-radius: 4px; background: rgba(168,85,247,0.15); color: #c084fc; border: 1px solid rgba(168,85,247,0.4); font-weight: 600; display: inline-flex; align-items: center; gap: 3px;" title="自宅KuboにPin留め済み（クリックでKuboからPin解除）">🏠 Kubo: 保持中</button>`
+            : `<span class="kubo-badge-${escapeHtml(item.Key)}" style="font-size: 10px; padding: 2px 7px; border-radius: 4px; background: rgba(168,85,247,0.08); color: #a855f7; border: 1px solid rgba(168,85,247,0.25); font-weight: 500; display: inline-flex; align-items: center; gap: 3px;" title="自宅KuboにPin留め記録あり（現在ノード未起動）">🏠 Kubo: 保持中 (停止中)</span>`;
         } else if (itemCid) {
-          kuboBadgeHtml = `<button type="button" class="kubo-pin-manual-btn kubo-badge-${escapeHtml(item.Key)}" data-key="${escapeHtml(item.Key)}" data-cid="${escapeHtml(itemCid)}" data-url="${escapeHtml(publicUrl)}" style="cursor: pointer; font-size: 10px; padding: 2px 7px; border-radius: 4px; background: rgba(245,158,11,0.12); color: #fbbf24; border: 1px solid rgba(245,158,11,0.35); font-weight: 600; display: inline-flex; align-items: center; gap: 3px;" title="自宅Kubo未保持（クリックで自宅PCにPin留め保存）">🏠 Kubo: 未保持</button>`;
+          // 未保持（オンラインならPin留めボタン、オフラインならグレーアウト）
+          kuboBadgeHtml = isKuboOnline
+            ? `<button type="button" class="kubo-pin-manual-btn kubo-badge-${escapeHtml(item.Key)}" data-key="${escapeHtml(item.Key)}" data-cid="${escapeHtml(itemCid)}" data-url="${escapeHtml(publicUrl)}" style="cursor: pointer; font-size: 10px; padding: 2px 7px; border-radius: 4px; background: rgba(245,158,11,0.12); color: #fbbf24; border: 1px solid rgba(245,158,11,0.35); font-weight: 600; display: inline-flex; align-items: center; gap: 3px;" title="自宅Kubo未保持（クリックで自宅PCにPin留め保存）">🏠 Kubo: 未保持</button>`
+            : `<span class="kubo-badge-${escapeHtml(item.Key)}" style="font-size: 10px; padding: 2px 7px; border-radius: 4px; background: rgba(148,163,184,0.08); color: #64748b; border: 1px dashed rgba(148,163,184,0.25); font-weight: 500; cursor: not-allowed; display: inline-flex; align-items: center; gap: 3px;" title="自宅Kubo未保持（自宅ノード未検出・オフライン）">🏠 Kubo: 未保持 (オフライン)</span>`;
         }
 
         storageTierHtml = `
