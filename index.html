@@ -298,7 +298,9 @@
                             <span id="kuboStatusIndicator" style="font-size: 11px; color: var(--muted);">⚪ 未確認</span>
                           </span>
                           <input id="kuboRpcUrl" type="text" placeholder="例: http://127.0.0.1:5001 または Tailscale URL" spellcheck="false" autocomplete="off" disabled>
-                          <span style="font-size: 10.5px; color: var(--muted);">※ 自宅PCでは <code>http://127.0.0.1:5001</code>、外出時は Tailscale のエンドポイントを指定</span>
+                          <span style="font-size: 10.5px; color: var(--muted); margin-top: 2px;">
+                            ※ 自宅PCでは <code>http://127.0.0.1:5001</code>、外部/HTTPS時は Tailscale 等のエンドポイントを指定
+                          </span>
                         </label>
                         <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 2px;">
                           <label style="display: flex; align-items: center; gap: 6px; cursor: pointer; font-size: 11.5px; color: #e2e8f0;">
