@@ -4666,7 +4666,7 @@ async function fetchAndRenderR2Files() {
                 item.metadata.kuboStatus = "pinned";
                 const badgeEl = document.querySelector(`.kubo-badge-${CSS.escape(item.Key)}`);
                 if (badgeEl) {
-                  badgeEl.outerHTML = `<span class="kubo-badge-${escapeHtml(item.Key)}" style="font-size: 10px; padding: 1px 6px; border-radius: 4px; background: rgba(168, 85, 247, 0.15); color: #c084fc; border: 1px solid rgba(168, 85, 247, 0.4); font-weight: 600;" title="自宅KuboノードにPin留め済み（永久長期保存中）">🟣 自宅Kubo保護</span>`;
+                  badgeEl.outerHTML = `<button type="button" class="kubo-unpin-manual-btn kubo-badge-${escapeHtml(item.Key)}" data-key="${escapeHtml(item.Key)}" data-cid="${escapeHtml(item.cid || "")}" style="cursor: pointer; font-size: 10px; padding: 2px 7px; border-radius: 4px; background: rgba(168,85,247,0.15); color: #c084fc; border: 1px solid rgba(168,85,247,0.4); font-weight: 600; display: inline-flex; align-items: center; gap: 3px;" title="自宅KuboにPin留め済み（クリックでKuboからPin解除）">🏠 Kubo: 保持中</button>`;
                 }
                 continue;
               }
@@ -4776,9 +4776,9 @@ async function fetchAndRenderR2Files() {
         // 自宅 Kubo 状態バッジ（クリックでPinまたは解除可能）
         let kuboBadgeHtml = "";
         if (isKuboPinned) {
-          kuboBadgeHtml = `<button type="button" class="kubo-unpin-manual-btn kubo-badge-${escapeHtml(item.Key)}" data-key="${escapeHtml(item.Key)}" data-cid="${escapeHtml(itemCid || "")}" style="cursor: pointer; font-size: 10px; padding: 2px 7px; border-radius: 4px; background: rgba(168,85,247,0.15); color: #c084fc; border: 1px solid rgba(168,85,247,0.4); font-weight: 600; display: inline-flex; align-items: center; gap: 3px;" title="自宅KuboにPin留め済み（クリックでKuboからPin解除）">🏠 Kubo: 保護中</button>`;
+          kuboBadgeHtml = `<button type="button" class="kubo-unpin-manual-btn kubo-badge-${escapeHtml(item.Key)}" data-key="${escapeHtml(item.Key)}" data-cid="${escapeHtml(itemCid || "")}" style="cursor: pointer; font-size: 10px; padding: 2px 7px; border-radius: 4px; background: rgba(168,85,247,0.15); color: #c084fc; border: 1px solid rgba(168,85,247,0.4); font-weight: 600; display: inline-flex; align-items: center; gap: 3px;" title="自宅KuboにPin留め済み（クリックでKuboからPin解除）">🏠 Kubo: 保持中</button>`;
         } else if (itemCid) {
-          kuboBadgeHtml = `<button type="button" class="kubo-pin-manual-btn kubo-badge-${escapeHtml(item.Key)}" data-key="${escapeHtml(item.Key)}" data-cid="${escapeHtml(itemCid)}" data-url="${escapeHtml(publicUrl)}" style="cursor: pointer; font-size: 10px; padding: 2px 7px; border-radius: 4px; background: rgba(245,158,11,0.12); color: #fbbf24; border: 1px solid rgba(245,158,11,0.35); font-weight: 600; display: inline-flex; align-items: center; gap: 3px;" title="自宅Kubo未Pin（クリックで自宅PCにPin留め保存）">🏠 Kubo: 未Pin</button>`;
+          kuboBadgeHtml = `<button type="button" class="kubo-pin-manual-btn kubo-badge-${escapeHtml(item.Key)}" data-key="${escapeHtml(item.Key)}" data-cid="${escapeHtml(itemCid)}" data-url="${escapeHtml(publicUrl)}" style="cursor: pointer; font-size: 10px; padding: 2px 7px; border-radius: 4px; background: rgba(245,158,11,0.12); color: #fbbf24; border: 1px solid rgba(245,158,11,0.35); font-weight: 600; display: inline-flex; align-items: center; gap: 3px;" title="自宅Kubo未保持（クリックで自宅PCにPin留め保存）">🏠 Kubo: 未保持</button>`;
         }
 
         storageTierHtml = `
@@ -5195,7 +5195,7 @@ r2FileList?.addEventListener("click", async (e) => {
         // 3分経過したら定期ポーリング停止（次回リロード時等に再判定）
         setTimeout(() => clearInterval(pollInterval), 180000);
 
-        alert(`📡 自宅 Kubo ノードへ P2P Pin留め要求を送信しました！\n\nKuboがバックグラウンドで世界中のIPFSノードからブロックを取得・同期しています。\n完了すると自動的に『🏠 Kubo: 保護中』へ変わります。`);
+        alert(`📡 自宅 Kubo ノードへ P2P Pin留め要求を送信しました！\n\nKuboがバックグラウンドで世界中のIPFSノードからブロックを取得・同期しています。\n完了すると自動的に『🏠 Kubo: 保持中』へ変わります。`);
       } else {
         alert(`❌ Kubo Pin要求に失敗しました: ${pinRes.error}`);
         target.disabled = false;
