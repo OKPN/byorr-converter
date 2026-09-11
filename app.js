@@ -1044,7 +1044,7 @@ function updateR2Status() {
   const step2Inputs = [
     r2AccountId, r2BucketName, r2AccessKeyId, r2SecretAccessKey,
     filebaseBucket, filebaseApiKey, filebaseSecretKey,
-    kuboRpcUrl, kuboAutoPinCheck
+    kuboRpcUrl, kuboAutoPinCheck, adminApiToken
   ];
 
   if (step2Box) {
