@@ -4895,11 +4895,17 @@ async function fetchAndRenderR2Files() {
         ? `<button type="button" class="rename-file-btn" data-key="${escapeHtml(item.Key)}" data-s3key="${escapeHtml(item.s3Key || item.Key)}" data-size="${item.Size || 0}" data-cid="${escapeHtml(itemCid || "")}" title="ファイル名を変更" style="background: none; border: none; cursor: pointer; padding: 2px 4px; font-size: 14px; opacity: 0.8; transition: opacity 0.15s; line-height: 1;">✏️</button>`
         : "";
 
-      // 小型 CID コピーバッジ
+      // 小型 CID コピーバッジ ＆ ノード探索リンク
       let cidBadgeHtml = "";
       if (itemCid) {
         const shortCid = itemCid.length > 12 ? `${itemCid.slice(0, 6)}...${itemCid.slice(-4)}` : itemCid;
-        cidBadgeHtml = `<button type="button" class="copy-cid-btn" data-cid="${escapeHtml(itemCid)}" style="cursor: pointer; font-size: 10px; font-family: monospace; padding: 1px 6px; border-radius: 4px; background: rgba(56, 189, 248, 0.1); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.3); line-height: 1.4;" title="IPFS CID: ${escapeHtml(itemCid)} (クリックでコピー)">📦 ${escapeHtml(shortCid)} 📋</button>`;
+        const indexerUrl = `https://cid.contact/cid/${encodeURIComponent(itemCid)}`;
+        cidBadgeHtml = `
+          <div style="display: inline-flex; align-items: center; gap: 3px;">
+            <button type="button" class="copy-cid-btn" data-cid="${escapeHtml(itemCid)}" style="cursor: pointer; font-size: 10px; font-family: monospace; padding: 1px 6px; border-radius: 4px; background: rgba(56, 189, 248, 0.1); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.3); line-height: 1.4;" title="IPFS CID: ${escapeHtml(itemCid)} (クリックでコピー)">📦 ${escapeHtml(shortCid)} 📋</button>
+            <a href="${escapeHtml(indexerUrl)}" target="_blank" rel="noopener noreferrer" style="font-size: 10px; padding: 1px 5px; border-radius: 4px; background: rgba(148, 163, 184, 0.1); color: #94a3b8; border: 1px solid rgba(148, 163, 184, 0.25); text-decoration: none; display: inline-flex; align-items: center; gap: 2px; line-height: 1.4;" title="CID.contact (公式IPFSネットワークインデクサー) でこのCIDを保持している世界中のノード/プロバイダーを検索">🌐 ノード確認 ↗</a>
+          </div>
+        `;
       }
 
       article.innerHTML = `
