@@ -4754,6 +4754,32 @@ async function fetchAndRenderR2Files() {
     state.r2TotalSize = contents.filter(c => c.isFromS3).reduce((acc, cur) => acc + (cur.Size || 0), 0);
     updateStorageUsageUI();
 
+    // 🔗 同一 CID 状態統合（CID State Unification）:
+    // IPFSでは同一CID＝同一実体。同じCIDを持つ別名ファイル同士で Filebase保持状態・Kubo保持状態を完全同期
+    if (isFilebase && contents.length > 0) {
+      const cidStatusMap = new Map();
+      for (const item of contents) {
+        const c = item.cid || getStoredIpfsCid(item.Key) || (item.s3Key ? getStoredIpfsCid(item.s3Key) : null);
+        if (!c) continue;
+        const current = cidStatusMap.get(c) || { hasS3: false, isKuboPinned: false };
+        if (item.isFromS3) current.hasS3 = true;
+        if (item.metadata?.kuboStatus === "pinned") current.isKuboPinned = true;
+        cidStatusMap.set(c, current);
+      }
+
+      // 同一CIDの全アイテムに統合ステータスを伝播
+      for (const item of contents) {
+        const c = item.cid || getStoredIpfsCid(item.Key) || (item.s3Key ? getStoredIpfsCid(item.s3Key) : null);
+        if (!c || !cidStatusMap.has(c)) continue;
+        const unified = cidStatusMap.get(c);
+        item.isFromS3 = unified.hasS3;
+        if (!item.metadata) item.metadata = {};
+        if (unified.isKuboPinned) {
+          item.metadata.kuboStatus = "pinned";
+        }
+      }
+    }
+
     contents.forEach(item => {
       const article = document.createElement("article");
       article.className = "result-item";
