@@ -728,12 +728,17 @@ function getKvApiEndpoint() {
 }
 
 function getKvDeliveryBaseDomain() {
+  // 🌟 ユーザーが指定・選択している「画像の公開・配信URL (STEP 1)」を最優先で使用！
+  const selectedDomain = getSelectedR2Domain();
+  if (selectedDomain && selectedDomain.trim()) {
+    return selectedDomain.trim().replace(/\/$/, "");
+  }
   const customUrl = getCustomKvWorkerUrl();
   if (customUrl) {
     // 末尾の /api/ipfs-kv があれば除去して配信オリジンを取得
     return customUrl.replace(/\/api\/ipfs-kv\/?$/, "");
   }
-  return (getSelectedR2Domain() || (typeof window !== "undefined" ? window.location.origin : "")).replace(/\/$/, "");
+  return (typeof window !== "undefined" ? window.location.origin : "").replace(/\/$/, "");
 }
 
 function getAdminApiToken() {
