@@ -37,6 +37,23 @@ function unpackMetadata(name, cid, meta = {}) {
   };
 }
 
+// 投稿・一覧・削除の管理者認証検証（KV相乗り防止・責任分離）
+function verifyAdminAuth(request, env) {
+  const adminToken = (env.ADMIN_API_TOKEN || env.API_TOKEN || "").trim();
+  if (!adminToken) return true; // 環境変数未設定の場合はローカル/オープン動作
+
+  let clientToken = "";
+  const authHeader = (request.headers.get("Authorization") || "").trim();
+  if (authHeader) {
+    clientToken = authHeader.startsWith("Bearer ") ? authHeader.substring(7).trim() : authHeader;
+  }
+  if (!clientToken) {
+    const url = new URL(request.url);
+    clientToken = (url.searchParams.get("admin_token") || url.searchParams.get("token") || "").trim();
+  }
+  return clientToken === adminToken;
+}
+
 // GET: 単一キーの照会、または全キーの一覧取得
 export async function onRequestGet(context) {
   const { request, env } = context;
@@ -50,8 +67,14 @@ export async function onRequestGet(context) {
     });
   }
 
-  // 0. tombstones パラメータがある場合は未回収の墓標（アンピン予約）一覧を返却
+  // 0. tombstones パラメータがある場合は未回収の墓標（アンピン予約）一覧を返却（管理者のみ）
   if (url.searchParams.get("tombstones") === "1") {
+    if (!verifyAdminAuth(request, env)) {
+      return new Response(JSON.stringify({ error: "Unauthorized: Admin token required" }), {
+        status: 401,
+        headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
+      });
+    }
     try {
       const list = await env.IPFS_KV.list({ prefix: "tombstone_", limit: 1000 });
       const tombstones = (list.keys || []).map(k => k.name.replace(/^tombstone_/, ""));
@@ -67,8 +90,14 @@ export async function onRequestGet(context) {
     }
   }
 
-  // 1. key パラメータがない場合は、KV に登録されている全キーの一覧を返却（墓標・BLOBは除外）
+  // 1. key パラメータがない場合は、KV に登録されている全キーの一覧を返却（管理者のみ）
   if (!key) {
+    if (!verifyAdminAuth(request, env)) {
+      return new Response(JSON.stringify({ error: "Unauthorized: Admin token required for listing keys" }), {
+        status: 401,
+        headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
+      });
+    }
     try {
       const list = await env.IPFS_KV.list({ limit: 1000 });
       const items = (list.keys || [])
@@ -125,6 +154,15 @@ export async function onRequestPost(context) {
       headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
     });
   }
+
+  // 🛡️ 管理者認証チェック（KV相乗り防止）
+  if (!verifyAdminAuth(request, env)) {
+    return new Response(JSON.stringify({ error: "Unauthorized: Admin token required for KV registration" }), {
+      status: 401,
+      headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
+    });
+  }
+
   // サーバー側サイズガード: クライアント側チェックのすり抜け防止
   const contentLength = request.headers.get("content-length");
   if (contentLength && parseInt(contentLength, 10) > 80 * 1024 * 1024) {
@@ -285,6 +323,14 @@ export async function onRequestDelete(context) {
   if (!env || !env.IPFS_KV) {
     return new Response(JSON.stringify({ error: "IPFS_KV binding not configured" }), {
       status: 500,
+      headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
+    });
+  }
+
+  // 🛡️ 管理者認証チェック（KV相乗り防止）
+  if (!verifyAdminAuth(request, env)) {
+    return new Response(JSON.stringify({ error: "Unauthorized: Admin token required for KV deletion" }), {
+      status: 401,
       headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
     });
   }

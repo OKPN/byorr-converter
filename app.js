@@ -449,6 +449,10 @@ const kuboTestButton = document.querySelector("#kuboTestButton");
 const kuboWebUiLink = document.querySelector("#kuboWebUiLink");
 const kuboStatusIndicator = document.querySelector("#kuboStatusIndicator");
 
+// 🛡️ 管理者設定要素
+const adminApiToken = document.querySelector("#adminApiToken");
+const adminTokenStatus = document.querySelector("#adminTokenStatus");
+
 const cfStatus = document.querySelector("#cfStatus");
 const cfSettingsAccordion = document.querySelector("#cfSettingsAccordion");
 const cfSaveButton = document.querySelector("#cfSaveButton");
@@ -709,8 +713,23 @@ function blobToBase64(blobOrBytes) {
   });
 }
 
+// --- 🛡️ 管理者トークン（KV台帳・責任分離ガード） ---
+function getAdminApiToken() {
+  return (localStorage.getItem("adminApiToken") || adminApiToken?.value || "").trim();
+}
+
+function hasAdminAccess() {
+  return Boolean(getAdminApiToken());
+}
+
 async function registerKvCid(key, cid = "", size = 0, mime = "", s3Key = "", password = "", blobOrBytes = null, ttl = 0, expiresAt = null, unpinned = false, kuboStatus = null) {
   if (!key) return;
+  const token = getAdminApiToken();
+  // 🛡️ 管理者トークンがない場合、中央KVへの登録はスキップ（一般ユーザーモード: CID直リンで責任分離）
+  if (!token) {
+    console.log(`[責任分離] 一般ユーザーモードのため、中央KVへの登録をスキップしました: ${key}`);
+    return;
+  }
   try {
     const payload = { key, cid: cid || "", size, mime, s3Key: s3Key || key };
     if (unpinned) {
@@ -734,7 +753,10 @@ async function registerKvCid(key, cid = "", size = 0, mime = "", s3Key = "", pas
     }
     await fetch("/api/ipfs-kv", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${token}`,
+      },
       body: JSON.stringify(payload),
     });
   } catch (e) {
@@ -744,9 +766,17 @@ async function registerKvCid(key, cid = "", size = 0, mime = "", s3Key = "", pas
 
 async function deleteKvCid(key) {
   if (!key) return;
+  const token = getAdminApiToken();
+  if (!token) {
+    console.log(`[責任分離] 一般ユーザーモードのため、中央KV削除をスキップしました: ${key}`);
+    return;
+  }
   try {
     await fetch(`/api/ipfs-kv?key=${encodeURIComponent(key)}`, {
       method: "DELETE",
+      headers: {
+        "Authorization": `Bearer ${token}`,
+      },
     });
   } catch (e) {
     console.warn("Failed to delete CID from KV:", e);
@@ -881,8 +911,13 @@ async function unpinFromKubo(cid) {
 
 // 🪦 墓標（Unpin予約キュー）の回収処理
 async function drainKuboTombstones() {
+  const token = getAdminApiToken();
+  if (!token) return; // 管理者以外は墓標キューの回収を行わない
+
   try {
-    const res = await fetch("/api/ipfs-kv?tombstones=1");
+    const res = await fetch("/api/ipfs-kv?tombstones=1", {
+      headers: { "Authorization": `Bearer ${token}` },
+    });
     if (!res.ok) return;
     const data = await res.json();
     const tombstones = data.tombstones || [];
@@ -895,6 +930,7 @@ async function drainKuboTombstones() {
         // KVから墓標を消去
         await fetch(`/api/ipfs-kv?tombstone=${encodeURIComponent(cid)}`, {
           method: "DELETE",
+          headers: { "Authorization": `Bearer ${token}` },
         });
         console.log(`🪦 墓標回収完了: ${cid}`);
       } catch (err) {
@@ -907,8 +943,15 @@ async function drainKuboTombstones() {
 }
 
 async function fetchKvFiles() {
+  const token = getAdminApiToken();
+  // 🛡️ 管理者トークンがない場合、中央KVの一覧取得はスキップ（相乗り・漏洩防止）
+  if (!token) {
+    return [];
+  }
   try {
-    const res = await fetch("/api/ipfs-kv");
+    const res = await fetch("/api/ipfs-kv", {
+      headers: { "Authorization": `Bearer ${token}` },
+    });
     if (!res.ok) return [];
     const data = await res.json();
     return data.files || [];
@@ -1540,6 +1583,11 @@ function loadSettings() {
   const savedKuboAutoPin = localStorage.getItem("kuboAutoPin");
   if (kuboAutoPinCheck) kuboAutoPinCheck.checked = savedKuboAutoPin !== "false"; // デフォルトでON
 
+  // 🛡️ 管理者トークン設定ロード
+  const savedAdminToken = localStorage.getItem("adminApiToken") || "";
+  if (adminApiToken) adminApiToken.value = savedAdminToken;
+  updateAdminTokenStatusUI();
+
   loadTemplates();
 }
 
@@ -1819,6 +1867,15 @@ function saveR2SettingsAuto() {
     localStorage.setItem("kuboAutoPin", kuboAutoPinCheck.checked ? "true" : "false");
   }
 
+  // 🛡️ 管理者トークン自動保存
+  const token = adminApiToken?.value?.trim() || "";
+  if (token) {
+    localStorage.setItem("adminApiToken", token);
+  } else {
+    localStorage.removeItem("adminApiToken");
+  }
+  updateAdminTokenStatusUI();
+
   const isConfigured = updateR2Status();
   render();
 
@@ -1862,6 +1919,17 @@ kuboTestButton?.addEventListener("click", async () => {
 });
 
 
+// 🛡️ 管理者トークン表示状態の更新
+function updateAdminTokenStatusUI() {
+  if (!adminTokenStatus) return;
+  const token = getAdminApiToken();
+  if (token) {
+    adminTokenStatus.innerHTML = '<span style="color: #4caf50; font-weight: bold;">🟢 管理者モード (KV台帳連携)</span>';
+  } else {
+    adminTokenStatus.innerHTML = '<span style="color: var(--muted);">⚪ 一般ユーザーモード (CID直リン)</span>';
+  }
+}
+
 r2AccountId?.addEventListener("input", saveR2SettingsAuto);
 r2BucketName?.addEventListener("input", saveR2SettingsAuto);
 r2AccessKeyId?.addEventListener("input", saveR2SettingsAuto);
@@ -1873,6 +1941,8 @@ filebaseSecretKey?.addEventListener("input", saveR2SettingsAuto);
 
 kuboRpcUrl?.addEventListener("input", saveR2SettingsAuto);
 kuboAutoPinCheck?.addEventListener("change", saveR2SettingsAuto);
+
+adminApiToken?.addEventListener("input", saveR2SettingsAuto);
 
 // 🌐 ドメイン選択変更リスナー
 r2DomainSelect?.addEventListener("change", (e) => {
@@ -1974,6 +2044,7 @@ cfClearButton?.addEventListener("click", () => {
 
   localStorage.removeItem("kuboRpcUrl");
   localStorage.removeItem("kuboAutoPin");
+  localStorage.removeItem("adminApiToken");
 
   if (r2AccountId) r2AccountId.value = "";
   if (r2BucketName) r2BucketName.value = "";
@@ -1987,6 +2058,9 @@ cfClearButton?.addEventListener("click", () => {
   if (kuboRpcUrl) kuboRpcUrl.value = "http://127.0.0.1:5001";
   if (kuboAutoPinCheck) kuboAutoPinCheck.checked = true;
   if (kuboStatusIndicator) kuboStatusIndicator.textContent = "⚪ 未確認";
+
+  if (adminApiToken) adminApiToken.value = "";
+  updateAdminTokenStatusUI();
 
   renderR2DomainSelect();
   updateR2Status();
@@ -4280,14 +4354,21 @@ async function uploadImage(result, targetProvider = "r2", customPassword = null)
     const baseDomain = (getSelectedR2Domain() || (typeof window !== "undefined" ? window.location.origin : "")).replace(/\/$/, "");
 
     if (isFilebase) {
-      if (ipfsCid) {
-        result.ipfsCid = ipfsCid;
-        storeIpfsCid(result.name, ipfsCid);
-      }
-      // CID の有無に関わらず、KV にメタデータ（パスワード含む）を確実に登録
+      // CID の有無に関わらず、KV にメタデータ（パスワード含む）を登録（※一般ユーザー時は自動スキップ）
       await registerKvCid(result.name, ipfsCid || "", uploadBytes.length, contentType, result.name, password, uploadBlob || uploadBytes, ttlSeconds, expiresAt);
-      result.proxyUrl = `${baseDomain}/${encodeURIComponent(result.name)}`;
-      console.log(`🪐 Filebase URL 生成完了 (KV連携): CID=${ipfsCid} -> ${result.proxyUrl}`);
+      
+      if (hasAdminAccess()) {
+        result.proxyUrl = `${baseDomain}/${encodeURIComponent(result.name)}`;
+        console.log(`🪐 Filebase URL 生成完了 (管理者KV連携): CID=${ipfsCid} -> ${result.proxyUrl}`);
+      } else {
+        // 🛡️ 一般ユーザーモード: 中央KVを使わないため、エッジ中継 /i/CID 直リンを発行（責任分離）
+        if (ipfsCid) {
+          result.proxyUrl = `${baseDomain}/i/${ipfsCid}/${encodeURIComponent(result.name)}`;
+        } else {
+          result.proxyUrl = `${baseDomain}/${encodeURIComponent(result.name)}`;
+        }
+        console.log(`🪐 Filebase URL 生成完了 (一般ユーザーCID直リン): CID=${ipfsCid} -> ${result.proxyUrl}`);
+      }
 
       // 🚀 エッジキャッシュ事前ウォームアップ（初回読み出し高速化）:
       // アップロード直後に裏で1回フェッチを投げてCloudflareエッジにキャッシュを載せておく
@@ -4798,7 +4879,9 @@ async function fetchAndRenderR2Files() {
       article.dataset.cid = itemCid || "";
 
       let publicUrl = isFilebase
-        ? `${baseDomain}/${encodeURIComponent(item.Key)}`
+        ? (hasAdminAccess()
+            ? `${baseDomain}/${encodeURIComponent(item.Key)}`
+            : (itemCid ? `${baseDomain}/i/${itemCid}/${encodeURIComponent(item.Key)}` : `${baseDomain}/${encodeURIComponent(item.Key)}`))
         : getPublicUrl(item.Key);
       const devUrl = isFilebase ? null : getDevUrl(item.Key);
 
