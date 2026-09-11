@@ -490,7 +490,6 @@ const storageLimitRange = document.querySelector("#storageLimitRange");
 const storageLimitOutput = document.querySelector("#storageLimitOutput");
 const storageUsageText = document.querySelector("#storageUsageText");
 const storageUsageBar = document.querySelector("#storageUsageBar");
-const autoCleanupCheckbox = document.querySelector("#autoCleanupCheckbox");
 const autoFifoCheckbox = document.querySelector("#autoFifoCheckbox");
 
 // テキスト作成支援要素
@@ -1498,11 +1497,6 @@ function loadSettings() {
 
   syncStorageLimitControl();
 
-  const savedAutoCleanup = localStorage.getItem("autoCleanup");
-  if (savedAutoCleanup !== null && autoCleanupCheckbox) {
-    autoCleanupCheckbox.checked = savedAutoCleanup === "true";
-  }
-
   const savedAutoFifo = localStorage.getItem("autoFifo");
   if (autoFifoCheckbox) {
     autoFifoCheckbox.checked = savedAutoFifo !== "false"; // デフォルトでON
@@ -2255,10 +2249,6 @@ storageLimitRange?.addEventListener("input", () => {
   updateLimitOutput(val);
   setActiveStorageLimit(val);
   updateStorageUsageUI();
-});
-
-autoCleanupCheckbox?.addEventListener("change", () => {
-  localStorage.setItem("autoCleanup", String(autoCleanupCheckbox.checked));
 });
 
 autoFifoCheckbox?.addEventListener("change", () => {
@@ -4625,30 +4615,6 @@ async function fetchAndRenderR2Files() {
         // 即座に一覧の見た目からも期限切れファイルを除外
         const expiredKeySet = new Set(expiredItems.map(i => i.Key));
         contents = contents.filter(i => !expiredKeySet.has(i.Key));
-      }
-    }
-    // 自動クリーンアップチェック (7日以上経過したファイルを削除)
-    const isAutoCleanup = localStorage.getItem("autoCleanup") === "true";
-    if (isAutoCleanup && contents.length > 0) {
-      const now = new Date();
-      const oldKeys = contents.filter(item => {
-        if (!item.isFromS3) return false;
-        if (item.Key?.startsWith("pinned_")) return false; // 📌永続化は保護
-        if (!item.LastModified) return false;
-        const diffDays = (now - new Date(item.LastModified)) / (1000 * 60 * 60 * 24);
-        return diffDays >= 7;
-      }).map(item => ({ Key: item.s3Key || item.Key }));
-
-      if (oldKeys.length > 0) {
-        try {
-          const delCommand = new DeleteObjectsCommand({
-            Bucket: bucketName,
-            Delete: { Objects: oldKeys },
-          });
-          await s3.send(delCommand);
-        } catch (delErr) {
-          console.warn("Auto cleanup delete error:", delErr);
-        }
       }
     }
 
