@@ -758,12 +758,12 @@ function getKuboRpcEndpoint() {
   return custom || "http://127.0.0.1:5001";
 }
 
-async function checkKuboOnline(timeoutMs = 1500) {
+async function checkKuboOnline(timeoutMs = 4000) {
   const endpoint = getKuboRpcEndpoint();
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const res = await fetch(`${endpoint}/api/v0/id`, {
+    const res = await fetch(`${endpoint}/api/v0/version`, {
       method: "POST",
       signal: controller.signal,
     });
@@ -772,9 +772,8 @@ async function checkKuboOnline(timeoutMs = 1500) {
     const data = await res.json();
     return {
       online: true,
-      id: data.ID || "",
-      agentVersion: data.AgentVersion || "",
-      addresses: data.Addresses || [],
+      agentVersion: data.Version ? `kubo/${data.Version}` : "Kubo",
+      commit: data.Commit || "",
     };
   } catch (err) {
     clearTimeout(timeoutId);
@@ -1843,13 +1842,13 @@ kuboTestButton?.addEventListener("click", async () => {
   }
 
   saveR2SettingsAuto();
-  const info = await checkKuboOnline(2500);
+  const info = await checkKuboOnline(4000);
 
   if (info.online) {
     if (kuboStatusIndicator) {
       kuboStatusIndicator.innerHTML = `<span style="color: #4caf50; font-weight: bold;">🟢 オンライン (${info.agentVersion || "Kubo"})</span>`;
     }
-    alert(`✅ 自宅 Kubo ノードへの接続に成功しました！\n\n・Node ID: ${info.id}\n・Agent: ${info.agentVersion}\n・RPC: ${getKuboRpcEndpoint()}`);
+    alert(`✅ 自宅 Kubo ノードへの接続に成功しました！\n\n・Version: ${info.agentVersion}\n・RPC: ${getKuboRpcEndpoint()}`);
   } else {
     if (kuboStatusIndicator) {
       kuboStatusIndicator.innerHTML = `<span style="color: #f87171;">🔴 オフライン (${info.error})</span>`;
@@ -4848,10 +4847,14 @@ async function fetchAndRenderR2Files() {
           // Kubo連携が無効（チェックOFF）
           kuboBadgeHtml = `<span class="kubo-badge-${escapeHtml(item.Key)}" style="font-size: 10px; padding: 2px 7px; border-radius: 4px; background: rgba(148,163,184,0.08); color: #64748b; border: 1px dashed rgba(148,163,184,0.25); font-weight: 500; cursor: not-allowed; display: inline-flex; align-items: center; gap: 3px;" title="自宅Kubo機能は無効（設定で有効化可能）">🏠 Kubo: 未設定</span>`;
         } else if (isKuboPinned) {
-          // 🏠 自宅Kubo保持中（オンライン時はクリックでPin解除可能、オフライン時は保護表示）
-          kuboBadgeHtml = isKuboOnline
+          // 🏠 自宅Kubo保持中（Tailscale/HTTPS設定かつオンライン時のみブラウザからのPin解除を許可、それ以外は安全保護表示）
+          const kuboEndpoint = getKuboRpcEndpoint();
+          const isTailscaleKubo = kuboEndpoint.includes(".ts.net") || kuboEndpoint.startsWith("https://");
+          const canUnpinKubo = isKuboOnline && isTailscaleKubo;
+
+          kuboBadgeHtml = canUnpinKubo
             ? `<button type="button" class="kubo-unpin-manual-btn kubo-badge-${escapeHtml(item.Key)}" data-key="${escapeHtml(item.Key)}" data-cid="${escapeHtml(itemCid || "")}" style="cursor: pointer; font-size: 10px; padding: 2px 7px; border-radius: 4px; background: rgba(168,85,247,0.15); color: #c084fc; border: 1px solid rgba(168,85,247,0.4); font-weight: 600; display: inline-flex; align-items: center; gap: 3px;" title="🏠 自宅KuboにPin留め済み（クリックでPin解除）">🏠 Kubo: 保持中</button>`
-            : `<span class="kubo-badge-${escapeHtml(item.Key)}" style="font-size: 10px; padding: 2px 7px; border-radius: 4px; background: rgba(168,85,247,0.08); color: #a855f7; border: 1px dashed rgba(168,85,247,0.25); font-weight: 500; display: inline-flex; align-items: center; gap: 3px;" title="🏠 自宅KuboにPin留め記録あり（現在ノード停止中）">🏠 Kubo: 保持中 (停止中)</span>`;
+            : `<span class="kubo-badge-${escapeHtml(item.Key)}" style="font-size: 10px; padding: 2px 7px; border-radius: 4px; background: rgba(168,85,247,0.12); color: #c084fc; border: 1px solid rgba(168,85,247,0.3); font-weight: 600; display: inline-flex; align-items: center; gap: 3px;" title="🏠 自宅Kuboに保護中（※Pin解除はTailscale経由で接続するか、WebUI/CLIから行ってください）">🏠 Kubo: 保持中</span>`;
         } else if (itemCid) {
           // 未保持（オンラインならPin留めボタン、オフラインならグレーアウト）
           kuboBadgeHtml = isKuboOnline
@@ -5204,6 +5207,13 @@ r2FileList?.addEventListener("click", async (e) => {
     const key = target.dataset.key;
     const cid = target.dataset.cid;
     if (!cid) return;
+
+    const endpoint = getKuboRpcEndpoint();
+    if (!endpoint.includes(".ts.net") && !endpoint.startsWith("https://")) {
+      await showCustomAlert("ブラウザからのPin解除は、Tailscale (HTTPS) 接続時のみ安全に実行可能です。\n\nそれ以外の環境ではKubo公式WebUIまたはCLIから解除してください。", "⚠️ Tailscale未接続");
+      return;
+    }
+
     const ok = await showCustomConfirm(
       `自宅Kuboノードから '${key}' のPinを解除しますか？\n\n（Filebase上の保存状態やIPFS配信には影響しません）`,
       "🏠 Kubo Pin解除の確認"
