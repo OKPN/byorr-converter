@@ -449,7 +449,8 @@ const kuboTestButton = document.querySelector("#kuboTestButton");
 const kuboWebUiLink = document.querySelector("#kuboWebUiLink");
 const kuboStatusIndicator = document.querySelector("#kuboStatusIndicator");
 
-// 🛡️ 管理者設定要素
+// 🛡️ 管理者 / KV台帳設定要素
+const kvWorkerUrl = document.querySelector("#kvWorkerUrl");
 const adminApiToken = document.querySelector("#adminApiToken");
 const adminTokenStatus = document.querySelector("#adminTokenStatus");
 
@@ -713,20 +714,30 @@ function blobToBase64(blobOrBytes) {
   });
 }
 
-// --- 🛡️ 管理者トークン（KV台帳・責任分離ガード） ---
+// --- 🛡️ KV台帳エンドポイント ＆ APIトークン（BYOC・責任分離） ---
+function getKvApiEndpoint() {
+  const customUrl = (localStorage.getItem("kvWorkerUrl") || kvWorkerUrl?.value || "").trim().replace(/\/$/, "");
+  return customUrl || "/api/ipfs-kv";
+}
+
 function getAdminApiToken() {
   return (localStorage.getItem("adminApiToken") || adminApiToken?.value || "").trim();
 }
 
 function hasAdminAccess() {
-  return Boolean(getAdminApiToken());
+  // カスタムWorker URLが指定されているか、またはAPIトークンが設定されている場合はKV台帳モードとして動作
+  const customUrl = (localStorage.getItem("kvWorkerUrl") || kvWorkerUrl?.value || "").trim();
+  const token = getAdminApiToken();
+  return Boolean(customUrl || token);
 }
 
 async function registerKvCid(key, cid = "", size = 0, mime = "", s3Key = "", password = "", blobOrBytes = null, ttl = 0, expiresAt = null, unpinned = false, kuboStatus = null) {
   if (!key) return;
   const token = getAdminApiToken();
-  // 🛡️ 管理者トークンがない場合、中央KVへの登録はスキップ（一般ユーザーモード: CID直リンで責任分離）
-  if (!token) {
+  const endpoint = getKvApiEndpoint();
+
+  // 🛡️ KV連携が有効でない（トークンも独自Workerもない）場合、中央KVへの登録はスキップ（一般ユーザーモード: CID直リンで責任分離）
+  if (!hasAdminAccess()) {
     console.log(`[責任分離] 一般ユーザーモードのため、中央KVへの登録をスキップしました: ${key}`);
     return;
   }
@@ -751,12 +762,13 @@ async function registerKvCid(key, cid = "", size = 0, mime = "", s3Key = "", pas
     if (password && typeof password === "string" && password.trim().length > 0) {
       payload.password = password.trim();
     }
-    await fetch("/api/ipfs-kv", {
+    const headers = { "Content-Type": "application/json" };
+    if (token) {
+      headers["Authorization"] = `Bearer ${token}`;
+    }
+    await fetch(endpoint, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${token}`,
-      },
+      headers,
       body: JSON.stringify(payload),
     });
   } catch (e) {
@@ -766,17 +778,21 @@ async function registerKvCid(key, cid = "", size = 0, mime = "", s3Key = "", pas
 
 async function deleteKvCid(key) {
   if (!key) return;
-  const token = getAdminApiToken();
-  if (!token) {
-    console.log(`[責任分離] 一般ユーザーモードのため、中央KV削除をスキップしました: ${key}`);
+  if (!hasAdminAccess()) {
+    console.log(`[責任分離] 一般ユーザーモードのため、KV削除をスキップしました: ${key}`);
     return;
   }
+  const token = getAdminApiToken();
+  const endpoint = getKvApiEndpoint();
   try {
-    await fetch(`/api/ipfs-kv?key=${encodeURIComponent(key)}`, {
+    const sep = endpoint.includes("?") ? "&" : "?";
+    const headers = {};
+    if (token) {
+      headers["Authorization"] = `Bearer ${token}`;
+    }
+    await fetch(`${endpoint}${sep}key=${encodeURIComponent(key)}`, {
       method: "DELETE",
-      headers: {
-        "Authorization": `Bearer ${token}`,
-      },
+      headers,
     });
   } catch (e) {
     console.warn("Failed to delete CID from KV:", e);
@@ -911,13 +927,16 @@ async function unpinFromKubo(cid) {
 
 // 🪦 墓標（Unpin予約キュー）の回収処理
 async function drainKuboTombstones() {
+  if (!hasAdminAccess()) return; // KV台帳連携がない場合は墓標キューの回収を行わない
   const token = getAdminApiToken();
-  if (!token) return; // 管理者以外は墓標キューの回収を行わない
+  const endpoint = getKvApiEndpoint();
 
   try {
-    const res = await fetch("/api/ipfs-kv?tombstones=1", {
-      headers: { "Authorization": `Bearer ${token}` },
-    });
+    const sep = endpoint.includes("?") ? "&" : "?";
+    const headers = {};
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+
+    const res = await fetch(`${endpoint}${sep}tombstones=1`, { headers });
     if (!res.ok) return;
     const data = await res.json();
     const tombstones = data.tombstones || [];
@@ -928,9 +947,9 @@ async function drainKuboTombstones() {
       try {
         await unpinFromKubo(cid);
         // KVから墓標を消去
-        await fetch(`/api/ipfs-kv?tombstone=${encodeURIComponent(cid)}`, {
+        await fetch(`${endpoint}${sep}tombstone=${encodeURIComponent(cid)}`, {
           method: "DELETE",
-          headers: { "Authorization": `Bearer ${token}` },
+          headers,
         });
         console.log(`🪦 墓標回収完了: ${cid}`);
       } catch (err) {
@@ -943,15 +962,16 @@ async function drainKuboTombstones() {
 }
 
 async function fetchKvFiles() {
-  const token = getAdminApiToken();
-  // 🛡️ 管理者トークンがない場合、中央KVの一覧取得はスキップ（相乗り・漏洩防止）
-  if (!token) {
+  // 🛡️ KV台帳連携が有効でない場合、一覧取得はスキップ（相乗り・漏洩防止）
+  if (!hasAdminAccess()) {
     return [];
   }
+  const token = getAdminApiToken();
+  const endpoint = getKvApiEndpoint();
   try {
-    const res = await fetch("/api/ipfs-kv", {
-      headers: { "Authorization": `Bearer ${token}` },
-    });
+    const headers = {};
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+    const res = await fetch(endpoint, { headers });
     if (!res.ok) return [];
     const data = await res.json();
     return data.files || [];
@@ -1044,7 +1064,7 @@ function updateR2Status() {
   const step2Inputs = [
     r2AccountId, r2BucketName, r2AccessKeyId, r2SecretAccessKey,
     filebaseBucket, filebaseApiKey, filebaseSecretKey,
-    kuboRpcUrl, kuboAutoPinCheck, adminApiToken
+    kuboRpcUrl, kuboAutoPinCheck, kvWorkerUrl, adminApiToken
   ];
 
   if (step2Box) {
@@ -1583,7 +1603,9 @@ function loadSettings() {
   const savedKuboAutoPin = localStorage.getItem("kuboAutoPin");
   if (kuboAutoPinCheck) kuboAutoPinCheck.checked = savedKuboAutoPin !== "false"; // デフォルトでON
 
-  // 🛡️ 管理者トークン設定ロード
+  // 🛡️ KV台帳・管理者トークン設定ロード
+  const savedKvUrl = localStorage.getItem("kvWorkerUrl") || "";
+  if (kvWorkerUrl) kvWorkerUrl.value = savedKvUrl;
   const savedAdminToken = localStorage.getItem("adminApiToken") || "";
   if (adminApiToken) adminApiToken.value = savedAdminToken;
   updateAdminTokenStatusUI();
@@ -1867,7 +1889,14 @@ function saveR2SettingsAuto() {
     localStorage.setItem("kuboAutoPin", kuboAutoPinCheck.checked ? "true" : "false");
   }
 
-  // 🛡️ 管理者トークン自動保存
+  // 🛡️ KV台帳Worker URL & APIトークン自動保存
+  const customKv = kvWorkerUrl?.value?.trim() || "";
+  if (customKv) {
+    localStorage.setItem("kvWorkerUrl", customKv);
+  } else {
+    localStorage.removeItem("kvWorkerUrl");
+  }
+
   const token = adminApiToken?.value?.trim() || "";
   if (token) {
     localStorage.setItem("adminApiToken", token);
@@ -1919,12 +1948,16 @@ kuboTestButton?.addEventListener("click", async () => {
 });
 
 
-// 🛡️ 管理者トークン表示状態の更新
+// 🛡️ KV台帳・管理者トークン表示状態の更新
 function updateAdminTokenStatusUI() {
   if (!adminTokenStatus) return;
+  const customKv = (localStorage.getItem("kvWorkerUrl") || kvWorkerUrl?.value || "").trim();
   const token = getAdminApiToken();
-  if (token) {
-    adminTokenStatus.innerHTML = '<span style="color: #4caf50; font-weight: bold;">🟢 管理者モード (KV台帳連携)</span>';
+
+  if (customKv) {
+    adminTokenStatus.innerHTML = '<span style="color: #38bdf8; font-weight: bold;">🪐 独自KV Worker接続中</span>';
+  } else if (token) {
+    adminTokenStatus.innerHTML = '<span style="color: #4caf50; font-weight: bold;">🟢 自ホストKV連携中</span>';
   } else {
     adminTokenStatus.innerHTML = '<span style="color: var(--muted);">⚪ 一般ユーザーモード (CID直リン)</span>';
   }
@@ -1942,6 +1975,7 @@ filebaseSecretKey?.addEventListener("input", saveR2SettingsAuto);
 kuboRpcUrl?.addEventListener("input", saveR2SettingsAuto);
 kuboAutoPinCheck?.addEventListener("change", saveR2SettingsAuto);
 
+kvWorkerUrl?.addEventListener("input", saveR2SettingsAuto);
 adminApiToken?.addEventListener("input", saveR2SettingsAuto);
 
 // 🌐 ドメイン選択変更リスナー
@@ -2044,6 +2078,7 @@ cfClearButton?.addEventListener("click", () => {
 
   localStorage.removeItem("kuboRpcUrl");
   localStorage.removeItem("kuboAutoPin");
+  localStorage.removeItem("kvWorkerUrl");
   localStorage.removeItem("adminApiToken");
 
   if (r2AccountId) r2AccountId.value = "";
@@ -2059,6 +2094,7 @@ cfClearButton?.addEventListener("click", () => {
   if (kuboAutoPinCheck) kuboAutoPinCheck.checked = true;
   if (kuboStatusIndicator) kuboStatusIndicator.textContent = "⚪ 未確認";
 
+  if (kvWorkerUrl) kvWorkerUrl.value = "";
   if (adminApiToken) adminApiToken.value = "";
   updateAdminTokenStatusUI();
 
@@ -4174,7 +4210,9 @@ async function ensureStorageCapacityFilebase(s3, bucketName, requiredBytes = 0) 
       // KV 側のメタデータを unpinned: true に更新（7日間キャッシュ & マルチゲートウェイ配信へ切り替え）
       for (const unpinnedKey of filesToUnpin) {
         try {
-          const kvRes = await fetch(`/api/ipfs-kv?key=${encodeURIComponent(unpinnedKey)}`);
+          const endpoint = getKvApiEndpoint();
+          const sep = endpoint.includes("?") ? "&" : "?";
+          const kvRes = await fetch(`${endpoint}${sep}key=${encodeURIComponent(unpinnedKey)}`);
           if (kvRes.ok) {
             const kvData = await kvRes.json();
             if (kvData.found && kvData.cid) {
@@ -5329,7 +5367,9 @@ r2FileList?.addEventListener("click", async (e) => {
     try {
       const res = await unpinFromKubo(cid);
       if (res.success) {
-        const kvRes = await fetch(`/api/ipfs-kv?key=${encodeURIComponent(key)}`);
+        const endpoint = getKvApiEndpoint();
+        const sep = endpoint.includes("?") ? "&" : "?";
+        const kvRes = await fetch(`${endpoint}${sep}key=${encodeURIComponent(key)}`);
         if (kvRes.ok) {
           const kvData = await kvRes.json();
           const meta = kvData.metadata || {};
@@ -5361,7 +5401,7 @@ r2FileList?.addEventListener("click", async (e) => {
     return;
   }
 
-  // 🏠 自宅 Kubo への手動 Pin留めボタン
+  // 🏠 自宅 Kubo への Pin 再実行ボタン（Tailscale / ローカル連携時）
   if (target.classList.contains("kubo-pin-manual-btn")) {
     const key = target.dataset.key;
     const cid = target.dataset.cid;
@@ -5369,7 +5409,7 @@ r2FileList?.addEventListener("click", async (e) => {
 
     target.disabled = true;
     const origText = target.textContent;
-    target.textContent = "Pin中...";
+    target.textContent = "確認中...";
 
     const online = await checkKuboOnline(1500);
     if (!online.online) {
@@ -5394,7 +5434,9 @@ r2FileList?.addEventListener("click", async (e) => {
           if (isPinned) {
             clearInterval(pollInterval);
             console.log(`🏠 Kubo P2P同期完了を検知: ${key}`);
-            const kvRes = await fetch(`/api/ipfs-kv?key=${encodeURIComponent(key)}`);
+            const endpoint = getKvApiEndpoint();
+            const sep = endpoint.includes("?") ? "&" : "?";
+            const kvRes = await fetch(`${endpoint}${sep}key=${encodeURIComponent(key)}`);
             if (kvRes.ok) {
               const kvData = await kvRes.json();
               const meta = kvData.metadata || {};

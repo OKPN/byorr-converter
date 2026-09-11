@@ -312,19 +312,25 @@
                     </div>
 
                     <!-- 🛡️ 管理者専用設定 (KV台帳接続トークン) セクション -->
+                    <!-- 🛡️ KV台帳連携設定 (短縮URL・パスワード・責任分離) セクション -->
                     <div style="border-top: 1px solid var(--border); padding-top: 12px;">
                       <div style="font-size: 13px; font-weight: bold; color: #f59e0b; margin-bottom: 8px; display: flex; align-items: center; justify-content: space-between;">
-                        <span>🛡️ 管理者設定 (KV台帳・短縮URL・責任分離)</span>
+                        <span>📚 KV 台帳連携 (短縮URL・パスワード・BYOC)</span>
+                        <span id="adminTokenStatus" style="font-size: 11px; color: var(--muted);">⚪ 一般ユーザーモード</span>
                       </div>
                       <div style="display: flex; flex-direction: column; gap: 8px;">
                         <label class="field">
-                          <span style="display: flex; justify-content: space-between; align-items: center;">
-                            <span>管理者 API トークン (Admin Token)</span>
-                            <span id="adminTokenStatus" style="font-size: 11px; color: var(--muted);">一般ユーザーモード</span>
-                          </span>
-                          <input id="adminApiToken" type="password" placeholder="未入力の場合はKVを使わずCID直接リンクで動作" spellcheck="false" autocomplete="off" disabled>
+                          <span><span>KV 台帳 API エンドポイント URL</span></span>
+                          <input id="kvWorkerUrl" type="text" placeholder="空欄時: 自サイト(/api/ipfs-kv) または 自身のWorker URL" spellcheck="false" autocomplete="off" disabled>
                           <span style="font-size: 10.5px; color: var(--muted); margin-top: 2px;">
-                            ※ 空欄の場合、中央KV台帳を汚さず、安全なIPFS CID直リンモード（他ユーザー利用）として動作します。
+                            ※ 各自の Cloudflare Worker を指定可能。未入力時は自サイトの <code>/api/ipfs-kv</code> を試行します。
+                          </span>
+                        </label>
+                        <label class="field">
+                          <span><span>KV API トークン (API Token)</span></span>
+                          <input id="adminApiToken" type="password" placeholder="未入力かつ自ホスト未認証の場合はCID直接リンクで動作" spellcheck="false" autocomplete="off" disabled>
+                          <span style="font-size: 10.5px; color: var(--muted); margin-top: 2px;">
+                            ※ トークン未設定時は中央KVを汚さず、安全な IPFS CID 直リン（/i/CID/name）として動作します。
                           </span>
                         </label>
                       </div>
