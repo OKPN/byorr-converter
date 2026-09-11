@@ -297,12 +297,20 @@ export async function onRequest(context) {
   // トップページ（/）や管理画面・非メディアURLへのアクセスは、フロントエンドアプリ画面を出さず即座に404返却（1日CDNキャッシュでFunctions完全防衛）
   const isDeliveryEdge = url.hostname.includes("content-relay") || url.hostname.includes("content-cache");
 
-  const filename = pathname.replace(/^\/+/, "");
-  if (filename.startsWith("i/") || filename.startsWith("api/") || filename.startsWith("404-character.")) {
+  const rawFilename = pathname.replace(/^\/+/, "");
+  if (rawFilename.startsWith("i/") || rawFilename.startsWith("api/") || rawFilename.startsWith("404-character.")) {
     return context.next();
   }
 
-  const extMatch = pathname.match(/\.(webp|png|jpe?g|gif|jxl|avif|mp4|webm|zip)$/i);
+  let filename = rawFilename;
+  try {
+    filename = decodeURIComponent(rawFilename);
+  } catch (e) {
+    filename = rawFilename;
+  }
+
+  const extMatch = pathname.match(/\.(webp|png|jpe?g|gif|jxl|avif|mp4|webm|zip)$/i) ||
+                   filename.match(/\.(webp|png|jpe?g|gif|jxl|avif|mp4|webm|zip)$/i);
   if (!extMatch && isDeliveryEdge) {
     return renderNotFoundResponse(request, 86400); // 1日エッジキャッシュ
   }
@@ -324,7 +332,12 @@ export async function onRequest(context) {
   let meta = {};
   if (env && env.IPFS_KV) {
     try {
-      const kvRes = await env.IPFS_KV.getWithMetadata(filename);
+      // 1. デコードされたファイル名でKVを検索（例: "ChatGPT Image...webp"）
+      let kvRes = await env.IPFS_KV.getWithMetadata(filename);
+      // 2. 見つからなければ念のため生エンコード名でもフォールバック検索（例: "ChatGPT%20Image...webp"）
+      if (!kvRes && filename !== rawFilename) {
+        kvRes = await env.IPFS_KV.getWithMetadata(rawFilename);
+      }
       if (kvRes) {
         targetCid = kvRes.value;
         meta = kvRes.metadata || {};

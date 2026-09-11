@@ -5993,6 +5993,9 @@ function createOutputName(originalName, mimeType, index = 0) {
     safeBase = safeBase.replace(/[\\/:*?"<>|]/g, "-");
   }
 
+  // URL・ストレージセーフ化: 空白・連続スペースをアンダースコアにサニタイズ（SNSでのリンク分断を防止）
+  safeBase = safeBase.trim().replace(/\s+/g, "_");
+
   const isImageMime = mimeType && (mimeType in extensions);
   const ext = (isConvertOn && isImageMime)
     ? extensions[mimeType]
