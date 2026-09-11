@@ -4526,16 +4526,6 @@ async function fetchAndRenderR2Files() {
         }
       }
 
-      // S3 に1ファイルのみ存在し、KVエントリがある場合の自動補完
-      if (s3RawList.length === 1 && kvFiles.length > 0) {
-        const soleS3 = s3RawList[0];
-        const latestKv = kvFiles[0];
-        const cid = latestKv.metadata?.cid || getStoredIpfsCid(latestKv.name);
-        if (cid) {
-          storeIpfsCid(soleS3.Key, cid);
-          s3CidToItem.set(cid, soleS3);
-        }
-      }
 
       const consumedS3Keys = new Set();
 
