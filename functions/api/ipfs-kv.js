@@ -24,7 +24,7 @@ function unpackMetadata(name, cid, meta = {}) {
 
   return {
     ...meta,
-    cid: cid || meta.cid || "",
+    cid: cid || meta.cid || meta.c || "",
     size,
     s: size,
     lastModified,
@@ -228,8 +228,9 @@ export async function onRequestPost(context) {
     else if (finalKuboStatus === "not_pinned") flags |= 4;
 
     // 圧縮メタデータオブジェクト（1レコード数十バイトに極小化）
-    // s: size, t: lastModified(秒), f: flags(ビット), e: expiresAt(秒), k: lastKuboPinAttempt(秒)
+    // c: cid, s: size, t: lastModified(秒), f: flags(ビット), e: expiresAt(秒), k: lastKuboPinAttempt(秒)
     const compressedMeta = {
+      ...(safeCid ? { c: safeCid } : {}),
       s: Number(size) || 0,
       t: Math.floor((lastModified || Date.now()) / 1000),
       ...(flags > 0 ? { f: flags } : {}),
@@ -328,8 +329,9 @@ export async function onRequestDelete(context) {
       const allKeys = await env.IPFS_KV.list({ limit: 1000 });
       const isCidShared = (allKeys.keys || []).some(k => {
         if (k.name === key || k.name.startsWith("tombstone_") || k.name.startsWith("blob_")) return false;
-        // metadata に CID が入っているか、あるいはキーが残っているか
-        return k.metadata?.cid === existingCid;
+        // metadata に CID (cid または c) が入っているか、あるいは同一実体キーか判定
+        const itemCid = k.metadata?.cid || k.metadata?.c;
+        return itemCid === existingCid;
       });
 
       if (!isCidShared) {

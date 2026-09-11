@@ -5503,6 +5503,24 @@ deleteSelectedR2FilesButton?.addEventListener("click", async () => {
         });
         await s3.send(command);
       }
+
+      // 4. 自宅 Kubo が現在オンラインであれば、選択されたアイテムの CID を即時 Unpin ＆ 墓標クリア
+      const kuboCheck = await checkKuboOnline(800);
+      if (kuboCheck.online) {
+        const cidsToUnpin = new Set();
+        for (const cb of checkboxes) {
+          const itemCid = cb.closest(".result-item")?.dataset?.cid || cb.dataset.cid;
+          if (itemCid) cidsToUnpin.add(itemCid);
+        }
+        for (const cid of cidsToUnpin) {
+          try {
+            await unpinFromKubo(cid);
+            await fetch(`/api/ipfs-kv?tombstone=${encodeURIComponent(cid)}`, { method: "DELETE" }).catch(() => {});
+          } catch (kErr) {
+            console.warn(`一括削除時のKubo Unpinエラー (${cid}):`, kErr);
+          }
+        }
+      }
     } else {
       if (s3 && bucketName) {
         const objects = keys.map(Key => ({ Key }));
