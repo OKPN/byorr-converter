@@ -4848,8 +4848,8 @@ async function fetchAndRenderR2Files() {
 
         // Filebase 状態バッジ（クリックでアンピン/解放可能）
         const fbBadgeHtml = isFromS3
-          ? `<button type="button" class="unpin-file-btn" data-key="${escapeHtml(item.Key)}" data-s3key="${escapeHtml(item.s3Key || item.Key)}" data-cid="${escapeHtml(itemCid || "")}" style="cursor: pointer; font-size: 10px; padding: 2px 7px; border-radius: 4px; background: rgba(34,197,94,0.15); color: #22c55e; border: 1px solid rgba(34,197,94,0.4); font-weight: 600; display: inline-flex; align-items: center; gap: 3px;" title="Filebaseオリジンに保存中（クリックで容量解放）">☁️ Filebase: 保持中</button>`
-          : `<span style="font-size: 10px; padding: 2px 7px; border-radius: 4px; background: rgba(148,163,184,0.12); color: #94a3b8; border: 1px dashed rgba(148,163,184,0.3); font-weight: 500;" title="Filebaseストレージから解放済み（容量0B消費）">☁️ Filebase: 未保持</span>`;
+          ? `<button type="button" class="unpin-file-btn" data-key="${escapeHtml(item.Key)}" data-s3key="${escapeHtml(item.s3Key || item.Key)}" data-cid="${escapeHtml(itemCid || "")}" style="cursor: pointer; font-size: 10px; padding: 2px 7px; border-radius: 4px; background: rgba(34,197,94,0.15); color: #22c55e; border: 1px solid rgba(34,197,94,0.4); font-weight: 600; display: inline-flex; align-items: center; gap: 3px;" title="Filebaseに保存中（クリックでアンピン）">☁️ Filebase: 保持中</button>`
+          : `<span style="font-size: 10px; padding: 2px 7px; border-radius: 4px; background: rgba(148,163,184,0.12); color: #94a3b8; border: 1px dashed rgba(148,163,184,0.3); font-weight: 500;" title="Filebaseから削除（アンピン）済み">☁️ Filebase: 未保持</span>`;
 
         // 自宅 Kubo 状態バッジ（未設定・オフライン時はグレーアウト/disabled）
         let kuboBadgeHtml = "";
@@ -5321,14 +5321,14 @@ r2FileList?.addEventListener("click", async (e) => {
     return;
   }
 
-  // ⚡ 容量解放（アンピン）：Filebase S3 からのみ削除し、KVとURLは維持
+  // ⚡ Filebase からの削除（アンピン）：Filebase S3 から削除し、KVとURLは維持
   if (target.classList.contains("unpin-file-btn")) {
     const key = target.dataset.key;
     const s3Key = target.dataset.s3key || key;
     const article = target.closest(".result-item");
     const cid = target.dataset.cid || article?.dataset?.cid || getStoredIpfsCid(key) || getStoredIpfsCid(s3Key);
 
-    if (!key || !confirm(`ファイル '${key}' を Filebase から削除して容量を解放しますか？\n\n・Filebase のストレージ容量が 0 になります（無料枠節約）。\n・IPFS/CDNキャッシュにより維持され、自宅Kuboが保護中の場合は引き続き自宅ノードから配信されます。`)) return;
+    if (!key || !confirm(`ファイル '${key}' を Filebase から削除しますか？\n\n・Filebase から実体を削除（アンピン）します。\n・URL は維持され、IPFS/自宅Kuboから配信されます。`)) return;
 
     try {
       const command = new DeleteObjectCommand({
