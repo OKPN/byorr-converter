@@ -297,17 +297,17 @@ export async function onRequest(context) {
   // トップページ（/）や管理画面・非メディアURLへのアクセスは、フロントエンドアプリ画面を出さず即座に404返却（1日CDNキャッシュでFunctions完全防衛）
   const isDeliveryEdge = url.hostname.includes("content-relay") || url.hostname.includes("content-cache");
 
+  const filename = pathname.replace(/^\/+/, "");
+  if (filename.startsWith("i/") || filename.startsWith("api/") || filename.startsWith("404-character.")) {
+    return context.next();
+  }
+
   const extMatch = pathname.match(/\.(webp|png|jpe?g|gif|jxl|avif|mp4|webm|zip)$/i);
   if (!extMatch && isDeliveryEdge) {
     return renderNotFoundResponse(request, 86400); // 1日エッジキャッシュ
   }
 
   const response = await context.next();
-
-  const filename = pathname.replace(/^\/+/, "");
-  if (filename.startsWith("i/") || filename.startsWith("api/") || filename.startsWith("404-character.")) {
-    return response;
-  }
 
   if (!extMatch) {
     return response;
