@@ -259,10 +259,13 @@ async function purgeHybridCache(request, env, key) {
   const targetPath = `/${encodeURIComponent(key)}`;
   const targetUrl = `${reqUrl.origin}${targetPath}`;
 
-  // content-relay ドメインのURLも対象に含める
+  // content-relay および content-cache ドメインのURLも対象に含める
   const urlsToPurge = [targetUrl];
   if (!reqUrl.hostname.includes("content-relay")) {
     urlsToPurge.push(`https://content-relay.pages.dev${targetPath}`);
+  }
+  if (!reqUrl.hostname.includes("content-cache")) {
+    urlsToPurge.push(`https://content-cache.pages.dev${targetPath}`);
   }
 
   // 1. プランA: REST Purge API (独自ドメインの Zone ID & API Token がある場合)

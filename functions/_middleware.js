@@ -293,6 +293,15 @@ export async function onRequest(context) {
   const url = new URL(request.url);
   const pathname = url.pathname;
 
+  // 🛡️ content-relay および content-cache ドメインはファイル配信専用エッジ
+  // トップページ（/）や管理画面・非メディアURLへのアクセスは、フロントエンドアプリ画面を出さず即座に404返却（1日CDNキャッシュでFunctions完全防衛）
+  const isDeliveryEdge = url.hostname.includes("content-relay") || url.hostname.includes("content-cache");
+
+  const extMatch = pathname.match(/\.(webp|png|jpe?g|gif|jxl|avif|mp4|webm|zip)$/i);
+  if (!extMatch && isDeliveryEdge) {
+    return renderNotFoundResponse(request, 86400); // 1日エッジキャッシュ
+  }
+
   const response = await context.next();
 
   const filename = pathname.replace(/^\/+/, "");
@@ -300,15 +309,7 @@ export async function onRequest(context) {
     return response;
   }
 
-  // 🛡️ content-relay ドメインはファイル配信専用エッジ
-  // トップページ（/）や管理画面・非メディアURLへのアクセスは、アプリ画面を出さず即座に404返却（1日CDNキャッシュでFunctions完全防衛）
-  const isContentRelay = url.hostname.includes("content-relay");
-
-  const extMatch = pathname.match(/\.(webp|png|jpe?g|gif|jxl|avif|mp4|webm|zip)$/i);
   if (!extMatch) {
-    if (isContentRelay) {
-      return renderNotFoundResponse(request, 86400); // 1日エッジキャッシュ
-    }
     return response;
   }
 
