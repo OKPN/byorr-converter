@@ -4155,11 +4155,14 @@ async function uploadImage(result, targetProvider = "r2", customPassword = null)
     const arrayBuffer = await result.blob.arrayBuffer();
     const bytes = new Uint8Array(arrayBuffer);
 
-    // 個別ファイルサイズ制限: Cloudflareエッジキャッシュ上限(100MB)を考慮し80MBに制限
-    const MAX_SINGLE_FILE_BYTES = 80 * 1024 * 1024; // 80MB
-    if (bytes.length > MAX_SINGLE_FILE_BYTES) {
+    // 個別ファイルサイズ制限: Cloudflareエッジキャッシュ上限を考慮し、100MB未満に制限
+    const MAX_SINGLE_FILE_BYTES = 100 * 1024 * 1024; // 100MB
+    if (bytes.length >= MAX_SINGLE_FILE_BYTES) {
       const sizeMb = (bytes.length / (1024 * 1024)).toFixed(1);
-      alert(`⚠️ ファイルサイズ (${sizeMb} MB) が上限 (80 MB) を超えています。\nCloudflareのキャッシュ制限により、80MB以下のファイルをアップロードしてください。`);
+      await showCustomAlert(
+        `ファイルサイズ (${sizeMb} MB) が上限（100MB未満）に達しています。<br>100MB未満のファイルをアップロードしてください。`,
+        "⚠️ 容量オーバー"
+      );
       result.isUploading = false;
       result.uploadingProvider = null;
       render();
