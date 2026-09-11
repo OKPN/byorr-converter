@@ -836,6 +836,23 @@ async function checkKuboPinned(cid, timeoutMs = 2000) {
   }
 }
 
+async function unpinFromKubo(cid) {
+  if (!cid) return { success: false, error: "Missing CID" };
+  const endpoint = getKuboRpcEndpoint();
+  try {
+    const res = await fetch(`${endpoint}/api/v0/pin/rm?arg=${encodeURIComponent(cid)}`, {
+      method: "POST",
+    });
+    if (res.ok) {
+      return { success: true };
+    }
+    const t = await res.text();
+    return { success: false, error: t };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+}
+
 async function fetchKvFiles() {
   try {
     const res = await fetch("/api/ipfs-kv");
@@ -4743,33 +4760,39 @@ async function fetchAndRenderR2Files() {
 
       const dateStr = item.LastModified ? new Date(item.LastModified).toLocaleDateString() : "";
 
-      // ステータスバッジとアクションボタン
-      let statusBadgeHtml = "";
+      // 案A: Filebase と 自宅Kubo のステータスを独立して表示＆操作可能にする
+      let storageTierHtml = "";
       let actionButtonsHtml = "";
 
       if (isFilebase) {
-        if (item.isFromS3) {
-          statusBadgeHtml = `<span style="font-size: 10px; padding: 1px 6px; border-radius: 4px; background: rgba(34,197,94,0.15); color: #22c55e; border: 1px solid rgba(34,197,94,0.4);" title="Filebase オリジンに保存中（ストレージ容量を消費中）">⚡ オリジン保存中</span>`;
-          actionButtonsHtml = `
-            <button type="button" class="ghost-button copy-r2-url-btn" data-url="${escapeHtml(publicUrl)}">${escapeHtml(dict.copyUrl)}</button>
-            ${!hasPassword ? `<button type="button" class="ghost-button civitai-r2-post-btn" data-url="${escapeHtml(publicUrl)}" data-name="${escapeHtml(item.Key)}" style="color: #38bdf8; border-color: rgba(56, 189, 248, 0.4);" title="Civitai の投稿画面を開く">🎨 Civitai</button>` : ""}
-            <button type="button" class="ghost-button unpin-file-btn" data-key="${escapeHtml(item.Key)}" data-s3key="${escapeHtml(item.s3Key || item.Key)}" style="color: #f59e0b; border-color: rgba(245,158,11,0.4);" title="Filebaseの容量を解放します（URLリンクはそのまま使えます）">容量解放</button>
-            <button type="button" class="ghost-button danger-button delete-r2-file-btn" data-key="${escapeHtml(item.Key)}" data-s3key="${escapeHtml(item.s3Key || item.Key)}" data-cid="${escapeHtml(itemCid || "")}" data-origin="1" title="アクセスを遮断します（実体が他のリンクと共有されている場合は実体を保護）">リンク抹消</button>
-          `;
-        } else {
-          const isKuboPinned = item.metadata?.kuboStatus === "pinned";
-          if (isKuboPinned) {
-            statusBadgeHtml = `<span class="kubo-badge-${escapeHtml(item.Key)}" style="font-size: 10px; padding: 1px 6px; border-radius: 4px; background: rgba(168, 85, 247, 0.15); color: #c084fc; border: 1px solid rgba(168, 85, 247, 0.4); font-weight: 600;" title="自宅KuboノードにPin留め済み（永久長期保存中）">🟣 自宅Kubo保護</span>`;
-          } else {
-            statusBadgeHtml = `<span class="kubo-badge-${escapeHtml(item.Key)}" style="font-size: 10px; padding: 1px 6px; border-radius: 4px; background: rgba(245, 158, 11, 0.15); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.4); font-weight: 600;" title="オリジン解放済み（7日間公共IPFSキャッシュ中）。Kubo起動時に永続Pin可能">🟡 IPFSキャッシュ</span>`;
-          }
-          actionButtonsHtml = `
-            <button type="button" class="ghost-button copy-r2-url-btn" data-url="${escapeHtml(publicUrl)}">${escapeHtml(dict.copyUrl)}</button>
-            ${!hasPassword ? `<button type="button" class="ghost-button civitai-r2-post-btn" data-url="${escapeHtml(publicUrl)}" data-name="${escapeHtml(item.Key)}" style="color: #38bdf8; border-color: rgba(56, 189, 248, 0.4);" title="Civitai の投稿画面を開く">🎨 Civitai</button>` : ""}
-            ${!isKuboPinned && itemCid ? `<button type="button" class="ghost-button kubo-pin-manual-btn" data-key="${escapeHtml(item.Key)}" data-cid="${escapeHtml(itemCid)}" data-url="${escapeHtml(publicUrl)}" style="color: #c084fc; border-color: rgba(168, 85, 247, 0.4);" title="手動で自宅KuboノードへPin留めします">🏠 Kubo Pin</button>` : ""}
-            <button type="button" class="ghost-button danger-button delete-r2-file-btn" data-key="${escapeHtml(item.Key)}" data-s3key="${escapeHtml(item.s3Key || item.Key)}" data-cid="${escapeHtml(itemCid || "")}" data-origin="0" title="アクセスを遮断し、KVから完全に削除します">リンク抹消</button>
-          `;
+        const isFromS3 = Boolean(item.isFromS3);
+        const isKuboPinned = item.metadata?.kuboStatus === "pinned";
+
+        // Filebase 状態バッジ（クリックでアンピン/解放可能）
+        const fbBadgeHtml = isFromS3
+          ? `<button type="button" class="unpin-file-btn" data-key="${escapeHtml(item.Key)}" data-s3key="${escapeHtml(item.s3Key || item.Key)}" data-cid="${escapeHtml(itemCid || "")}" style="cursor: pointer; font-size: 10px; padding: 2px 7px; border-radius: 4px; background: rgba(34,197,94,0.15); color: #22c55e; border: 1px solid rgba(34,197,94,0.4); font-weight: 600; display: inline-flex; align-items: center; gap: 3px;" title="Filebaseオリジンに保存中（クリックで容量解放）">☁️ Filebase: 保持中</button>`
+          : `<span style="font-size: 10px; padding: 2px 7px; border-radius: 4px; background: rgba(148,163,184,0.12); color: #94a3b8; border: 1px dashed rgba(148,163,184,0.3); font-weight: 500;" title="Filebaseストレージから解放済み（容量0B消費）">☁️ Filebase: 未保持</span>`;
+
+        // 自宅 Kubo 状態バッジ（クリックでPinまたは解除可能）
+        let kuboBadgeHtml = "";
+        if (isKuboPinned) {
+          kuboBadgeHtml = `<button type="button" class="kubo-unpin-manual-btn kubo-badge-${escapeHtml(item.Key)}" data-key="${escapeHtml(item.Key)}" data-cid="${escapeHtml(itemCid || "")}" style="cursor: pointer; font-size: 10px; padding: 2px 7px; border-radius: 4px; background: rgba(168,85,247,0.15); color: #c084fc; border: 1px solid rgba(168,85,247,0.4); font-weight: 600; display: inline-flex; align-items: center; gap: 3px;" title="自宅KuboにPin留め済み（クリックでKuboからPin解除）">🏠 Kubo: 保護中</button>`;
+        } else if (itemCid) {
+          kuboBadgeHtml = `<button type="button" class="kubo-pin-manual-btn kubo-badge-${escapeHtml(item.Key)}" data-key="${escapeHtml(item.Key)}" data-cid="${escapeHtml(itemCid)}" data-url="${escapeHtml(publicUrl)}" style="cursor: pointer; font-size: 10px; padding: 2px 7px; border-radius: 4px; background: rgba(245,158,11,0.12); color: #fbbf24; border: 1px solid rgba(245,158,11,0.35); font-weight: 600; display: inline-flex; align-items: center; gap: 3px;" title="自宅Kubo未Pin（クリックで自宅PCにPin留め保存）">🏠 Kubo: 未Pin</button>`;
         }
+
+        storageTierHtml = `
+          <div style="display: inline-flex; gap: 6px; align-items: center; flex-wrap: wrap;">
+            ${fbBadgeHtml}
+            ${kuboBadgeHtml}
+          </div>
+        `;
+
+        actionButtonsHtml = `
+          <button type="button" class="ghost-button copy-r2-url-btn" data-url="${escapeHtml(publicUrl)}">${escapeHtml(dict.copyUrl)}</button>
+          ${!hasPassword ? `<button type="button" class="ghost-button civitai-r2-post-btn" data-url="${escapeHtml(publicUrl)}" data-name="${escapeHtml(item.Key)}" style="color: #38bdf8; border-color: rgba(56, 189, 248, 0.4);" title="Civitai の投稿画面を開く">🎨 Civitai</button>` : ""}
+          <button type="button" class="ghost-button danger-button delete-r2-file-btn" data-key="${escapeHtml(item.Key)}" data-s3key="${escapeHtml(item.s3Key || item.Key)}" data-cid="${escapeHtml(itemCid || "")}" data-origin="${isFromS3 ? '1' : '0'}" title="アクセスを遮断し、KVおよび実体を完全抹消します">リンク抹消</button>
+        `;
       } else {
         actionButtonsHtml = `
           <button type="button" class="ghost-button copy-r2-url-btn" data-url="${escapeHtml(publicUrl)}">${escapeHtml(dict.copyUrl)}</button>
@@ -4783,6 +4806,13 @@ async function fetchAndRenderR2Files() {
         ? `<button type="button" class="rename-file-btn" data-key="${escapeHtml(item.Key)}" data-s3key="${escapeHtml(item.s3Key || item.Key)}" data-size="${item.Size || 0}" data-cid="${escapeHtml(itemCid || "")}" title="ファイル名を変更" style="background: none; border: none; cursor: pointer; padding: 2px 4px; font-size: 14px; opacity: 0.8; transition: opacity 0.15s; line-height: 1;">✏️</button>`
         : "";
 
+      // 小型 CID コピーバッジ
+      let cidBadgeHtml = "";
+      if (itemCid) {
+        const shortCid = itemCid.length > 12 ? `${itemCid.slice(0, 6)}...${itemCid.slice(-4)}` : itemCid;
+        cidBadgeHtml = `<button type="button" class="copy-cid-btn" data-cid="${escapeHtml(itemCid)}" style="cursor: pointer; font-size: 10px; font-family: monospace; padding: 1px 6px; border-radius: 4px; background: rgba(56, 189, 248, 0.1); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.3); line-height: 1.4;" title="IPFS CID: ${escapeHtml(itemCid)} (クリックでコピー)">📦 ${escapeHtml(shortCid)} 📋</button>`;
+      }
+
       article.innerHTML = `
         <input type="checkbox" class="r2-file-checkbox" data-key="${escapeHtml(item.Key)}" style="width: 18px; height: 18px; cursor: pointer; accent-color: var(--accent); align-self: center; margin-right: 4px;">
         <a href="${escapeHtml(publicUrl)}" target="_blank" rel="noopener noreferrer" class="thumb-link" title="表示">
@@ -4792,14 +4822,15 @@ async function fetchAndRenderR2Files() {
           <div class="item-name-row" style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap;">
             <span class="item-name" style="font-weight: 600; word-break: break-all;">${escapeHtml(item.Key)}</span>
             ${renameBtnHtml}
+            ${cidBadgeHtml}
             <span style="color: #64748b; font-size: 11px; white-space: nowrap;">${formatBytes(item.Size || 0)}</span>
-            ${statusBadgeHtml}
             ${pwdBadgeHtml}
             ${ttlBadgeHtml}
             <span class="r2-wf-badge-placeholder" data-key="${escapeHtml(item.Key)}"></span>
           </div>
-          <div class="item-meta" style="color: var(--muted); margin-top: 4px; font-size: 11px;">
-            更新日: ${escapeHtml(dateStr)}
+          <div class="item-meta" style="color: var(--muted); margin-top: 5px; font-size: 11px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+            <span>更新日: ${escapeHtml(dateStr)}</span>
+            ${storageTierHtml}
           </div>
         </div>
         <div class="result-actions" style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
@@ -5055,6 +5086,60 @@ r2FileList?.addEventListener("click", async (e) => {
     return;
   }
 
+  // 📋 小型 CID コピーボタン
+  if (target.classList.contains("copy-cid-btn")) {
+    const cid = target.dataset.cid;
+    if (cid) {
+      await copyToClipboard(cid, target, "📋 コピー完了");
+    }
+    return;
+  }
+
+  // 🏠 自宅 Kubo からの Pin 解除ボタン
+  if (target.classList.contains("kubo-unpin-manual-btn")) {
+    const key = target.dataset.key;
+    const cid = target.dataset.cid;
+    if (!cid || !confirm(`Kuboノードから '${key}' のPinを解除しますか？\n\n（Filebaseやエッジキャッシュの配信には影響しません）`)) return;
+
+    target.disabled = true;
+    const origText = target.textContent;
+    target.textContent = "解除中...";
+
+    try {
+      const res = await unpinFromKubo(cid);
+      if (res.success) {
+        const kvRes = await fetch(`/api/ipfs-kv?key=${encodeURIComponent(key)}`);
+        if (kvRes.ok) {
+          const kvData = await kvRes.json();
+          const meta = kvData.metadata || {};
+          await registerKvCid(
+            key,
+            cid,
+            meta.size || 0,
+            meta.mime || "",
+            meta.s3Key || key,
+            "",
+            null,
+            meta.ttl || 0,
+            meta.expiresAt || null,
+            Boolean(meta.unpinned),
+            "not_pinned"
+          );
+        }
+        await fetchAndRenderR2Files();
+      } else {
+        alert(`❌ Kubo Pin解除に失敗しました: ${res.error}`);
+        target.disabled = false;
+        target.textContent = origText;
+      }
+    } catch (err) {
+      alert(`エラー: ${err.message}`);
+      target.disabled = false;
+      target.textContent = origText;
+    }
+    return;
+  }
+
   // 🏠 自宅 Kubo への手動 Pin留めボタン
   if (target.classList.contains("kubo-pin-manual-btn")) {
     const key = target.dataset.key;
@@ -5088,17 +5173,18 @@ r2FileList?.addEventListener("click", async (e) => {
             const kvRes = await fetch(`/api/ipfs-kv?key=${encodeURIComponent(key)}`);
             if (kvRes.ok) {
               const kvData = await kvRes.json();
+              const meta = kvData.metadata || {};
               await registerKvCid(
                 key,
                 cid,
-                kvData.metadata?.size || 0,
-                kvData.metadata?.mime || "",
-                kvData.metadata?.s3Key || key,
+                meta.size || 0,
+                meta.mime || "",
+                meta.s3Key || key,
                 "",
                 null,
-                kvData.metadata?.ttl || 0,
-                kvData.metadata?.expiresAt || null,
-                true,
+                meta.ttl || 0,
+                meta.expiresAt || null,
+                Boolean(meta.unpinned),
                 "pinned"
               );
             }
@@ -5109,7 +5195,7 @@ r2FileList?.addEventListener("click", async (e) => {
         // 3分経過したら定期ポーリング停止（次回リロード時等に再判定）
         setTimeout(() => clearInterval(pollInterval), 180000);
 
-        alert(`📡 自宅 Kubo ノードへ P2P Pin留め要求を送信しました！\n\nKuboがバックグラウンドで世界中のIPFSノードからブロックを取得・同期しています。\n完了すると自動的に『🟣 自宅Kubo保護』へ昇格します。`);
+        alert(`📡 自宅 Kubo ノードへ P2P Pin留め要求を送信しました！\n\nKuboがバックグラウンドで世界中のIPFSノードからブロックを取得・同期しています。\n完了すると自動的に『🏠 Kubo: 保護中』へ変わります。`);
       } else {
         alert(`❌ Kubo Pin要求に失敗しました: ${pinRes.error}`);
         target.disabled = false;
@@ -5130,7 +5216,7 @@ r2FileList?.addEventListener("click", async (e) => {
     const article = target.closest(".result-item");
     const cid = target.dataset.cid || article?.dataset?.cid || getStoredIpfsCid(key) || getStoredIpfsCid(s3Key);
 
-    if (!key || !confirm(`ファイル '${key}' を Filebase から削除して容量を解放しますか？\n\n・Filebase のストレージ容量が 0 になります（無料枠節約）。\n・IPFS/CDNキャッシュにより維持され、自宅Kuboがオンラインなら自動で永続保護されます。`)) return;
+    if (!key || !confirm(`ファイル '${key}' を Filebase から削除して容量を解放しますか？\n\n・Filebase のストレージ容量が 0 になります（無料枠節約）。\n・IPFS/CDNキャッシュにより維持され、自宅Kuboが保護中の場合は引き続き自宅ノードから配信されます。`)) return;
 
     try {
       const command = new DeleteObjectCommand({
@@ -5139,26 +5225,30 @@ r2FileList?.addEventListener("click", async (e) => {
       });
       await s3.send(command);
 
-      // KV 側の unpinned を true に更新し、Kubo が起動していれば即座に Pin
-      let kuboStatus = "not_pinned";
+      // KV の unpinned を true に更新（Kubo の既存保護状態は維持し、未Pinかつ自動Pin有効時のみPin試行）
+      let currentKuboStatus = "not_pinned";
+      let meta = {};
+      if (key && cid) {
+        const kvRes = await fetch(`/api/ipfs-kv?key=${encodeURIComponent(key)}`);
+        if (kvRes.ok) {
+          const kvData = await kvRes.json();
+          meta = kvData.metadata || {};
+          currentKuboStatus = meta.kuboStatus || "not_pinned";
+        }
+      }
+
       const isKuboAutoPin = localStorage.getItem("kuboAutoPin") !== "false";
-      if (isKuboAutoPin && cid) {
+      if (currentKuboStatus !== "pinned" && isKuboAutoPin && cid) {
         const kuboCheck = await checkKuboOnline(1500);
         if (kuboCheck.online) {
           const pinRes = await pinToKubo(cid);
           if (pinRes.success) {
-            kuboStatus = "pinned";
+            currentKuboStatus = "pinned";
           }
         }
       }
 
       if (key && cid) {
-        const kvRes = await fetch(`/api/ipfs-kv?key=${encodeURIComponent(key)}`);
-        let meta = {};
-        if (kvRes.ok) {
-          const kvData = await kvRes.json();
-          meta = kvData.metadata || {};
-        }
         await registerKvCid(
           key,
           cid,
@@ -5170,7 +5260,7 @@ r2FileList?.addEventListener("click", async (e) => {
           meta.ttl || 0,
           meta.expiresAt || null,
           true,
-          kuboStatus
+          currentKuboStatus
         );
       }
 
