@@ -491,6 +491,9 @@ const storageLimitOutput = document.querySelector("#storageLimitOutput");
 const storageUsageText = document.querySelector("#storageUsageText");
 const storageUsageBar = document.querySelector("#storageUsageBar");
 const autoFifoCheckbox = document.querySelector("#autoFifoCheckbox");
+const autoFifoLabel = document.querySelector("#autoFifoLabel");
+const autoCleanupCheckbox = document.querySelector("#autoCleanupCheckbox");
+const autoCleanupLabel = document.querySelector("#autoCleanupLabel");
 
 // テキスト作成支援要素
 const templateSelect = document.querySelector("#templateSelect");
@@ -1497,6 +1500,11 @@ function loadSettings() {
 
   syncStorageLimitControl();
 
+  const savedR2AutoCleanup = localStorage.getItem("r2AutoCleanup");
+  if (savedR2AutoCleanup !== null && autoCleanupCheckbox) {
+    autoCleanupCheckbox.checked = savedR2AutoCleanup === "true";
+  }
+
   const savedAutoFifo = localStorage.getItem("autoFifo");
   if (autoFifoCheckbox) {
     autoFifoCheckbox.checked = savedAutoFifo !== "false"; // デフォルトでON
@@ -2249,6 +2257,10 @@ storageLimitRange?.addEventListener("input", () => {
   updateLimitOutput(val);
   setActiveStorageLimit(val);
   updateStorageUsageUI();
+});
+
+autoCleanupCheckbox?.addEventListener("change", () => {
+  localStorage.setItem("r2AutoCleanup", String(autoCleanupCheckbox.checked));
 });
 
 autoFifoCheckbox?.addEventListener("change", () => {
@@ -4378,6 +4390,9 @@ function updateStorageTabsUi() {
       storageTabR2.style.background = "rgba(255, 255, 255, 0.04)";
       storageTabR2.style.color = "var(--muted)";
       storageTabR2.style.fontWeight = "600";
+
+      if (autoFifoLabel) autoFifoLabel.style.display = "inline-flex";
+      if (autoCleanupLabel) autoCleanupLabel.style.display = "none";
     } else {
       storageTabR2.style.border = "1px solid #f97316";
       storageTabR2.style.background = "rgba(249, 115, 22, 0.15)";
@@ -4388,6 +4403,9 @@ function updateStorageTabsUi() {
       storageTabFilebase.style.background = "rgba(255, 255, 255, 0.04)";
       storageTabFilebase.style.color = "var(--muted)";
       storageTabFilebase.style.fontWeight = "600";
+
+      if (autoFifoLabel) autoFifoLabel.style.display = "none";
+      if (autoCleanupLabel) autoCleanupLabel.style.display = "inline-flex";
     }
   }
 }
@@ -4615,6 +4633,33 @@ async function fetchAndRenderR2Files() {
         // 即座に一覧の見た目からも期限切れファイルを除外
         const expiredKeySet = new Set(expiredItems.map(i => i.Key));
         contents = contents.filter(i => !expiredKeySet.has(i.Key));
+      }
+    }
+
+    // ⚡ Cloudflare R2 専用: 自動クリーンアップチェック (7日以上経過したファイルを削除)
+    const isR2AutoCleanup = localStorage.getItem("r2AutoCleanup") === "true";
+    if (!isFilebase && isR2AutoCleanup && contents.length > 0) {
+      const now = new Date();
+      const oldKeys = contents.filter(item => {
+        if (!item.LastModified) return false;
+        if (item.Key?.startsWith("pinned_")) return false; // 📌永続化プレフィックスは保護
+        const diffDays = (now - new Date(item.LastModified)) / (1000 * 60 * 60 * 24);
+        return diffDays >= 7;
+      }).map(item => ({ Key: item.s3Key || item.Key }));
+
+      if (oldKeys.length > 0) {
+        try {
+          const delCommand = new DeleteObjectsCommand({
+            Bucket: bucketName,
+            Delete: { Objects: oldKeys },
+          });
+          await s3.send(delCommand);
+          const oldKeySet = new Set(oldKeys.map(k => k.Key));
+          contents = contents.filter(i => !oldKeySet.has(i.Key));
+          console.log(`⚡ R2 7日経過ファイル自動クリーンアップ完了: ${oldKeys.length}件削除`);
+        } catch (delErr) {
+          console.warn("R2 auto cleanup delete error:", delErr);
+        }
       }
     }
 
