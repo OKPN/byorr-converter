@@ -4190,6 +4190,14 @@ async function uploadImage(result, targetProvider = "r2", customPassword = null)
       await registerKvCid(result.name, ipfsCid || "", uploadBytes.length, contentType, result.name, password, uploadBlob || uploadBytes, ttlSeconds, expiresAt);
       result.proxyUrl = `${baseDomain}/${encodeURIComponent(result.name)}`;
       console.log(`🪐 Filebase URL 生成完了 (KV連携): CID=${ipfsCid} -> ${result.proxyUrl}`);
+
+      // 🚀 エッジキャッシュ事前ウォームアップ（初回読み出し高速化）:
+      // アップロード直後に裏で1回フェッチを投げてCloudflareエッジにキャッシュを載せておく
+      if (result.proxyUrl && !password) {
+        setTimeout(() => {
+          fetch(result.proxyUrl, { method: "GET", mode: "no-cors" }).catch(() => {});
+        }, 300);
+      }
     } else {
       // ⚡ Cloudflare R2: パスワードまたは時限付きの場合は KV に保護メタデータ＆実体を登録
       if (password || ttlSeconds > 0) {
