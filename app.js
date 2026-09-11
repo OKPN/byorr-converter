@@ -4701,52 +4701,7 @@ async function fetchAndRenderR2Files() {
       }
     }
 
-    // 🏠 自宅 Kubo 遅延マイグレーション（Lazy Migration）:
-    // S3からアンピン済み（!isFromS3）かつ Kubo未PinのファイルをバックグラウンドでPin試行
-    if (isFilebase && contents.length > 0) {
-      const isKuboAutoPin = localStorage.getItem("kuboAutoPin") !== "false";
-      const unpinnedNeedKubo = contents.filter(c => !c.isFromS3 && c.cid && c.metadata?.kuboStatus !== "pinned");
-      if (isKuboAutoPin && unpinnedNeedKubo.length > 0) {
-        (async () => {
-          const kuboCheck = await checkKuboOnline(1200);
-          if (!kuboCheck.online) return;
-          console.log(`🏠 Kubo 遅延マイグレーション開始: ${unpinnedNeedKubo.length}件の未Pinファイルを救出`);
-          for (const item of unpinnedNeedKubo) {
-            try {
-              // 既にPin済みかチェック
-              const alreadyPinned = await checkKuboPinned(item.cid, 1000);
-              if (alreadyPinned) {
-                console.log(`🏠 Kubo 既存Pin確認: ${item.Key} (${item.cid})`);
-                await registerKvCid(
-                  item.Key,
-                  item.cid,
-                  item.Size || 0,
-                  item.metadata?.mime || "",
-                  item.s3Key || item.Key,
-                  "",
-                  null,
-                  item.ttl || 0,
-                  item.expiresAt || null,
-                  true,
-                  "pinned"
-                );
-                item.metadata.kuboStatus = "pinned";
-                const badgeEl = document.querySelector(`.kubo-badge-${CSS.escape(item.Key)}`);
-                if (badgeEl) {
-                  badgeEl.outerHTML = `<button type="button" class="kubo-unpin-manual-btn kubo-badge-${escapeHtml(item.Key)}" data-key="${escapeHtml(item.Key)}" data-cid="${escapeHtml(item.cid || "")}" style="cursor: pointer; font-size: 10px; padding: 2px 7px; border-radius: 4px; background: rgba(168,85,247,0.15); color: #c084fc; border: 1px solid rgba(168,85,247,0.4); font-weight: 600; display: inline-flex; align-items: center; gap: 3px;" title="自宅KuboにPin留め済み（クリックでKuboからPin解除）">🏠 Kubo: 保持中</button>`;
-                }
-                continue;
-              }
-
-              // 未Pinの場合はP2P Pin留め要求をトリガー（非同期進行）
-              await pinToKubo(item.cid);
-            } catch (kErr) {
-              console.warn("Lazy pin error for " + item.Key + ":", kErr);
-            }
-          }
-        })();
-      }
-    }
+    // （※ 自宅 Kubo 遅延マイグレーションは一覧描画後に実行します）
 
     paletteFiles = contents.map(item => ({
       key: item.Key,
@@ -4907,8 +4862,9 @@ async function fetchAndRenderR2Files() {
 
         // 🌊 IPFS 漂流中バッジ（Filebase未保持 かつ Kubo未保持: 固定Pinがなく需要駆動で7日延命/自然淘汰される状態）
         let driftingBadgeHtml = "";
-        if (!isFromS3 && !isKuboPinned) {
-          driftingBadgeHtml = `<span style="font-size: 10px; padding: 2px 7px; border-radius: 4px; background: rgba(239, 68, 68, 0.15); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.4); font-weight: 600; display: inline-flex; align-items: center; gap: 3px;" title="どの固定ノードにもPin留めされていません。需要（7日以内のアクセス）があれば世界中のキャッシュで生存し、アクセスが途絶えると自然消滅します。">🌊 IPFS: 漂流中</span>`;
+        const hasKuboRecord = isKuboPinned || item.metadata?.kuboStatus === "pinned" || item.kuboStatus === "pinned";
+        if (!isFromS3 && !hasKuboRecord) {
+          driftingBadgeHtml = `<span class="drifting-badge-${escapeHtml(item.Key)}" style="font-size: 10px; padding: 2px 7px; border-radius: 4px; background: rgba(239, 68, 68, 0.15); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.4); font-weight: 600; display: inline-flex; align-items: center; gap: 3px;" title="どの固定ノードにもPin留めされていません。需要（7日以内のアクセス）があれば世界中のキャッシュで生存し、アクセスが途絶えると自然消滅します。">🌊 IPFS: 漂流中</span>`;
         }
 
         storageTierHtml = `
