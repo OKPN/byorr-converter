@@ -3967,12 +3967,25 @@ async function ensureStorageCapacityFilebase(s3, bucketName, requiredBytes = 0) 
 
     let currentTotalBytes = contents.reduce((acc, cur) => acc + (cur.Size || 0), 0);
 
-    // 新規ファイルを足しても上限の 95% 未満なら解放不要
-    if (currentTotalBytes + requiredBytes <= limitBytes * 0.95) {
+    // 🛡️ バッファ安全設計: 新規ファイルを足しても上限の 85% 未満なら解放不要（750MB以上のバッファを常時担保）
+    if (currentTotalBytes + requiredBytes <= limitBytes * 0.85) {
       return;
     }
 
-    console.log(`🪐 Filebase FIFO 発動: 現在容量 ${formatBytes(currentTotalBytes)} + 新規 ${formatBytes(requiredBytes)} > 上限 ${formatBytes(limitBytes)} (95%)`);
+    // 🏠 Kubo 自動ピン留め設定の確認（外出先・Kuboオフライン時はファイル消失防止のためFIFO削除を安全にスキップ）
+    const isKuboAutoPin = localStorage.getItem("kuboAutoPin") !== "false";
+    let isKuboAvailable = false;
+    if (isKuboAutoPin) {
+      const kuboCheck = await checkKuboOnline(1500);
+      isKuboAvailable = kuboCheck.online;
+      if (!isKuboAvailable) {
+        console.warn("⚠️ 自宅 Kubo がオフラインのため、Filebase FIFO 自動容量解放をスキップしました（ファイル消失防止フェイルセーフ）。");
+        return;
+      }
+      console.log("🏠 自宅 Kubo ノード検出: アンピン対象ファイルをローカルKuboへ救出Pin開始");
+    }
+
+    console.log(`🪐 Filebase FIFO 発動: 現在容量 ${formatBytes(currentTotalBytes)} + 新規 ${formatBytes(requiredBytes)} > 上限 ${formatBytes(limitBytes)} (85%)`);
 
     // 保護対象（pinned_ で始まるもの）を除外し、古い順（LastModified 昇順）にソート
     const eligibleFiles = contents.filter(item => {
@@ -3988,8 +4001,8 @@ async function ensureStorageCapacityFilebase(s3, bucketName, requiredBytes = 0) 
       freedBytes += (file.Size || 0);
       currentTotalBytes -= (file.Size || 0);
 
-      // 十分な空き容量（上限の90%以下）が確保できたら終了
-      if (currentTotalBytes + requiredBytes <= limitBytes * 0.90) {
+      // 十分な空き容量（上限の70%以下までゆったり解放し、次回の連続アップロード用バッファを確保）
+      if (currentTotalBytes + requiredBytes <= limitBytes * 0.70) {
         break;
       }
     }
@@ -4006,17 +4019,6 @@ async function ensureStorageCapacityFilebase(s3, bucketName, requiredBytes = 0) 
           Bucket: bucketName,
           Delete: { Objects: filesToUnpin.map(k => ({ Key: k })) },
         }));
-      }
-
-      // 🏠 Kubo 自動ピン留め設定の確認
-      const isKuboAutoPin = localStorage.getItem("kuboAutoPin") !== "false";
-      let isKuboAvailable = false;
-      if (isKuboAutoPin) {
-        const kuboCheck = await checkKuboOnline(1500);
-        isKuboAvailable = kuboCheck.online;
-        if (isKuboAvailable) {
-          console.log("🏠 自宅 Kubo ノード検出: アンピン対象ファイルをローカルKuboへ救出Pin開始");
-        }
       }
 
       // KV 側のメタデータを unpinned: true に更新（7日間キャッシュ & マルチゲートウェイ配信へ切り替え）
