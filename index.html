@@ -406,11 +406,14 @@
             </div>
             <div class="storage-usage" id="storageUsage" style="display: flex; flex-direction: column; gap: 4px; flex: 1; margin: 0 16px;">
               <div class="storage-info-row" style="display: flex; justify-content: space-between; align-items: center; font-size: 13px;">
-                <span id="storageUsageText" style="font-weight: 500;">使用量: 0 MB / 1.0 GB (0%)</span>
+                <span id="storageUsageText" style="font-weight: 500;">使用量: 0 GB / 5 GB (0%)</span>
                 <div class="storage-limit-control" style="display: flex; align-items: center; gap: 6px;">
-                  <label for="storageLimitRange" style="font-size: 12px; color: var(--muted);" data-i18n="limitLabel">上限:</label>
-                  <input id="storageLimitRange" type="range" min="100" max="10000" step="100" value="10000" style="width: 120px; cursor: pointer;">
-                  <output id="storageLimitOutput" style="font-size: 12px; font-weight: bold; min-width: 48px;">10.0 GB</output>
+                  <label for="storageLimitInput" style="font-size: 12px; color: var(--muted);" data-i18n="limitLabel">上限:</label>
+                  <div style="display: inline-flex; align-items: center; gap: 4px;">
+                    <input id="storageLimitInput" type="number" min="1" max="500" step="1" value="5" style="width: 58px; height: 26px; padding: 2px 6px; font-size: 12px; font-weight: bold; text-align: right; background: #121316; color: var(--text); border: 1px solid var(--border); border-radius: 4px; outline: none;" title="上限容量を整数(GB)で直接入力">
+                    <span style="font-size: 12px; font-weight: 600; color: var(--muted);">GB</span>
+                  </div>
+                  <input id="storageLimitRange" type="range" min="1" max="50" step="1" value="5" style="width: 80px; cursor: pointer;" title="スライダーで上限を調整">
                 </div>
               </div>
               <progress id="storageUsageBar" value="0" max="100" style="width: 100%; height: 8px; border-radius: 4px; overflow: hidden; accent-color: var(--accent);"></progress>

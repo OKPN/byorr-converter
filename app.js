@@ -487,6 +487,7 @@ const r2FileList = document.querySelector("#r2FileList");
 const reloadR2FilesButton = document.querySelector("#reloadR2FilesButton");
 const deleteSelectedR2FilesButton = document.querySelector("#deleteSelectedR2FilesButton");
 const storageLimitRange = document.querySelector("#storageLimitRange");
+const storageLimitInput = document.querySelector("#storageLimitInput");
 const storageLimitOutput = document.querySelector("#storageLimitOutput");
 const storageUsageText = document.querySelector("#storageUsageText");
 const storageUsageBar = document.querySelector("#storageUsageBar");
@@ -2247,39 +2248,72 @@ document.querySelector(".pattern-helpers")?.addEventListener("click", (event) =>
   }
 });
 
-function getActiveStorageLimit() {
+function getActiveStorageLimitGB() {
   if (activeStorageTab === "filebase") {
-    return Number(localStorage.getItem("filebaseStorageLimit") || "5000");
+    const savedGb = localStorage.getItem("filebaseStorageLimitGB");
+    if (savedGb) return Math.max(1, parseInt(savedGb, 10));
+    const savedMb = Number(localStorage.getItem("filebaseStorageLimit") || "5000");
+    return Math.max(1, Math.round(savedMb / 1024));
   }
-  return Number(localStorage.getItem("r2StorageLimit") || localStorage.getItem("storageLimit") || "10000");
+  const savedGb = localStorage.getItem("r2StorageLimitGB");
+  if (savedGb) return Math.max(1, parseInt(savedGb, 10));
+  const savedMb = Number(localStorage.getItem("r2StorageLimit") || localStorage.getItem("storageLimit") || "10000");
+  return Math.max(1, Math.round(savedMb / 1024));
+}
+
+function setActiveStorageLimitGB(val) {
+  const gb = Math.max(1, parseInt(val, 10) || (activeStorageTab === "filebase" ? 5 : 10));
+  const mb = gb * 1024;
+  if (activeStorageTab === "filebase") {
+    localStorage.setItem("filebaseStorageLimitGB", String(gb));
+    localStorage.setItem("filebaseStorageLimit", String(mb)); // FIFO処理用
+  } else {
+    localStorage.setItem("r2StorageLimitGB", String(gb));
+    localStorage.setItem("r2StorageLimit", String(mb));
+    localStorage.setItem("storageLimit", String(mb)); // 後方互換
+  }
+}
+
+function getActiveStorageLimit() {
+  return getActiveStorageLimitGB() * 1024;
 }
 
 function setActiveStorageLimit(val) {
-  const num = Number(val) || (activeStorageTab === "filebase" ? 5000 : 10000);
-  if (activeStorageTab === "filebase") {
-    localStorage.setItem("filebaseStorageLimit", String(num));
-  } else {
-    localStorage.setItem("r2StorageLimit", String(num));
-    localStorage.setItem("storageLimit", String(num)); // 後方互換
-  }
+  setActiveStorageLimitGB(Math.round(Number(val) / 1024));
 }
 
 function syncStorageLimitControl() {
-  if (!storageLimitRange) return;
-  const isFb = activeStorageTab === "filebase";
-  storageLimitRange.min = isFb ? "100" : "500";
-  storageLimitRange.max = isFb ? "5000" : "20000";
-  storageLimitRange.step = "100";
-  
-  const currentLimit = getActiveStorageLimit();
-  storageLimitRange.value = String(currentLimit);
-  updateLimitOutput(currentLimit);
+  const gb = getActiveStorageLimitGB();
+  if (storageLimitInput) {
+    storageLimitInput.value = String(gb);
+  }
+  if (storageLimitRange) {
+    const isFb = activeStorageTab === "filebase";
+    storageLimitRange.min = "1";
+    storageLimitRange.max = isFb ? "50" : "100";
+    storageLimitRange.step = "1";
+    storageLimitRange.value = String(Math.min(gb, Number(storageLimitRange.max)));
+  }
 }
 
+// 📦 上限数値入力ボックス
+storageLimitInput?.addEventListener("input", () => {
+  let gb = parseInt(storageLimitInput.value, 10);
+  if (isNaN(gb) || gb < 1) return;
+  setActiveStorageLimitGB(gb);
+  if (storageLimitRange) {
+    storageLimitRange.value = String(Math.min(gb, Number(storageLimitRange.max)));
+  }
+  updateStorageUsageUI();
+});
+
+// 📦 上限スライダー
 storageLimitRange?.addEventListener("input", () => {
-  const val = storageLimitRange.value;
-  updateLimitOutput(val);
-  setActiveStorageLimit(val);
+  const gb = parseInt(storageLimitRange.value, 10) || 1;
+  if (storageLimitInput) {
+    storageLimitInput.value = String(gb);
+  }
+  setActiveStorageLimitGB(gb);
   updateStorageUsageUI();
 });
 
@@ -2291,21 +2325,11 @@ autoFifoCheckbox?.addEventListener("change", () => {
   localStorage.setItem("autoFifo", String(autoFifoCheckbox.checked));
 });
 
-function updateLimitOutput(value) {
-  if (!storageLimitOutput) return;
-  const mb = Number(value);
-  if (mb >= 1000) {
-    storageLimitOutput.textContent = `${(mb / 1000).toFixed(1)} GB`;
-  } else {
-    storageLimitOutput.textContent = `${mb} MB`;
-  }
-}
-
 function updateStorageUsageUI() {
-  if (!storageLimitRange || !storageUsageText || !storageUsageBar) return;
+  if (!storageUsageText || !storageUsageBar) return;
   const totalSize = state.r2TotalSize || 0;
-  const limitMb = getActiveStorageLimit();
-  const limitBytes = limitMb * 1024 * 1024;
+  const limitGb = getActiveStorageLimitGB();
+  const limitBytes = limitGb * 1024 * 1024 * 1024;
   
   const percentage = limitBytes > 0 ? (totalSize / limitBytes) * 100 : 0;
   const clampedPercentage = Math.min(100, Math.round(percentage * 10) / 10);
@@ -2313,8 +2337,7 @@ function updateStorageUsageUI() {
   if (storageUsageBar) storageUsageBar.value = clampedPercentage;
   
   if (storageUsageText) {
-    const formattedLimit = limitMb >= 1000 ? `${(limitMb / 1000).toFixed(1)} GB` : `${limitMb} MB`;
-    storageUsageText.textContent = `使用量: ${formatBytes(totalSize)} / ${formattedLimit} (${clampedPercentage}%)`;
+    storageUsageText.textContent = `使用量: ${formatBytes(totalSize)} / ${limitGb} GB (${clampedPercentage}%)`;
     
     if (totalSize > limitBytes) {
       storageUsageText.classList.add("storage-warning");
