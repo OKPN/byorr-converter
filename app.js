@@ -4842,10 +4842,17 @@ async function fetchAndRenderR2Files() {
             : `<span class="kubo-badge-${escapeHtml(item.Key)}" style="font-size: 10px; padding: 2px 7px; border-radius: 4px; background: rgba(148,163,184,0.08); color: #64748b; border: 1px dashed rgba(148,163,184,0.25); font-weight: 500; cursor: not-allowed; display: inline-flex; align-items: center; gap: 3px;" title="自宅Kubo未保持（自宅ノード未検出・オフライン）">🏠 Kubo: 未保持 (オフライン)</span>`;
         }
 
+        // 🌊 IPFS 漂流中バッジ（Filebase未保持 かつ Kubo未保持: 固定Pinがなく需要駆動で7日延命/自然淘汰される状態）
+        let driftingBadgeHtml = "";
+        if (!isFromS3 && !isKuboPinned) {
+          driftingBadgeHtml = `<span style="font-size: 10px; padding: 2px 7px; border-radius: 4px; background: rgba(239, 68, 68, 0.15); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.4); font-weight: 600; display: inline-flex; align-items: center; gap: 3px;" title="どの固定ノードにもPin留めされていません。需要（7日以内のアクセス）があれば世界中のキャッシュで生存し、アクセスが途絶えると自然消滅します。">🌊 IPFS: 漂流中</span>`;
+        }
+
         storageTierHtml = `
           <div style="display: inline-flex; gap: 6px; align-items: center; flex-wrap: wrap;">
             ${fbBadgeHtml}
             ${kuboBadgeHtml}
+            ${driftingBadgeHtml}
           </div>
         `;
 

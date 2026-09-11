@@ -510,9 +510,10 @@ export async function onRequest(context) {
   headers.set("X-Content-Type-Options", "nosniff");
   headers.set("Accept-Ranges", "bytes");  // 常に宣言（iOS Safari等がシーク非対応と誤判定するのを防止）
 
-  // 3層キャッシュ戦略: ブラウザ=CDNレスポンス(画像1時間/動画4時間) / 上流フェッチ1年
+  // 3層キャッシュ戦略: ブラウザ=CDNレスポンス(画像1時間/動画4時間、アンピン漂流中は7日間) / 上流フェッチ(通常1年/アンピン7日)
   const isVideo = (extMatch[1].toLowerCase() === "mp4" || extMatch[1].toLowerCase() === "webm");
-  const CACHE_SECONDS = isVideo ? 14400 : 3600;  // 動画4時間 / 画像1時間
+  // 🌊 アンピン（IPFS漂流中）ファイルは、7日間に1回アクセスがあれば上流をつついて延命し、アクセスが無ければ自然消滅するよう7日間に設定
+  const CACHE_SECONDS = isUnpinned ? (7 * 86400) : (isVideo ? 14400 : 3600);
   if (hasPassword) {
     headers.set("Cache-Control", `private, max-age=${CACHE_SECONDS}`);
     headers.set("Cloudflare-CDN-Cache-Control", "private, no-store");
