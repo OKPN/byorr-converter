@@ -715,9 +715,25 @@ function blobToBase64(blobOrBytes) {
 }
 
 // --- 🛡️ KV台帳エンドポイント ＆ APIトークン（BYOC・責任分離） ---
+function getCustomKvWorkerUrl() {
+  return (localStorage.getItem("kvWorkerUrl") || kvWorkerUrl?.value || "").trim().replace(/\/$/, "");
+}
+
 function getKvApiEndpoint() {
-  const customUrl = (localStorage.getItem("kvWorkerUrl") || kvWorkerUrl?.value || "").trim().replace(/\/$/, "");
-  return customUrl || "/api/ipfs-kv";
+  const customUrl = getCustomKvWorkerUrl();
+  if (customUrl) {
+    return customUrl.endsWith("/api/ipfs-kv") ? customUrl : `${customUrl}/api/ipfs-kv`;
+  }
+  return ""; // カスタムWorkerが未指定の場合は空（中央KVへの依存を排除）
+}
+
+function getKvDeliveryBaseDomain() {
+  const customUrl = getCustomKvWorkerUrl();
+  if (customUrl) {
+    // 末尾の /api/ipfs-kv があれば除去して配信オリジンを取得
+    return customUrl.replace(/\/api\/ipfs-kv\/?$/, "");
+  }
+  return (getSelectedR2Domain() || (typeof window !== "undefined" ? window.location.origin : "")).replace(/\/$/, "");
 }
 
 function getAdminApiToken() {
@@ -725,10 +741,8 @@ function getAdminApiToken() {
 }
 
 function hasAdminAccess() {
-  // カスタムWorker URLが指定されているか、またはAPIトークンが設定されている場合はKV台帳モードとして動作
-  const customUrl = (localStorage.getItem("kvWorkerUrl") || kvWorkerUrl?.value || "").trim();
-  const token = getAdminApiToken();
-  return Boolean(customUrl || token);
+  // 各自の cividge-kv-worker URL が設定されている場合のみ KV 台帳モード（短縮URL配信）として動作
+  return Boolean(getCustomKvWorkerUrl());
 }
 
 async function registerKvCid(key, cid = "", size = 0, mime = "", s3Key = "", password = "", blobOrBytes = null, ttl = 0, expiresAt = null, unpinned = false, kuboStatus = null) {
@@ -4396,8 +4410,9 @@ async function uploadImage(result, targetProvider = "r2", customPassword = null)
       await registerKvCid(result.name, ipfsCid || "", uploadBytes.length, contentType, result.name, password, uploadBlob || uploadBytes, ttlSeconds, expiresAt);
       
       if (hasAdminAccess()) {
-        result.proxyUrl = `${baseDomain}/${encodeURIComponent(result.name)}`;
-        console.log(`🪐 Filebase URL 生成完了 (管理者KV連携): CID=${ipfsCid} -> ${result.proxyUrl}`);
+        const deliveryBase = getKvDeliveryBaseDomain();
+        result.proxyUrl = `${deliveryBase}/${encodeURIComponent(result.name)}`;
+        console.log(`🪐 cividge-kv-worker URL 生成完了: CID=${ipfsCid} -> ${result.proxyUrl}`);
       } else {
         // 🛡️ 一般ユーザーモード: 中央KVを使わないため、エッジ中継 /i/CID 直リンを発行（責任分離）
         if (ipfsCid) {
@@ -4918,7 +4933,7 @@ async function fetchAndRenderR2Files() {
 
       let publicUrl = isFilebase
         ? (hasAdminAccess()
-            ? `${baseDomain}/${encodeURIComponent(item.Key)}`
+            ? `${getKvDeliveryBaseDomain()}/${encodeURIComponent(item.Key)}`
             : (itemCid ? `${baseDomain}/i/${itemCid}/${encodeURIComponent(item.Key)}` : `${baseDomain}/${encodeURIComponent(item.Key)}`))
         : getPublicUrl(item.Key);
       const devUrl = isFilebase ? null : getDevUrl(item.Key);
