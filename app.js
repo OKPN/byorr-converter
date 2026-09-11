@@ -4725,8 +4725,6 @@ async function fetchAndRenderR2Files() {
       const checkRes = await checkKuboOnline(800);
       isKuboOnline = checkRes.online;
       if (isKuboOnline) {
-        // 自宅ノード起動時に未回収の墓標（外出先等で削除されたファイルのUnpin予約）をバックグラウンド処理
-        drainKuboTombstones();
         // 🏠 Kubo がオンラインの場合、現在の実際の Pin リストを取得して KV 側の誤認（Pin されていないのに保持中表示）を訂正
         actualKuboPinnedSet = await getKuboPinnedCids(1500);
       }
@@ -4849,10 +4847,8 @@ async function fetchAndRenderR2Files() {
           // Kubo連携が無効（チェックOFF）
           kuboBadgeHtml = `<span class="kubo-badge-${escapeHtml(item.Key)}" style="font-size: 10px; padding: 2px 7px; border-radius: 4px; background: rgba(148,163,184,0.08); color: #64748b; border: 1px dashed rgba(148,163,184,0.25); font-weight: 500; cursor: not-allowed; display: inline-flex; align-items: center; gap: 3px;" title="自宅Kubo機能は無効（設定で有効化可能）">🏠 Kubo: 未設定</span>`;
         } else if (isKuboPinned) {
-          // 保持中（Kuboがオンラインなら解除可能、オフラインなら情報バッジとして表示）
-          kuboBadgeHtml = isKuboOnline
-            ? `<button type="button" class="kubo-unpin-manual-btn kubo-badge-${escapeHtml(item.Key)}" data-key="${escapeHtml(item.Key)}" data-cid="${escapeHtml(itemCid || "")}" style="cursor: pointer; font-size: 10px; padding: 2px 7px; border-radius: 4px; background: rgba(168,85,247,0.15); color: #c084fc; border: 1px solid rgba(168,85,247,0.4); font-weight: 600; display: inline-flex; align-items: center; gap: 3px;" title="自宅KuboにPin留め済み（クリックでKuboからPin解除）">🏠 Kubo: 保持中</button>`
-            : `<span class="kubo-badge-${escapeHtml(item.Key)}" style="font-size: 10px; padding: 2px 7px; border-radius: 4px; background: rgba(168,85,247,0.08); color: #a855f7; border: 1px solid rgba(168,85,247,0.25); font-weight: 500; display: inline-flex; align-items: center; gap: 3px;" title="自宅KuboにPin留め記録あり（現在ノード未起動）">🏠 Kubo: 保持中 (停止中)</span>`;
+          // 🏠 自宅Kuboに保護中（安全設計：Cividge画面からはPin解除せず、ノード側WebUIまたはCLIで管理）
+          kuboBadgeHtml = `<span class="kubo-badge-${escapeHtml(item.Key)}" style="font-size: 10px; padding: 2px 7px; border-radius: 4px; background: rgba(168,85,247,0.15); color: #c084fc; border: 1px solid rgba(168,85,247,0.4); font-weight: 600; display: inline-flex; align-items: center; gap: 3px;" title="🏠 自宅Kuboに永続保護中（※Pin解除はKubo公式WebUIまたはCLIから行ってください）">🏠 Kubo: 保持中</span>`;
         } else if (itemCid) {
           // 未保持（オンラインならPin留めボタン、オフラインならグレーアウト）
           kuboBadgeHtml = isKuboOnline
@@ -5200,55 +5196,6 @@ r2FileList?.addEventListener("click", async (e) => {
     return;
   }
 
-  // 🏠 自宅 Kubo からの Pin 解除ボタン
-  if (target.classList.contains("kubo-unpin-manual-btn")) {
-    const key = target.dataset.key;
-    const cid = target.dataset.cid;
-    if (!cid) return;
-    const ok = await showCustomConfirm(
-      `Kuboノードから '${key}' のPinを解除しますか？\n\n（Filebaseやエッジキャッシュの配信には影響しません）`,
-      "🏠 Kubo Pin解除の確認"
-    );
-    if (!ok) return;
-
-    target.disabled = true;
-    const origText = target.textContent;
-    target.textContent = "解除中...";
-
-    try {
-      const res = await unpinFromKubo(cid);
-      if (res.success) {
-        const kvRes = await fetch(`/api/ipfs-kv?key=${encodeURIComponent(key)}`);
-        if (kvRes.ok) {
-          const kvData = await kvRes.json();
-          const meta = kvData.metadata || {};
-          await registerKvCid(
-            key,
-            cid,
-            meta.size || 0,
-            meta.mime || "",
-            meta.s3Key || key,
-            "",
-            null,
-            meta.ttl || 0,
-            meta.expiresAt || null,
-            Boolean(meta.unpinned),
-            "not_pinned"
-          );
-        }
-        await fetchAndRenderR2Files();
-      } else {
-        await showCustomAlert(`Kubo Pin解除に失敗しました: ${res.error}`, "❌ エラー");
-        target.disabled = false;
-        target.textContent = origText;
-      }
-    } catch (err) {
-      await showCustomAlert(`エラー: ${err.message}`, "❌ エラー");
-      target.disabled = false;
-      target.textContent = origText;
-    }
-    return;
-  }
 
   // 🏠 自宅 Kubo への手動 Pin留めボタン
   if (target.classList.contains("kubo-pin-manual-btn")) {
@@ -5461,15 +5408,6 @@ r2FileList?.addEventListener("click", async (e) => {
           await s3.send(command);
         }
 
-        // 4. 自宅 Kubo が現在オンラインであれば、その場で即座にアンピン＆ガベージコレクション
-        if (cid && (siblingLinks.length === 0 || deleteOriginAlso)) {
-          const kuboCheck = await checkKuboOnline(800);
-          if (kuboCheck.online) {
-            await unpinFromKubo(cid);
-            // 墓標も即時クリア
-            await fetch(`/api/ipfs-kv?tombstone=${encodeURIComponent(cid)}`, { method: "DELETE" }).catch(() => {});
-          }
-        }
 
         await fetchAndRenderR2Files();
       } catch (err) {
@@ -5559,23 +5497,6 @@ deleteSelectedR2FilesButton?.addEventListener("click", async () => {
         await s3.send(command);
       }
 
-      // 4. 自宅 Kubo が現在オンラインであれば、選択されたアイテムの CID を即時 Unpin ＆ 墓標クリア
-      const kuboCheck = await checkKuboOnline(800);
-      if (kuboCheck.online) {
-        const cidsToUnpin = new Set();
-        for (const cb of checkboxes) {
-          const itemCid = cb.closest(".result-item")?.dataset?.cid || cb.dataset.cid;
-          if (itemCid) cidsToUnpin.add(itemCid);
-        }
-        for (const cid of cidsToUnpin) {
-          try {
-            await unpinFromKubo(cid);
-            await fetch(`/api/ipfs-kv?tombstone=${encodeURIComponent(cid)}`, { method: "DELETE" }).catch(() => {});
-          } catch (kErr) {
-            console.warn(`一括削除時のKubo Unpinエラー (${cid}):`, kErr);
-          }
-        }
-      }
     } else {
       if (s3 && bucketName) {
         const objects = keys.map(Key => ({ Key }));
