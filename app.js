@@ -804,11 +804,10 @@ function getAdminApiToken() {
 }
 
 function hasAdminAccess() {
-  // 🛡️ KV台帳モード: ユーザー自身が cividge-kv-worker の URL と 管理者トークン (Admin Token) を明示的に設定している場合のみ有効化
-  // （未設定時は一般ユーザーモード: Filebase S3 + CID直リンで責任分離）
+  // 🛡️ KV台帳モード: 管理者トークン (Admin Token) が設定されているか、独自KV Worker URLが指定されている場合に有効化
   const custom = getCustomKvWorkerUrl();
   const token = getAdminApiToken();
-  return Boolean(custom && token);
+  return Boolean(token || custom);
 }
 
 async function registerKvCid(key, cid = "", size = 0, mime = "", s3Key = "", password = "", blobOrBytes = null, ttl = 0, expiresAt = null, unpinned = false, kuboStatus = null, allowedHost = null, overwriteAllowedHost = false) {
@@ -1168,11 +1167,10 @@ function createCardDomainSelectHtml(currentUrl, extraClass = "") {
   }
 
   return `
-    <div class="card-domain-select-wrapper" style="display: inline-flex; align-items: center; gap: 4px;">
-      <select class="card-domain-switcher ${extraClass}" title="配信ドメインを着せ替える" style="height: 28px; font-size: 11px; max-width: 130px; background: rgba(0,0,0,0.4); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.4); border-radius: 4px; padding: 0 4px; outline: none; cursor: pointer;">
+    <div class="card-domain-select-wrapper" style="display: inline-flex; align-items: center;">
+      <select class="card-domain-switcher ${extraClass}" title="配信ドメインを着せ替える" style="height: 28px; font-size: 11px; max-width: 140px; background: rgba(0,0,0,0.4); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.4); border-radius: 4px; padding: 0 4px; outline: none; cursor: pointer;">
         ${optionsHtml}
       </select>
-      <button type="button" class="add-domain-alias-btn ghost-button" title="➕ このファイルの別配信ドメインエイリアスを作成" style="height: 28px; width: 28px; padding: 0; display: inline-flex; align-items: center; justify-content: center; font-size: 13px; font-weight: bold; border-color: rgba(56, 189, 248, 0.4); color: #38bdf8; line-height: 1; border-radius: 4px;" aria-label="エイリアス追加">➕</button>
     </div>
   `;
 }
@@ -4993,10 +4991,10 @@ async function uploadImage(result, targetProvider = "r2", customPassword = null)
       const headers = putOutput?.$metadata?.httpHeaders || {};
       ipfsCid = checkAndValidateCid(headers["x-amz-meta-cid"] || headers["x-amz-meta-ipfs-hash"]);
 
-      // レスポンスヘッダーに無ければ HeadObject を最大5回リトライして試行
-      for (let attempt = 0; attempt < 5 && !ipfsCid; attempt++) {
+      // レスポンスヘッダーに無ければ HeadObject を最大8回リトライして確実にCIDを取得
+      for (let attempt = 0; attempt < 8 && !ipfsCid; attempt++) {
         try {
-          await new Promise(r => setTimeout(r, 600 + attempt * 400));
+          await new Promise(r => setTimeout(r, 600 + attempt * 500));
           const headOutput = await s3.send(new HeadObjectCommand({
             Bucket: bucketName,
             Key: result.name,
@@ -6471,141 +6469,7 @@ r2FileList?.addEventListener("click", async (e) => {
     return;
   }
 
-  // 🌐 配信ドメイン エイリアス追加ボタン（パターンB: 同一CIDで別レコード作成）
-  if (target.classList.contains("add-domain-alias-btn") || target.closest(".add-domain-alias-btn")) {
-    const btn = target.classList.contains("add-domain-alias-btn") ? target : target.closest(".add-domain-alias-btn");
-    const article = btn.closest(".result-item");
-    const oldKey = article?.dataset?.key;
-    const s3Key = article?.dataset?.s3key || oldKey;
-    const currentCid = article?.dataset?.cid || getStoredIpfsCid(oldKey) || getStoredIpfsCid(s3Key);
-    const size = parseInt(article?.dataset?.size || "0", 10);
-    const cardSelect = article?.querySelector(".r2-file-domain-select");
-    const currentDomain = cardSelect?.value || getSelectedR2Domain() || "";
 
-    if (!oldKey || !currentCid) {
-      await showCustomAlert("⚠️ ファイルの CID 情報が見つからないためエイリアスを作成できません。", "エラー");
-      return;
-    }
-
-    let domainList = getR2DomainList();
-    if (domainList.length === 0) {
-      const inputDomain = prompt("追加先の配信ドメイン（URL）を入力してください (例: https://sample.pages.dev):");
-      if (!inputDomain || !inputDomain.trim()) return;
-      const clean = inputDomain.trim().replace(/\/$/, "");
-      const formatted = /^https?:\/\//i.test(clean) ? clean : `https://${clean}`;
-      domainList = [formatted];
-      const all = getR2DomainList();
-      if (!all.includes(formatted)) {
-        all.push(formatted);
-        saveR2DomainList(all);
-        renderR2DomainSelect();
-      }
-    }
-
-    const displayName = article?.dataset?.displayname || (oldKey.includes(":") ? oldKey.split(":").slice(1).join(":") : oldKey);
-
-    // ダイアログを表示して対象ドメインとファイル名・独立TTLを取得
-    const dialogResult = await showDomainAliasDialog(displayName, currentDomain, domainList);
-    if (!dialogResult) return;
-
-    const { filename: targetFilename, targetDomain, ttl: aliasTtl } = dialogResult;
-    const cleanHost = targetDomain.replace(/^https?:\/\//, "").split("/")[0].split(":")[0].toLowerCase();
-    const aliasKey = `${cleanHost}:${targetFilename}`;
-
-    // 既存ファイルとの衝突チェック
-    let existingKvFiles = [];
-    try {
-      existingKvFiles = await fetchKvFiles();
-    } catch (e) {
-      console.warn("fetchKvFiles error during alias creation:", e);
-    }
-
-    const conflicting = existingKvFiles.find(f => f.name === aliasKey || (f.name === targetFilename && (f.metadata?.allowedHost || f.metadata?.d || "").toLowerCase() === cleanHost));
-    if (conflicting) {
-      await showCustomAlert(`⚠️ ドメイン「${targetDomain}」には既に「${targetFilename}」が登録されています。`, "登録済み");
-      return;
-    }
-
-    btn.disabled = true;
-    const origText = btn.textContent;
-    btn.textContent = "⏳";
-
-    try {
-      // 既存メタデータの引き継ぎ
-      let currentMeta = {};
-      const currentKv = existingKvFiles.find(f => f.name === oldKey || f.name === targetFilename);
-      if (currentKv && currentKv.metadata) {
-        currentMeta = currentKv.metadata;
-      }
-
-      const mime = currentMeta.mime || "";
-      const selectedTtl = typeof aliasTtl === "number" ? aliasTtl : (currentMeta.ttl || 0);
-      const expiresAt = selectedTtl > 0 ? (Date.now() + selectedTtl * 1000) : null;
-      const password = currentMeta.password || "";
-      const unpinned = Boolean(currentMeta.unpinned);
-      const kuboStatus = currentMeta.kuboStatus || null;
-
-      // KV にエイリアスとして新規登録（キー: cleanHost:targetFilename、同一CID、同一s3Key、指定された targetDomain を単一上書きで適用）
-      await registerKvCid(
-        aliasKey,
-        currentCid,
-        size,
-        mime,
-        s3Key,
-        password,
-        null,
-        selectedTtl,
-        expiresAt,
-        unpinned,
-        kuboStatus,
-        targetDomain,
-        true // overwriteAllowedHost: 選択されたドメインのみを単一で設定（カンマ結合破損を完全防止）
-      );
-
-      // 🛡️ 元のファイルが単体キー（プレフィックス無し）だった場合、元ドメイン側の個別キー [originalHost]:[filename] も登録して完全対称・確実配信を保証
-      if (!oldKey.includes(":") && currentDomain) {
-        const origCleanHost = currentDomain.replace(/^https?:\/\//, "").split("/")[0].split(":")[0].toLowerCase();
-        if (origCleanHost && origCleanHost !== cleanHost) {
-          const origKeyWithHost = `${origCleanHost}:${targetFilename}`;
-          const origTtl = currentMeta.ttl || 0;
-          const origExpiresAt = currentMeta.expiresAt || null;
-          await registerKvCid(
-            origKeyWithHost,
-            currentCid,
-            size,
-            mime,
-            s3Key,
-            password,
-            null,
-            origTtl,
-            origExpiresAt,
-            unpinned,
-            kuboStatus,
-            currentDomain,
-            true
-          );
-          storeIpfsCid(origKeyWithHost, currentCid);
-        }
-      }
-
-      storeIpfsCid(aliasKey, currentCid);
-      storeIpfsCid(targetFilename, currentCid);
-
-      btn.textContent = "✅";
-      setTimeout(async () => {
-        btn.textContent = origText;
-        btn.disabled = false;
-        await fetchAndRenderR2Files();
-      }, 500);
-
-    } catch (err) {
-      console.error("Alias creation failed:", err);
-      btn.textContent = origText;
-      btn.disabled = false;
-      await showCustomAlert(`エイリアス作成に失敗しました: ${err.message}`, "❌ エラー");
-    }
-    return;
-  }
 
   // 📋 小型 CID コピーボタン
   if (target.classList.contains("copy-cid-btn")) {
