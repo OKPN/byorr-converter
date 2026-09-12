@@ -393,12 +393,29 @@ export async function onRequest(context) {
   if (env && env.IPFS_KV) {
     try {
       const currentHost = url.hostname.toLowerCase();
-      // 1. ドメイン個別キー (例: "misskey-media.pages.dev:7ud1yi6z.mp4") で優先照会
+      // 1. カレントドメイン個別キー (例: "content-cache.pages.dev:filename") で優先照会
       let kvRes = await env.IPFS_KV.getWithMetadata(`${currentHost}:${filename}`);
       if (!kvRes && filename !== rawFilename) {
         kvRes = await env.IPFS_KV.getWithMetadata(`${currentHost}:${rawFilename}`);
       }
-      // 2. 見つからなければ従来のファイル名単体キーでフォールバック照会
+      // 2. 姉妹公式配信エッジのドメイン個別キーも順次フォールバック照会（ドメイン切り替え時にも即座に発見可能にする）
+      if (!kvRes) {
+        const officialHosts = [
+          "content-cache.pages.dev",
+          "content-relay.pages.dev",
+          "misskey-media.pages.dev",
+          "blobs-cache.pages.dev",
+          "cividge.pages.dev"
+        ].filter(h => h !== currentHost);
+        for (const sisterHost of officialHosts) {
+          kvRes = await env.IPFS_KV.getWithMetadata(`${sisterHost}:${filename}`);
+          if (!kvRes && filename !== rawFilename) {
+            kvRes = await env.IPFS_KV.getWithMetadata(`${sisterHost}:${rawFilename}`);
+          }
+          if (kvRes) break;
+        }
+      }
+      // 3. 見つからなければ従来のファイル名単体キーで照会
       if (!kvRes) {
         kvRes = await env.IPFS_KV.getWithMetadata(filename);
       }
@@ -421,12 +438,20 @@ export async function onRequest(context) {
   }
 
   // 🌐 配信ドメイン制限チェック（設定されたドメイン以外からのアクセスは即座に404で遮断）
+  // 🌟 公式配信エッジ群（content-cache, content-relay, misskey-media, blobs-cache, cividge）は相互にスムーズな切り替え・配信を許可
   const allowedDomain = meta.d || meta.allowedHost;
   if (allowedDomain && typeof allowedDomain === "string" && allowedDomain.trim()) {
     const allowedHostnames = allowedDomain.split(",").map(h => h.trim().toLowerCase().replace(/^https?:\/\//, "").split('/')[0].split(':')[0]).filter(Boolean);
     const currentHostname = url.hostname.toLowerCase();
+    const isOfficialEdge = (h) => h.includes("content-relay") || h.includes("content-cache") || h.includes("blobs-cache") || h.includes("misskey-media") || h.includes("cividge.pages.dev");
+    const isCurrentOfficial = isOfficialEdge(currentHostname);
+    const isAnyAllowedOfficial = allowedHostnames.some(h => isOfficialEdge(h));
+
+    // 公式配信エッジ同士であれば常に相互配信を許可。それ以外（独自ドメイン指定等）の場合は厳格に照合
     if (allowedHostnames.length > 0 && !allowedHostnames.includes(currentHostname)) {
-      return renderNotFoundResponse(request, 60); // 許可外ドメインアクセスは1分キャッシュ（DDoS対策を維持しつつドメイン切替の反映を迅速化）
+      if (!(isCurrentOfficial && isAnyAllowedOfficial)) {
+        return renderNotFoundResponse(request, 60); // 許可外ドメインアクセスは1分キャッシュ（DDoS対策を維持しつつドメイン切替の反映を迅速化）
+      }
     }
   }
 
@@ -561,6 +586,7 @@ export async function onRequest(context) {
   const ipfsGateways = [
     "https://ipfs.filebase.io/ipfs",
     "https://cloudflare-ipfs.com/ipfs",
+    "https://4everland.io/ipfs",
     "https://ipfs.io/ipfs",
     "https://dweb.link/ipfs",
   ];
