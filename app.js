@@ -6014,9 +6014,9 @@ function renderCurrentStoragePage() {
       if (!isKuboAutoPin) {
         kuboBadgeHtml = `<span class="kubo-badge-${escapeHtml(itemKey)}" style="font-size: 10px; padding: 2px 7px; border-radius: 4px; background: rgba(148,163,184,0.08); color: #64748b; border: 1px dashed rgba(148,163,184,0.25); font-weight: 500; cursor: not-allowed; display: inline-flex; align-items: center; gap: 3px;" title="自宅Kubo機能は無効（設定で有効化可能）">🏠 Kubo: 未設定</span>`;
       } else if (isKuboPinned) {
-        kuboBadgeHtml = `<span class="kubo-badge-${escapeHtml(itemKey)}" style="font-size: 10px; padding: 2px 7px; border-radius: 4px; background: rgba(168,85,247,0.12); color: #c084fc; border: 1px solid rgba(168,85,247,0.3); font-weight: 600; display: inline-flex; align-items: center; gap: 3px;" title="🏠 自宅Kuboに保護中">🏠 Kubo: 保持中</span>`;
+        kuboBadgeHtml = `<button type="button" class="kubo-unpin-manual-btn kubo-badge-${escapeHtml(itemKey)}" data-key="${escapeHtml(itemKey)}" data-cid="${escapeHtml(itemCid || "")}" style="cursor: pointer; font-size: 10px; padding: 2px 7px; border-radius: 4px; background: rgba(168,85,247,0.15); color: #c084fc; border: 1px solid rgba(168,85,247,0.4); font-weight: 600; display: inline-flex; align-items: center; gap: 3px;" title="🏠 自宅Kuboに保護中（クリックでPin解除）">🏠 Kubo: 保持中</button>`;
       } else if (itemCid) {
-        kuboBadgeHtml = `<span class="kubo-badge-${escapeHtml(itemKey)}" style="font-size: 10px; padding: 2px 7px; border-radius: 4px; background: rgba(148,163,184,0.08); color: #64748b; border: 1px dashed rgba(148,163,184,0.25); font-weight: 500; cursor: not-allowed; display: inline-flex; align-items: center; gap: 3px;" title="自宅Kubo未保持">🏠 Kubo: 未保持</span>`;
+        kuboBadgeHtml = `<button type="button" class="kubo-pin-manual-btn kubo-badge-${escapeHtml(itemKey)}" data-key="${escapeHtml(itemKey)}" data-cid="${escapeHtml(itemCid || "")}" style="cursor: pointer; font-size: 10px; padding: 2px 7px; border-radius: 4px; background: rgba(148,163,184,0.12); color: #94a3b8; border: 1px dashed rgba(148,163,184,0.3); font-weight: 500; display: inline-flex; align-items: center; gap: 3px;" title="自宅Kubo未保持（クリックで自宅KuboへPin留め）">🏠 Kubo: 未保持</button>`;
       }
 
       let driftingBadgeHtml = "";
@@ -6623,8 +6623,10 @@ r2FileList?.addEventListener("click", async (e) => {
     if (!cid) return;
 
     const endpoint = getKuboRpcEndpoint();
-    if (!endpoint.includes(".ts.net") && !endpoint.startsWith("https://")) {
-      await showCustomAlert("ブラウザからのPin解除は、Tailscale (HTTPS) 接続時のみ安全に実行可能です。\n\nそれ以外の環境ではKubo公式WebUIまたはCLIから解除してください。", "⚠️ Tailscale未接続");
+    const isLocal = endpoint.includes("127.0.0.1") || endpoint.includes("localhost");
+    const isTailscale = endpoint.includes(".ts.net") || endpoint.startsWith("https://");
+    if (!isLocal && !isTailscale && !endpoint.startsWith("http://")) {
+      await showCustomAlert("Kuboノードへの接続エンドポイントが設定されていません。\n\n設定画面からKubo RPCエンドポイント（http://127.0.0.1:5001等）を設定してください。", "⚠️ 未接続");
       return;
     }
 
@@ -7619,11 +7621,19 @@ civitaiGalleryList?.addEventListener("click", async (event) => {
     try {
       copyBtn.textContent = "解決中...";
       let finalUrl = rawUrl;
+
+      // サーバーサイドの /api/resolve-url を経由してリダイレクト先（blobs-b2.civitai.com 等）の短縮URLを取得
       try {
-        const res = await fetch(rawUrl);
-        if (res && res.url) finalUrl = res.url;
+        const resolveApi = `/api/resolve-url?url=${encodeURIComponent(rawUrl)}`;
+        const res = await fetch(resolveApi);
+        if (res.ok) {
+          const data = await res.json();
+          if (data && data.resolvedUrl) {
+            finalUrl = data.resolvedUrl;
+          }
+        }
       } catch (e) {
-        // CORS等で直接fetchできない場合はそのままrawUrlを使用
+        console.warn("Failed to resolve URL via /api/resolve-url:", e);
       }
 
       copyBtn.dataset.url = finalUrl;
