@@ -352,6 +352,7 @@ export async function onRequest(context) {
   }
 
   const url = new URL(request.url);
+  const pathname = url.pathname;
   // 🛡️ メディア配信エッジ判定:
   // メイン管理アプリ（cividge.pages.dev または localhost）以外の独自ドメイン/Pagesエッジは配信専用エッジとして動作
   // トップページ（/）や管理画面・非メディアURLへのアクセスは、フロントエンドアプリ画面を出さず即座に404返却（1日CDNキャッシュでFunctions完全防衛）
