@@ -13,10 +13,6 @@
 ## 🌟 Live Demo
 
 - **Main App**: [https://cividge.pages.dev](https://cividge.pages.dev)
-- **Edge Cache Endpoints**:
-  - https://content-cache.pages.dev
-  - https://misskey-media.pages.dev
-  - https://blobs-cache.pages.dev
 
 ---
 
@@ -44,7 +40,7 @@ Your Cloudflare R2 & Filebase access keys never leave your machine. Uploads happ
 - **3-Tier Edge Caching**: 1 hour for images/docs, 4 hours for video/audio, and 7-day keep-alive caching for drifting/unpinned IPFS files.
 - **Instant Social OGP HTML**: Misskey (SummalyBot), Discord, and Twitter crawlers receive lightweight OGP HTML and first-frame video thumbnails (.thumb.webp), completely avoiding 10MB payload drop-offs and preview timeouts.
 - **Audio & Video Streaming**: Full support for HTTP 206 Partial Content (byte-range requests) for seeking in mp4, webm, mov, mp3, wav, m4a, and lac.
-- **Domain Switcher**: Switch and copy links across registered custom domains and Pages edges (misskey-media.pages.dev, content-cache.pages.dev, etc.) with one click.
+- **Domain Switcher**: Switch and copy links across registered custom domains and Pages edge endpoints with one click.
 
 ### 🪐 Dual Storage Backend: R2 + IPFS
 - **Cloudflare R2**: High-speed, zero-egress fee object storage.
