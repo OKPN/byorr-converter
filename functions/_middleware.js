@@ -613,7 +613,7 @@ export async function onRequest(context) {
   // 🪐 複数公共IPFSゲートウェイへのアクセス分散（マルチキャッシュ伝播 & Filebase転送量節約）
   const ipfsGateways = [
     "https://ipfs.filebase.io/ipfs",
-    "https://cloudflare-ipfs.com/ipfs",
+    "https://gateway.pinata.cloud/ipfs",
     "https://4everland.io/ipfs",
     "https://ipfs.io/ipfs",
     "https://dweb.link/ipfs",
@@ -625,7 +625,7 @@ export async function onRequest(context) {
   const isUnpinned = Boolean(meta.unpinned) || Boolean((meta.f || 0) & 1);
   const UPSTREAM_CACHE_SECONDS = isUnpinned ? (7 * 86400) : 31536000;
 
-  // ゲートウェイの優先順位を分散（アンピン時は公共ノードにも均等にアクセスを散らす）
+  // ゲートウェイの優先順位: Filebaseに実体がある通常時は確実な Filebase を最優先、アンピン時は公共ノードにも均等に分散
   const orderedGateways = isUnpinned
     ? [...ipfsGateways].sort(() => Math.random() - 0.5)
     : ipfsGateways;
@@ -638,7 +638,8 @@ export async function onRequest(context) {
       try {
         upstreamResponse = await fetch(`${gw}/${candidate}`, {
           method: isHead ? "HEAD" : "GET",
-          signal: AbortSignal.timeout(4000),
+          redirect: "follow",
+          signal: AbortSignal.timeout(6000),
           headers: {
             "User-Agent": "Cividge-KV-Relay/1.0",
             ...(request.headers.get("Range") ? { "Range": request.headers.get("Range") } : {}),
