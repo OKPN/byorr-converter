@@ -639,7 +639,8 @@ export async function onRequest(context) {
 
 
   if (!upstreamResponse || !upstreamResponse.ok) {
-    return renderNotFoundResponse(request, 60, `upstream_failed:cid=${targetCid}:cand=${candidates.join(",")}`);
+    const hasKv = Boolean(env && env.IPFS_KV);
+    return renderNotFoundResponse(request, 60, `upstream_failed:hasKv=${hasKv}:cid=${targetCid}:cand=${candidates.join(",")}`);
   }
 
   const headers = new Headers();
