@@ -1087,6 +1087,15 @@ async function fetchKvFiles() {
 
 // --- 🌐 R2 公開・配信ドメイン管理 ---
 
+const DEFAULT_PRESET_DOMAINS = [
+  "https://content-cache.pages.dev",
+  "https://misskey-media.pages.dev",
+  "https://content-relay.pages.dev",
+  "https://blobs-cache.pages.dev",
+  "https://cividge.pages.dev",
+  "https://bbs.punipuni.eu",
+];
+
 function getR2DomainList() {
   let list = [];
   try {
@@ -1094,6 +1103,16 @@ function getR2DomainList() {
   } catch (e) {
     list = [];
   }
+  // 未設定または空の場合はプリセットを初期設定
+  if (!list || list.length === 0) {
+    list = [...DEFAULT_PRESET_DOMAINS];
+  } else {
+    // プリセットに含まれるドメイン（punipuni等）が未登録なら統合
+    for (const d of DEFAULT_PRESET_DOMAINS) {
+      if (!list.includes(d)) list.push(d);
+    }
+  }
+
   // 後方互換性：旧 r2PublicDomain / r2DevDomain からの自動移行
   const legacyPub = (localStorage.getItem("r2PublicDomain") || "").trim();
   const legacyDev = (localStorage.getItem("r2DevDomain") || "").trim();
@@ -6401,7 +6420,6 @@ r2FileList?.addEventListener("click", async (e) => {
     const displayName = article?.dataset?.displayname || (oldKey && oldKey.includes(":") ? oldKey.split(":").slice(1).join(":") : oldKey);
     const s3Key = article?.dataset?.s3key || displayName || oldKey;
     const cid = article?.dataset?.cid || "";
-    const size = Number(article?.dataset?.size || 0);
     const currentDomain = article?.dataset?.allowedhost || "";
 
     const availableDomains = getR2DomainList().filter(d => {
@@ -6414,82 +6432,114 @@ r2FileList?.addEventListener("click", async (e) => {
       return;
     }
 
-    const domainOptionsPrompt = availableDomains.map((d, i) => `${i + 1}: ${d}`).join("\n");
-    const chosenInput = prompt(`追加したい配信ドメインの番号を入力してください：\n\n${domainOptionsPrompt}\n\n※同一CIDのまま、このドメインでの配信カードがファイル一覧に追加されます。`, "1");
-    if (!chosenInput) return;
+    const modal = document.getElementById("aliasCreateModal");
+    const filenameInput = document.getElementById("aliasTargetFilenameInput");
+    const domainSelect = document.getElementById("aliasTargetDomainSelect");
+    const ttlSelect = document.getElementById("aliasTargetTtlSelect");
+    const cancelBtn = document.getElementById("cancelAliasBtn");
+    const submitBtn = document.getElementById("submitAliasBtn");
 
-    const chosenIdx = parseInt(chosenInput.trim(), 10) - 1;
-    if (isNaN(chosenIdx) || chosenIdx < 0 || chosenIdx >= availableDomains.length) {
-      alert("有効なドメイン番号を入力してください。");
-      return;
-    }
+    if (!modal || !domainSelect || !submitBtn) return;
 
-    const targetDomainUrl = availableDomains[chosenIdx];
-    const cleanHost = targetDomainUrl.replace(/^https?:\/\//, "").replace(/\/$/, "").split(":")[0];
-    const newDomainKey = `${cleanHost}:${displayName}`;
+    filenameInput.value = displayName;
+    domainSelect.innerHTML = "";
+    availableDomains.forEach(d => {
+      const opt = document.createElement("option");
+      opt.value = d;
+      let icon = "🌐 ";
+      if (d.includes(".pages.dev")) icon = "⚡ ";
+      else if (d.includes(".r2.dev")) icon = "📦 ";
+      else if (d.includes("punipuni")) icon = "✨ ";
+      opt.textContent = `${icon}${d}`;
+      domainSelect.appendChild(opt);
+    });
 
-    btn.disabled = true;
-    btn.textContent = "...";
-
-    try {
-      let unpinned = false;
-      let kuboStatus = null;
-      let ttl = 0;
-      let expiresAt = null;
-      let password = "";
-
+    // 既存の残り時間をデフォルト選択
+    if (ttlSelect) {
       const domExpiresAt = Number(article?.dataset?.expiresat || 0) || null;
       if (domExpiresAt && domExpiresAt > Date.now()) {
-        expiresAt = domExpiresAt;
-        ttl = Math.round((domExpiresAt - Date.now()) / 1000);
+        const diff = Math.round((domExpiresAt - Date.now()) / 1000);
+        if (diff <= 3600) ttlSelect.value = "3600";
+        else if (diff <= 43200) ttlSelect.value = "43200";
+        else if (diff <= 86400) ttlSelect.value = "86400";
+        else if (diff <= 259200) ttlSelect.value = "259200";
+        else ttlSelect.value = "604800";
+      } else {
+        ttlSelect.value = "0";
       }
+    }
+
+    modal.style.display = "flex";
+
+    const closeModal = () => {
+      modal.style.display = "none";
+      submitBtn.onclick = null;
+      cancelBtn.onclick = null;
+    };
+
+    cancelBtn.onclick = () => closeModal();
+
+    submitBtn.onclick = async () => {
+      const targetDomainUrl = domainSelect.value;
+      if (!targetDomainUrl) return;
+
+      const cleanHost = targetDomainUrl.replace(/^https?:\/\//, "").replace(/\/$/, "").split(":")[0];
+      const newDomainKey = `${cleanHost}:${displayName}`;
+
+      submitBtn.disabled = true;
+      submitBtn.textContent = "作成中...";
 
       try {
-        const kvFiles = await fetchKvFiles();
-        const currentKv = kvFiles.find(f => f.name === oldKey || f.name.endsWith(`:${oldKey}`));
-        if (currentKv && currentKv.metadata) {
-          unpinned = Boolean(currentKv.metadata.unpinned);
-          kuboStatus = currentKv.metadata.kuboStatus || null;
-          if (!expiresAt) {
-            ttl = currentKv.metadata.ttl || 0;
-            expiresAt = currentKv.metadata.expiresAt || null;
+        let unpinned = false;
+        let kuboStatus = null;
+        let ttl = ttlSelect ? Number(ttlSelect.value || 0) : 0;
+        let expiresAt = ttl > 0 ? (Date.now() + ttl * 1000) : null;
+        let password = "";
+
+        try {
+          const kvFiles = await fetchKvFiles();
+          const currentKv = kvFiles.find(f => f.name === oldKey || f.name.endsWith(`:${oldKey}`));
+          if (currentKv && currentKv.metadata) {
+            unpinned = Boolean(currentKv.metadata.unpinned);
+            kuboStatus = currentKv.metadata.kuboStatus || null;
+            password = currentKv.metadata.password || "";
           }
-          password = currentKv.metadata.password || "";
+        } catch (e) {}
+
+        await registerKvCid(
+          newDomainKey,
+          cid,
+          size,
+          "",
+          s3Key,
+          password,
+          null,
+          ttl,
+          expiresAt,
+          unpinned,
+          kuboStatus,
+          cleanHost,
+          true // overwriteAllowedHost: この新ドメインのみ許可
+        );
+
+        if (cid) {
+          storeIpfsCid(newDomainKey, cid);
         }
-      } catch (e) {}
 
-      await registerKvCid(
-        newDomainKey,
-        cid,
-        size,
-        "",
-        s3Key,
-        password,
-        null,
-        ttl,
-        expiresAt,
-        unpinned,
-        kuboStatus,
-        cleanHost,
-        true // overwriteAllowedHost: この新ドメインのみ許可
-      );
+        // 新URLのウォームアップ
+        const newUrl = `${targetDomainUrl.replace(/\/$/, "")}/${encodeURIComponent(displayName)}`;
+        fetch(newUrl, { method: "HEAD", mode: "no-cors" }).catch(() => {});
 
-      if (cid) {
-        storeIpfsCid(newDomainKey, cid);
+        closeModal();
+        await fetchAndRenderR2Files();
+      } catch (err) {
+        console.error("Failed to add domain alias:", err);
+        alert(`❌ ドメイン追加に失敗しました: ${err.message}`);
+      } finally {
+        submitBtn.disabled = false;
+        submitBtn.textContent = "エイリアス作成";
       }
-
-      // 新URLのウォームアップ
-      const newUrl = `${targetDomainUrl.replace(/\/$/, "")}/${encodeURIComponent(displayName)}`;
-      fetch(newUrl, { method: "HEAD", mode: "no-cors" }).catch(() => {});
-
-      await fetchAndRenderR2Files();
-    } catch (err) {
-      console.error("Failed to add domain alias:", err);
-      alert(`❌ ドメイン追加に失敗しました: ${err.message}`);
-    } finally {
-      btn.disabled = false;
-      btn.textContent = "＋";
-    }
+    };
     return;
   }
 
