@@ -1889,6 +1889,11 @@ function buildAppExportPayload() {
   const pattern = localStorage.getItem("renamePattern");
   if (pattern) payload.pat = pattern;
 
+  try {
+    const cidMap = JSON.parse(localStorage.getItem("ipfsCidMap") || "{}");
+    if (Object.keys(cidMap).length > 0) payload.cm = cidMap;
+  } catch (e) {}
+
   return payload;
 }
 
@@ -1981,6 +1986,15 @@ function applyAppImportPayload(payload) {
   if (payload.pat) {
     localStorage.setItem("renamePattern", payload.pat);
     if (renamePattern) renamePattern.value = payload.pat;
+  }
+
+  // 4. IPFS CID 対応表の同期復元
+  if (payload.cm && typeof payload.cm === "object") {
+    try {
+      const curMap = JSON.parse(localStorage.getItem("ipfsCidMap") || "{}");
+      localStorage.setItem("ipfsCidMap", JSON.stringify({ ...curMap, ...payload.cm }));
+      hasRestoredAny = true;
+    } catch (e) {}
   }
 
   // UI へ再反映
@@ -4951,6 +4965,10 @@ async function uploadImage(result, targetProvider = "r2", customPassword = null)
     const baseDomain = (getSelectedR2Domain() || (typeof window !== "undefined" ? window.location.origin : "")).replace(/\/$/, "");
 
     if (isFilebase) {
+      if (ipfsCid) {
+        result.ipfsCid = ipfsCid;
+        storeIpfsCid(result.name, ipfsCid);
+      }
       // CID の有無に関わらず、KV にメタデータ（パスワード含む）を登録（※一般ユーザー時は自動スキップ）
       // 🌐 選択されている配信ドメインを allowedHost として渡し、指定ドメイン外からのアクセスを404遮断
       await registerKvCid(result.name, ipfsCid || "", uploadBytes.length, contentType, result.name, password, uploadBlob || uploadBytes, ttlSeconds, expiresAt, false, null, baseDomain);
@@ -6027,6 +6045,74 @@ function renderCurrentStoragePage() {
         }
       }
     });
+
+    // 🪐 Filebase かつ CID が未取得のアイテムについて、バックグラウンドで S3 から CID を自動解決して即時反映
+    if (isFilebase && !itemCid && item.isFromS3) {
+      (async () => {
+        try {
+          const s3 = getS3Client("filebase");
+          const bucket = getBucketName("filebase");
+          const s3TargetKey = item.s3Key || item.Key;
+          if (s3 && bucket && s3TargetKey) {
+            const headOutput = await s3.send(new HeadObjectCommand({
+              Bucket: bucket,
+              Key: s3TargetKey,
+            }));
+            const hHeaders = headOutput?.$metadata?.httpHeaders || {};
+            const resolvedCid = hHeaders["x-amz-meta-cid"] ||
+                                hHeaders["x-amz-meta-ipfs-hash"] ||
+                                headOutput?.Metadata?.cid ||
+                                headOutput?.Metadata?.["ipfs-hash"];
+            if (resolvedCid) {
+              storeIpfsCid(itemKey, resolvedCid);
+              storeIpfsCid(itemDisplayName, resolvedCid);
+              storeIpfsCid(s3TargetKey, resolvedCid);
+              item.cid = resolvedCid;
+              article.dataset.cid = resolvedCid;
+
+              // サムネイル画像 URL を CID 直リンへ更新して 404 を解消
+              const newPublicUrl = hasAdminAccess()
+                ? `${fileInitialDomain || getKvDeliveryBaseDomain()}/${encodeURIComponent(item.Key)}`
+                : `${fileInitialDomain || baseDomain}/i/${resolvedCid}/${encodeURIComponent(item.Key)}`;
+
+              const thumbImg = article.querySelector("img.thumb");
+              if (thumbImg) thumbImg.src = newPublicUrl;
+              const thumbLink = article.querySelector("a.thumb-link");
+              if (thumbLink) thumbLink.href = newPublicUrl;
+
+              // コピー用ボタンの URL を最新化
+              const copyBtn = article.querySelector(".copy-r2-url-btn");
+              if (copyBtn) copyBtn.dataset.url = newPublicUrl;
+
+              // CID バッジを動的挿入
+              const nameRow = article.querySelector(".item-name-row");
+              if (nameRow && !article.querySelector(".copy-cid-btn")) {
+                const shortCid = resolvedCid.length > 12 ? `${resolvedCid.slice(0, 6)}...${resolvedCid.slice(-4)}` : resolvedCid;
+                const badgeWrap = document.createElement("div");
+                badgeWrap.style.cssText = "display: inline-flex; align-items: center; gap: 3px;";
+                badgeWrap.innerHTML = `
+                  <button type="button" class="copy-cid-btn" data-cid="${escapeHtml(resolvedCid)}" style="cursor: pointer; font-size: 10px; font-family: monospace; padding: 1px 6px; border-radius: 4px; background: rgba(56, 189, 248, 0.1); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.3); line-height: 1.4;" title="IPFS CID: ${escapeHtml(resolvedCid)} (クリックでコピー)">📦 ${escapeHtml(shortCid)} 📋</button>
+                  <a href="https://cid.contact/cid/${encodeURIComponent(resolvedCid)}" target="_blank" rel="noopener noreferrer" style="font-size: 10px; padding: 1px 5px; border-radius: 4px; background: rgba(148, 163, 184, 0.1); color: #94a3b8; border: 1px solid rgba(148, 163, 184, 0.25); text-decoration: none; display: inline-flex; align-items: center; gap: 2px; line-height: 1.4;" title="CID.contact でノード確認">🌐 ノード確認 ↗</a>
+                `;
+                const itemNameElem = nameRow.querySelector(".item-name");
+                if (itemNameElem && itemNameElem.nextSibling) {
+                  nameRow.insertBefore(badgeWrap, itemNameElem.nextSibling);
+                } else {
+                  nameRow.appendChild(badgeWrap);
+                }
+              }
+
+              // 中央KVにもバックグラウンドで CID を登録・修復
+              if (hasAdminAccess()) {
+                registerKvCid(itemKey, resolvedCid, Number(item.Size || 0), item.metadata?.mime || "", s3TargetKey, item.password || "", null, item.ttl || 0, item.expiresAt || null, false, null, fileInitialDomain || baseDomain);
+              }
+            }
+          }
+        } catch (resolveErr) {
+          // ignore background lookup error
+        }
+      })();
+    }
   });
 
   updateSelectedR2ActionButtonsState();
