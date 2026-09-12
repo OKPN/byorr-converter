@@ -307,7 +307,7 @@ function renderOgpHtml(filename, rawUrl, ext, isVideo, origin) {
 </html>`;
 }
 
-function renderNotFoundResponse(request, cdnCacheSeconds = 300) {
+function renderNotFoundResponse(request, cdnCacheSeconds = 60) {
   const accept = request.headers.get("accept") || "";
   const headers = {
     "Cache-Control": "no-cache",
@@ -392,9 +392,16 @@ export async function onRequest(context) {
   let meta = {};
   if (env && env.IPFS_KV) {
     try {
-      // 1. デコードされたファイル名でKVを検索（例: "ChatGPT Image...webp"）
-      let kvRes = await env.IPFS_KV.getWithMetadata(filename);
-      // 2. 見つからなければ念のため生エンコード名でもフォールバック検索（例: "ChatGPT%20Image...webp"）
+      const currentHost = url.hostname.toLowerCase();
+      // 1. ドメイン個別キー (例: "misskey-media.pages.dev:7ud1yi6z.mp4") で優先照会
+      let kvRes = await env.IPFS_KV.getWithMetadata(`${currentHost}:${filename}`);
+      if (!kvRes && filename !== rawFilename) {
+        kvRes = await env.IPFS_KV.getWithMetadata(`${currentHost}:${rawFilename}`);
+      }
+      // 2. 見つからなければ従来のファイル名単体キーでフォールバック照会
+      if (!kvRes) {
+        kvRes = await env.IPFS_KV.getWithMetadata(filename);
+      }
       if (!kvRes && filename !== rawFilename) {
         kvRes = await env.IPFS_KV.getWithMetadata(rawFilename);
       }

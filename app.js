@@ -1840,12 +1840,25 @@ function buildAppExportPayload() {
   const publicDomain    = (localStorage.getItem("r2PublicDomain") || r2PublicDomain?.value || "").trim();
   const devDomain       = (localStorage.getItem("r2DevDomain") || r2DevDomain?.value || "").trim();
 
+  // Filebase
+  const fbBucket = (localStorage.getItem("filebaseBucket") || filebaseBucket?.value || "").trim();
+  const fbKeyId  = (localStorage.getItem("filebaseApiKey") || filebaseApiKey?.value || "").trim();
+  const fbSecret = (localStorage.getItem("filebaseSecretKey") || filebaseSecretKey?.value || "").trim();
+
+  // Kubo
+  const kUrl     = (localStorage.getItem("kuboRpcUrl") || kuboRpcUrl?.value || "").trim();
+  const kAutoPin = localStorage.getItem("kuboAutoPin");
+
+  // KV Worker
+  const kvUrl    = (localStorage.getItem("kvWorkerUrl") || kvWorkerUrl?.value || "").trim();
+  const kvToken  = (localStorage.getItem("adminApiToken") || adminApiToken?.value || "").trim();
+
   const currentCivitaiUser = getCurrentCivitaiUser();
   const civitaiUserList = getCivitaiUserList();
   const domainList = getR2DomainList();
   const selectedDomain = getSelectedR2Domain();
 
-  const payload = { v: 2 };
+  const payload = { v: 3 };
   if (accountId) payload.a = accountId;
   if (bucketName) payload.b = bucketName;
   if (accessKeyId) payload.k = accessKeyId;
@@ -1855,11 +1868,26 @@ function buildAppExportPayload() {
   if (domainList.length > 0) payload.dl = domainList;
   if (selectedDomain) payload.ds = selectedDomain;
 
+  if (fbBucket) payload.fb = fbBucket;
+  if (fbKeyId) payload.fk = fbKeyId;
+  if (fbSecret) payload.fs = fbSecret;
+
+  if (kUrl) payload.ku = kUrl;
+  if (kAutoPin !== null) payload.kp = (kAutoPin !== "false");
+
+  if (kvUrl) payload.kv = kvUrl;
+  if (kvToken) payload.kt = kvToken;
+
   if (currentCivitaiUser) payload.cu = currentCivitaiUser;
   if (civitaiUserList.length > 0) payload.cul = civitaiUserList;
 
   const enableConvert = localStorage.getItem("enableConvert");
   if (enableConvert !== null) payload.conv = (enableConvert === "true");
+
+  const enableRename = localStorage.getItem("enableRename");
+  if (enableRename !== null) payload.ren = (enableRename === "true");
+  const pattern = localStorage.getItem("renamePattern");
+  if (pattern) payload.pat = pattern;
 
   return payload;
 }
@@ -1893,6 +1921,41 @@ function applyAppImportPayload(payload) {
     hasRestoredAny = true;
   }
 
+  // 1.2 Filebase 接続設定
+  if (payload.fb && payload.fk && payload.fs) {
+    localStorage.setItem("filebaseBucket", payload.fb);
+    localStorage.setItem("filebaseApiKey", payload.fk);
+    localStorage.setItem("filebaseSecretKey", payload.fs);
+    if (filebaseBucket) filebaseBucket.value = payload.fb;
+    if (filebaseApiKey) filebaseApiKey.value = payload.fk;
+    if (filebaseSecretKey) filebaseSecretKey.value = payload.fs;
+    hasRestoredAny = true;
+  }
+
+  // 1.3 自宅 Kubo 設定
+  if (payload.ku) {
+    localStorage.setItem("kuboRpcUrl", payload.ku);
+    if (kuboRpcUrl) kuboRpcUrl.value = payload.ku;
+    hasRestoredAny = true;
+  }
+  if (payload.kp !== undefined) {
+    localStorage.setItem("kuboAutoPin", String(payload.kp));
+    if (kuboAutoPinCheck) kuboAutoPinCheck.checked = Boolean(payload.kp);
+  }
+
+  // 1.4 KV台帳 Worker & トークン
+  if (payload.kv) {
+    localStorage.setItem("kvWorkerUrl", payload.kv);
+    if (kvWorkerUrl) kvWorkerUrl.value = payload.kv;
+    hasRestoredAny = true;
+  }
+  if (payload.kt) {
+    localStorage.setItem("adminApiToken", payload.kt);
+    if (adminApiToken) adminApiToken.value = payload.kt;
+    hasRestoredAny = true;
+  }
+  updateAdminTokenStatusUI();
+
   // 2. Civitai 設定
   if (Array.isArray(payload.cul) && payload.cul.length > 0) {
     localStorage.setItem("civitaiUserList", JSON.stringify(payload.cul));
@@ -1906,10 +1969,18 @@ function applyAppImportPayload(payload) {
     hasRestoredAny = true;
   }
 
-  // 3. 変換設定
+  // 3. 変換・リネーム設定
   if (payload.conv !== undefined) {
     localStorage.setItem("enableConvert", String(payload.conv));
     if (enableConvertCheck) enableConvertCheck.checked = Boolean(payload.conv);
+  }
+  if (payload.ren !== undefined) {
+    localStorage.setItem("enableRename", String(payload.ren));
+    if (enableRenameCheck) enableRenameCheck.checked = Boolean(payload.ren);
+  }
+  if (payload.pat) {
+    localStorage.setItem("renamePattern", payload.pat);
+    if (renamePattern) renamePattern.value = payload.pat;
   }
 
   // UI へ再反映
@@ -1919,8 +1990,8 @@ function applyAppImportPayload(payload) {
   updateR2Status();
   updateCivitaiStatus();
 
-  // ☁️ 復元後に自動保存 & R2ファイル一覧同期を確実に実行
-  if (payload.a && payload.b && payload.k && payload.s) {
+  // ☁️ 復元後に自動保存 & ファイル一覧同期を確実に実行
+  if (hasRestoredAny) {
     saveR2SettingsAuto();
     fetchAndRenderR2Files();
   }
@@ -1976,14 +2047,24 @@ function checkAndApplyHashSync() {
       return;
     }
 
-    if (hash.startsWith("#sync=")) {
-      const encoded = hash.substring(6);
+    if (hash.startsWith("#sync=") || hash.startsWith("#cfg=")) {
+      const prefix = hash.startsWith("#sync=") ? "#sync=" : "#cfg=";
+      const encoded = hash.replace(prefix, "");
       if (encoded) {
-        const jsonStr = decodeURIComponent(atob(encoded));
-        const payload = JSON.parse(jsonStr);
+        let payload = null;
+        try {
+          payload = JSON.parse(decodeURIComponent(atob(encoded)));
+        } catch (e) {
+          try {
+            payload = JSON.parse(atob(encoded));
+          } catch (e2) {}
+        }
 
-        if (applyAppImportPayload(payload)) {
+        if (payload && applyAppImportPayload(payload)) {
           history.replaceState(null, "", window.location.pathname + window.location.search);
+          setTimeout(() => {
+            alert("🎉 設定の引き継ぎが完了しました！すべての接続情報・設定が正常に反映されました。");
+          }, 300);
         }
       }
     }
@@ -2277,10 +2358,11 @@ cfClearButton?.addEventListener("click", () => {
 
 // --- 📱 可視光スキャン（QRコード）同期ハンドラ ---
 async function openSyncQrModal() {
+  saveR2SettingsAuto();
   const payload = buildAppExportPayload();
-  const hasData = payload.a || payload.cu || (payload.cul && payload.cul.length > 0);
+  const hasData = payload.a || payload.fb || payload.kv || payload.ku || payload.cu || (payload.cul && payload.cul.length > 0) || (payload.dl && payload.dl.length > 0);
   if (!hasData) {
-    alert("⚠️ 引き継ぐ設定（R2接続設定またはCivitaiクリエイターリスト）がありません。");
+    alert("⚠️ 引き継ぐ設定（クラウドストレージ接続設定またはCivitaiクリエイターリスト）がありません。");
     return;
   }
 
@@ -2427,12 +2509,16 @@ submitPinButton?.addEventListener("click", () => {
   }
 
   const payload = decryptPayloadWithPin(pendingEncryptedHash, pin);
-  if (!payload || !payload.a || !payload.b || !payload.k || !payload.s) {
+  if (!payload || typeof payload !== "object") {
     if (pinErrorNotice) pinErrorNotice.textContent = "❌ PINコードが正しくありません";
     return;
   }
 
-  applyAppImportPayload(payload);
+  const restored = applyAppImportPayload(payload);
+  if (!restored) {
+    if (pinErrorNotice) pinErrorNotice.textContent = "⚠️ バックアップデータが破損しているか空です";
+    return;
+  }
 
   if (pinModal) pinModal.style.display = "none";
   history.replaceState(null, "", window.location.pathname + window.location.search);
@@ -4536,6 +4622,7 @@ async function convertImage(file, index = 0) {
   };
 
   let finalBlob = null;
+  let previewSrc = "";
 
   try {
     const image = await loadImage(file);
@@ -4546,10 +4633,22 @@ async function convertImage(file, index = 0) {
     const context = canvas.getContext("2d", { alpha: true });
     context.drawImage(image, 0, 0);
 
-    // Canvas変換（生写真のGPS位置情報・Exifは自動更地化）
-    finalBlob = await canvasToBlob(canvas, options.mimeType, options.quality);
+    if (options.mimeType === "image/jxl") {
+      await ensureJxl();
+      const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
+      const qualityVal = qualityRange ? Number(qualityRange.value) : 85;
+      const jxlBuffer = await encodeJxl(imageData, { quality: qualityVal });
+      finalBlob = new Blob([jxlBuffer], { type: "image/jxl" });
+      try {
+        previewSrc = canvas.toDataURL("image/webp", 0.7);
+      } catch (e) {}
+    } else {
+      // Canvas変換（生写真のGPS位置情報・Exifは自動更地化）
+      finalBlob = await canvasToBlob(canvas, options.mimeType, options.quality);
+    }
   } catch (err) {
-    console.warn("Canvas conversion fallback failed, using original blob:", err);
+    console.error("Image conversion error:", err);
+    alert(`画像変換エラー (${options.name}): ${err.message}`);
     finalBlob = file;
   }
 
@@ -4560,7 +4659,7 @@ async function convertImage(file, index = 0) {
     name: options.name,
     relativePath: file.relativePath || file.name,
     url: finalUrl,
-    previewUrl: finalUrl,
+    previewUrl: previewSrc || finalUrl,
     blob: finalBlob,
     size: finalBlob.size,
     originalSize: file.size,
