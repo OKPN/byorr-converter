@@ -391,16 +391,23 @@ export async function onRequest(context) {
 
   let targetCid = null;
   let meta = {};
+  let debugKvInfo = "none";
   if (env && env.IPFS_KV) {
     try {
       const currentHost = url.hostname.toLowerCase();
       // 1. カレントドメイン個別キー (例: "content-cache.pages.dev:filename") で優先照会
       let kvRes = await env.IPFS_KV.getWithMetadata(`${currentHost}:${filename}`);
+      if (kvRes && kvRes.value) {
+        debugKvInfo = `hit_current:${currentHost}:${filename}`;
+      }
       if (!kvRes && filename !== rawFilename) {
         kvRes = await env.IPFS_KV.getWithMetadata(`${currentHost}:${rawFilename}`);
+        if (kvRes && kvRes.value) {
+          debugKvInfo = `hit_current_raw:${currentHost}:${rawFilename}`;
+        }
       }
       // 2. 姉妹公式配信エッジのドメイン個別キーも順次フォールバック照会（ドメイン切り替え時にも即座に発見可能にする）
-      if (!kvRes) {
+      if (!kvRes || !kvRes.value) {
         const officialHosts = [
           "content-cache.pages.dev",
           "content-relay.pages.dev",
@@ -409,26 +416,46 @@ export async function onRequest(context) {
           "cividge.pages.dev"
         ].filter(h => h !== currentHost);
         for (const sisterHost of officialHosts) {
-          kvRes = await env.IPFS_KV.getWithMetadata(`${sisterHost}:${filename}`);
-          if (!kvRes && filename !== rawFilename) {
-            kvRes = await env.IPFS_KV.getWithMetadata(`${sisterHost}:${rawFilename}`);
+          let sRes = await env.IPFS_KV.getWithMetadata(`${sisterHost}:${filename}`);
+          if (sRes && sRes.value) {
+            kvRes = sRes;
+            debugKvInfo = `hit_sister:${sisterHost}:${filename}`;
+            break;
           }
-          if (kvRes) break;
+          if (filename !== rawFilename) {
+            sRes = await env.IPFS_KV.getWithMetadata(`${sisterHost}:${rawFilename}`);
+            if (sRes && sRes.value) {
+              kvRes = sRes;
+              debugKvInfo = `hit_sister_raw:${sisterHost}:${rawFilename}`;
+              break;
+            }
+          }
         }
       }
       // 3. 見つからなければ従来のファイル名単体キーで照会
-      if (!kvRes) {
-        kvRes = await env.IPFS_KV.getWithMetadata(filename);
+      if (!kvRes || !kvRes.value) {
+        let singleRes = await env.IPFS_KV.getWithMetadata(filename);
+        if (singleRes && singleRes.value) {
+          kvRes = singleRes;
+          debugKvInfo = `hit_single:${filename}`;
+        }
       }
-      if (!kvRes && filename !== rawFilename) {
-        kvRes = await env.IPFS_KV.getWithMetadata(rawFilename);
+      if ((!kvRes || !kvRes.value) && filename !== rawFilename) {
+        let singleRawRes = await env.IPFS_KV.getWithMetadata(rawFilename);
+        if (singleRawRes && singleRawRes.value) {
+          kvRes = singleRawRes;
+          debugKvInfo = `hit_single_raw:${rawFilename}`;
+        }
       }
-      if (kvRes) {
+      if (kvRes && kvRes.value) {
         targetCid = kvRes.value;
         meta = kvRes.metadata || {};
+      } else {
+        debugKvInfo = `miss:fn=${filename}:curr=${currentHost}`;
       }
     } catch (kvErr) {
       console.warn("IPFS_KV get error:", kvErr);
+      debugKvInfo = `err:${kvErr.message || kvErr}`;
     }
   }
 
@@ -640,7 +667,7 @@ export async function onRequest(context) {
 
   if (!upstreamResponse || !upstreamResponse.ok) {
     const hasKv = Boolean(env && env.IPFS_KV);
-    return renderNotFoundResponse(request, 60, `upstream_failed:hasKv=${hasKv}:cid=${targetCid}:cand=${candidates.join(",")}`);
+    return renderNotFoundResponse(request, 60, `upstream_failed:hasKv=${hasKv}:kvInfo=${debugKvInfo}:cid=${targetCid}:cand=${candidates.join(",")}`);
   }
 
   const headers = new Headers();

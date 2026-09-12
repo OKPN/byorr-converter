@@ -6413,26 +6413,40 @@ r2FileList?.addEventListener("click", async (e) => {
         let ttl = 0;
         let expiresAt = null;
         let password = "";
-        let allowedHost = null;
+        // 🌐 元カードのDOM設定（allowedHost, expiresAt）をまず最優先で取得
+        const domAllowedHost = article?.dataset?.allowedhost || null;
+        const domExpiresAt = Number(article?.dataset?.expiresat || 0) || null;
+        let allowedHost = domAllowedHost;
+        if (domExpiresAt && domExpiresAt > Date.now()) {
+          expiresAt = domExpiresAt;
+          ttl = Math.round((domExpiresAt - Date.now()) / 1000);
+        }
+
         try {
           const kvFiles = await fetchKvFiles();
-          const currentKv = kvFiles.find(f => f.name === oldKey);
+          const currentKv = kvFiles.find(f => f.name === oldKey || f.name.endsWith(`:${oldKey}`));
           if (currentKv && currentKv.metadata) {
             unpinned = Boolean(currentKv.metadata.unpinned);
             kuboStatus = currentKv.metadata.kuboStatus || null;
-            ttl = currentKv.metadata.ttl || 0;
-            expiresAt = currentKv.metadata.expiresAt || null;
+            if (!expiresAt) {
+              ttl = currentKv.metadata.ttl || 0;
+              expiresAt = currentKv.metadata.expiresAt || null;
+            }
             password = currentKv.metadata.password || "";
-            allowedHost = currentKv.metadata.allowedHost || currentKv.metadata.d || null;
+            if (!allowedHost) {
+              allowedHost = currentKv.metadata.allowedHost || currentKv.metadata.d || null;
+            }
           }
-        } catch (e) {}
+        } catch (e) {
+          console.warn("fetchKvFiles error during metadata fallback:", e);
+        }
 
         await registerKvCid(newKey, cid, size, mime, originalS3Key, password, null, ttl, expiresAt, unpinned, kuboStatus, allowedHost);
         storeIpfsCid(newKey, cid);
         storeIpfsCid(originalS3Key, cid);
         storeIpfsCid(oldKey, cid);
 
-        // 2. 以前の名前のリンクも維持（即404化させず、エイリアスとして永続両立）
+        // 2. 以前の名前のリンクも維持（即404化させず、実体共通エイリアスとして永続両立）
         // ※ deleteKvCid(oldKey) は実行せず、古いURLを踏んだ人も引き続き閲覧可能にする
 
         try {
