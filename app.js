@@ -246,6 +246,7 @@ const i18nDict = {
     dataSyncDesc: "Securely sync Civitai creators watch list, Cloudflare R2 credentials, and converter settings to mobile or other devices.",
     btnClearAllData: "🗑️ Clear All",
     retentionPeriod: "⏳ Retention (TTL)",
+    ttlNever: "Keep Forever (No Expiry)",
     ttl1h: "1 Hour (Auto-expire)",
     ttl12h: "12 Hours (Auto-expire)",
     ttl1d: "1 Day (Auto-expire)",
@@ -751,7 +752,7 @@ function hasAdminAccess() {
   return Boolean(getCustomKvWorkerUrl());
 }
 
-async function registerKvCid(key, cid = "", size = 0, mime = "", s3Key = "", password = "", blobOrBytes = null, ttl = 0, expiresAt = null, unpinned = false, kuboStatus = null) {
+async function registerKvCid(key, cid = "", size = 0, mime = "", s3Key = "", password = "", blobOrBytes = null, ttl = 0, expiresAt = null, unpinned = false, kuboStatus = null, allowedHost = null) {
   if (!key) return;
   const token = getAdminApiToken();
   const endpoint = getKvApiEndpoint();
@@ -770,6 +771,11 @@ async function registerKvCid(key, cid = "", size = 0, mime = "", s3Key = "", pas
       payload.kuboStatus = kuboStatus;
       payload.lastKuboPinAttempt = Date.now();
     }
+    if (allowedHost !== null && allowedHost !== undefined) {
+      // 🌐 配信ドメイン制限（特定のドメインのみで配信し、他ドメインでのアクセスを404遮断）
+      const cleanHost = String(allowedHost).trim().toLowerCase().replace(/^https?:\/\//, "").split('/')[0].split(':')[0];
+      if (cleanHost) payload.allowedHost = cleanHost;
+    }
     if (ttl && ttl > 0) {
       payload.ttl = ttl;
       payload.expiresAt = expiresAt || (Date.now() + ttl * 1000);
@@ -786,13 +792,22 @@ async function registerKvCid(key, cid = "", size = 0, mime = "", s3Key = "", pas
     if (token) {
       headers["Authorization"] = `Bearer ${token}`;
     }
-    await fetch(endpoint, {
+    const res = await fetch(endpoint, {
       method: "POST",
       headers,
       body: JSON.stringify(payload),
     });
+    if (!res.ok) {
+      const errData = await res.json().catch(() => ({}));
+      if (res.status === 409 || errData.code === "CID_CONFLICT") {
+        throw new Error(`同名ファイル「${key}」が別の内容で既に登録されています。ファイル名を変更してください。`);
+      }
+      throw new Error(errData.error || `KV登録エラー (${res.status})`);
+    }
+    return true;
   } catch (e) {
     console.warn("Failed to register CID to KV:", e);
+    throw e;
   }
 }
 
@@ -1079,6 +1094,42 @@ function createCardDomainSelectHtml(currentUrl, extraClass = "") {
 
   return `
     <select class="card-domain-switcher ${extraClass}" title="配信ドメインを着せ替える" style="height: 28px; font-size: 11px; max-width: 130px; background: rgba(0,0,0,0.4); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.4); border-radius: 4px; padding: 0 4px; outline: none; cursor: pointer;">
+      ${optionsHtml}
+    </select>
+  `;
+}
+
+// ⏳ 各ファイルカード用の有効期限プルダウンHTML生成（初期状態: 0 = 削除しない）
+function createCardTtlSelectHtml(expiresAt = null, extraClass = "") {
+  // 現在の残り秒数を計算
+  let activeValue = "0";
+  if (expiresAt && Number(expiresAt) > Date.now()) {
+    const diffSec = Math.round((Number(expiresAt) - Date.now()) / 1000);
+    // 近いプリセットを特定、またはカスタム残時間として扱う
+    if (diffSec <= 3600) activeValue = "3600";
+    else if (diffSec <= 43200) activeValue = "43200";
+    else if (diffSec <= 86400) activeValue = "86400";
+    else if (diffSec <= 259200) activeValue = "259200";
+    else activeValue = "604800";
+  }
+
+  const options = [
+    { val: "0", label: "⏳ 削除しない（無期限）" },
+    { val: "3600", label: "⏳ 1時間後に削除" },
+    { val: "43200", label: "⏳ 12時間後に削除" },
+    { val: "86400", label: "⏳ 24時間後に削除" },
+    { val: "259200", label: "⏳ 3日後に削除" },
+    { val: "604800", label: "⏳ 7日後に削除" },
+  ];
+
+  let optionsHtml = "";
+  options.forEach(opt => {
+    const isSelected = (opt.val === activeValue) ? "selected" : "";
+    optionsHtml += `<option value="${opt.val}" ${isSelected}>${opt.label}</option>`;
+  });
+
+  return `
+    <select class="card-ttl-switcher ${extraClass}" title="ファイルの自動削除期限を設定・変更する" style="height: 28px; font-size: 11px; max-width: 135px; background: rgba(0,0,0,0.4); color: #fcd34d; border: 1px solid rgba(245, 158, 11, 0.4); border-radius: 4px; padding: 0 4px; outline: none; cursor: pointer;">
       ${optionsHtml}
     </select>
   `;
@@ -2386,13 +2437,6 @@ enableZipCheck?.addEventListener("change", () => {
   const isChecked = enableZipCheck.checked;
   localStorage.setItem("enableZip", String(isChecked));
   render();
-});
-
-enableTtlCheck?.addEventListener("change", () => {
-  if (tempTtlSelect) {
-    tempTtlSelect.disabled = !enableTtlCheck.checked;
-    tempTtlSelect.style.opacity = enableTtlCheck.checked ? "1" : "0.5";
-  }
 });
 
 qualityRange?.addEventListener("input", () => {
@@ -3860,10 +3904,12 @@ function createCardActionHtml(file, result, index) {
       : "";
 
     const domainSelectHtml = createCardDomainSelectHtml(result.proxyUrl, "result-card-domain-select");
+    const ttlSelectHtml = createCardTtlSelectHtml(result.expiresAt, "result-card-ttl-select");
 
     return `
       ${badgeHtml}
       ${pwdBadge}
+      ${ttlSelectHtml}
       ${domainSelectHtml}
       <input type="text" class="url-output" value="${escapeHtml(result.proxyUrl)}" readonly style="width: 140px; font-size: 11px; height: 28px; padding: 0 6px; background: rgba(0,0,0,0.3); border: 1px solid rgba(56,189,248,0.4); color: #38bdf8; border-radius: 4px;" title="クリックで全選択＆コピー" onclick="this.select()">
       <button type="button" class="ghost-button copy-button" style="font-size: 11px; padding: 0 8px; height: 28px;">${escapeHtml(dict.copyUrl || "コピー")}</button>
@@ -4155,6 +4201,24 @@ fileList?.addEventListener("change", (e) => {
       // Civitai ボタンの URL も更新
       const civitaiBtn = card?.querySelector(".civitai-post-btn");
       if (civitaiBtn) civitaiBtn.dataset.url = updatedUrl;
+
+      // 🌐 KV台帳に登録済みの場合は allowedHost も非同期で自動更新
+      if (result && result.name && hasAdminAccess()) {
+        registerKvCid(
+          result.name,
+          result.ipfsCid || "",
+          result.size || 0,
+          result.mime || "",
+          result.name,
+          result.password || "",
+          null,
+          result.ttl || 0,
+          result.expiresAt || null,
+          false,
+          null,
+          newDomain
+        ).catch(err => console.warn("Failed to update allowedHost on domain change:", err));
+      }
     }
   }
 });
@@ -4174,6 +4238,28 @@ r2FileList?.addEventListener("change", (e) => {
       if (civitaiBtn) civitaiBtn.dataset.url = updatedUrl;
       if (thumbLink) thumbLink.href = updatedUrl;
 
+      // 🌐 KV台帳の allowedHost を非同期で更新
+      const key = article?.dataset?.key;
+      const s3Key = article?.dataset?.s3key || key;
+      const cid = article?.dataset?.cid || "";
+      const size = Number(article?.dataset?.size || 0);
+      if (key && hasAdminAccess()) {
+        registerKvCid(
+          key,
+          cid,
+          size,
+          "",
+          s3Key,
+          "",
+          null,
+          0,
+          null,
+          false,
+          null,
+          newDomain
+        ).catch(err => console.warn("Failed to update allowedHost for " + key + ":", err));
+      }
+
       // 一瞬バッジ的に色を変えてユーザーに更新を伝える
       copyBtn.style.transition = "all 0.2s ease";
       copyBtn.style.borderColor = "#38bdf8";
@@ -4182,6 +4268,100 @@ r2FileList?.addEventListener("change", (e) => {
         copyBtn.style.borderColor = "";
         copyBtn.style.color = "";
       }, 600);
+    }
+  }
+
+  // ⏳ R2/Filebaseファイル一覧カード内の有効期限プルダウン変更
+  if (e.target.classList.contains("r2-file-ttl-select")) {
+    const article = e.target.closest(".result-item");
+    const ttlSeconds = Number(e.target.value || 0);
+    const key = article?.dataset?.key;
+    const s3Key = article?.dataset?.s3key || key;
+    const cid = article?.dataset?.cid || "";
+    const size = Number(article?.dataset?.size || 0);
+
+    const expiresAt = ttlSeconds > 0 ? (Date.now() + ttlSeconds * 1000) : 0;
+
+    // UI上のバッジ表示を即座に更新
+    let ttlBadge = article.querySelector(".ttl-countdown-badge");
+    if (ttlSeconds > 0) {
+      const hoursRemaining = Math.max(1, Math.ceil(ttlSeconds / 3600));
+      const days = Math.floor(hoursRemaining / 24);
+      const remHours = hoursRemaining % 24;
+      const timeText = days > 0 ? `${days}日${remHours > 0 ? " " + remHours + "時間" : ""}` : `${hoursRemaining}時間`;
+      if (!ttlBadge) {
+        ttlBadge = document.createElement("span");
+        ttlBadge.className = "ttl-countdown-badge";
+        ttlBadge.style.cssText = "background: rgba(245, 158, 11, 0.2); color: #fcd34d; border: 1px solid rgba(245, 158, 11, 0.5); font-size: 11px; padding: 2px 7px; border-radius: 4px; font-weight: 700; display: inline-flex; align-items: center; gap: 4px;";
+        const nameRow = article.querySelector(".item-name-row");
+        if (nameRow) nameRow.appendChild(ttlBadge);
+      }
+      ttlBadge.textContent = `⏳ 残り ${timeText}`;
+      ttlBadge.style.display = "inline-flex";
+    } else {
+      if (ttlBadge) ttlBadge.style.display = "none";
+    }
+
+    // 🌐 KV台帳の有効期限を即座に更新（0なら無期限化）
+    if (key && hasAdminAccess()) {
+      registerKvCid(
+        key,
+        cid,
+        size,
+        "",
+        s3Key,
+        "",
+        null,
+        ttlSeconds,
+        expiresAt,
+        false,
+        null,
+        null
+      ).then(() => {
+        // 成功フィードバック
+        e.target.style.transition = "all 0.2s ease";
+        e.target.style.borderColor = "#22c55e";
+        setTimeout(() => { e.target.style.borderColor = ""; }, 600);
+      }).catch(err => {
+        console.warn("Failed to update TTL for " + key + ":", err);
+        alert(`❌ 有効期限の更新に失敗しました: ${err.message}`);
+      });
+    }
+  }
+});
+
+// ⏳ 変換結果カード内の有効期限プルダウン変更
+fileList?.addEventListener("change", (e) => {
+  if (e.target.classList.contains("result-card-ttl-select")) {
+    const card = e.target.closest(".unified-file-card");
+    const index = Number(card?.dataset?.index);
+    const ttlSeconds = Number(e.target.value || 0);
+    const result = state.results[index];
+
+    if (result) {
+      result.ttl = ttlSeconds;
+      result.expiresAt = ttlSeconds > 0 ? (Date.now() + ttlSeconds * 1000) : null;
+
+      if (result.name && hasAdminAccess()) {
+        registerKvCid(
+          result.name,
+          result.ipfsCid || "",
+          result.size || 0,
+          result.mime || "",
+          result.name,
+          result.password || "",
+          null,
+          ttlSeconds,
+          result.expiresAt,
+          false,
+          null,
+          null
+        ).then(() => {
+          e.target.style.transition = "all 0.2s ease";
+          e.target.style.borderColor = "#22c55e";
+          setTimeout(() => { e.target.style.borderColor = ""; }, 600);
+        }).catch(err => console.warn("Failed to update result TTL:", err));
+      }
     }
   }
 });
@@ -4492,10 +4672,8 @@ async function uploadImage(result, targetProvider = "r2", customPassword = null)
       ? customPassword
       : (pwdInput ? pwdInput.value.trim() : "");
 
-    const ttlCheck = document.querySelector("#enableTtlCheck");
     const ttlSelect = document.querySelector("#tempTtlSelect");
-    const isTtlEnabled = Boolean(ttlCheck?.checked);
-    const ttlSeconds = isTtlEnabled && ttlSelect ? Number(ttlSelect.value || 0) : 0;
+    const ttlSeconds = ttlSelect ? Number(ttlSelect.value || 0) : 0;
     const expiresAt = ttlSeconds > 0 ? (Date.now() + ttlSeconds * 1000) : null;
 
     const arrayBuffer = await result.blob.arrayBuffer();
@@ -4513,6 +4691,32 @@ async function uploadImage(result, targetProvider = "r2", customPassword = null)
       result.uploadingProvider = null;
       render();
       return false;
+    }
+
+    // 🛡️ アップロード前同名ファイル衝突チェック:
+    // 同名キーがKVに既に存在し、かつ既存のCIDと異なる（別画像）場合は上書き破壊を防ぐ
+    if (hasAdminAccess()) {
+      try {
+        const kvFiles = await fetchKvFiles();
+        const existingKv = kvFiles.find(f => f.name === result.name);
+        if (existingKv) {
+          const existingCid = existingKv.metadata?.cid || existingKv.metadata?.c;
+          // アップロード前時点ではまだ新CIDが確定していない場合もあるが、既存ファイルがある場合は念のため警告
+          // （同一内容のリトライであればそのまま許可）
+          if (existingCid && result.ipfsCid && existingCid !== result.ipfsCid) {
+            await showCustomAlert(
+              `同名ファイル「${escapeHtml(result.name)}」が既に異なる内容で登録されています。<br>ファイル名変更（リネーム）を行ってからアップロードしてください。`,
+              "⚠️ ファイル名の衝突"
+            );
+            result.isUploading = false;
+            result.uploadingProvider = null;
+            render();
+            return false;
+          }
+        }
+      } catch (err) {
+        console.debug("KV pre-check skipped:", err);
+      }
     }
 
     let uploadBlob = result.blob;
@@ -4604,7 +4808,8 @@ async function uploadImage(result, targetProvider = "r2", customPassword = null)
 
     if (isFilebase) {
       // CID の有無に関わらず、KV にメタデータ（パスワード含む）を登録（※一般ユーザー時は自動スキップ）
-      await registerKvCid(result.name, ipfsCid || "", uploadBytes.length, contentType, result.name, password, uploadBlob || uploadBytes, ttlSeconds, expiresAt);
+      // 🌐 選択されている配信ドメインを allowedHost として渡し、指定ドメイン外からのアクセスを404遮断
+      await registerKvCid(result.name, ipfsCid || "", uploadBytes.length, contentType, result.name, password, uploadBlob || uploadBytes, ttlSeconds, expiresAt, false, null, baseDomain);
       
       if (hasAdminAccess()) {
         const deliveryBase = getKvDeliveryBaseDomain();
@@ -4630,7 +4835,7 @@ async function uploadImage(result, targetProvider = "r2", customPassword = null)
     } else {
       // ⚡ Cloudflare R2: パスワードまたは時限付きの場合は KV に保護メタデータ＆実体を登録
       if (password || ttlSeconds > 0) {
-        await registerKvCid(result.name, "", uploadBytes.length, contentType, result.name, password, uploadBlob || uploadBytes, ttlSeconds, expiresAt);
+        await registerKvCid(result.name, "", uploadBytes.length, contentType, result.name, password, uploadBlob || uploadBytes, ttlSeconds, expiresAt, false, null, baseDomain);
         result.proxyUrl = `${baseDomain}/${encodeURIComponent(result.name)}`;
       } else {
         result.proxyUrl = getPublicUrl(result.name);
@@ -4659,7 +4864,7 @@ async function uploadImage(result, targetProvider = "r2", customPassword = null)
             if (isFilebase) {
               const tHeaders = thumbPut?.$metadata?.httpHeaders || {};
               const thumbCid = tHeaders["x-amz-meta-cid"] || tHeaders["x-amz-meta-ipfs-hash"] || "";
-              await registerKvCid(thumbKey, thumbCid, thumbBytes.length, "image/webp", thumbKey, "", thumbBlob, 0, null);
+              await registerKvCid(thumbKey, thumbCid, thumbBytes.length, "image/webp", thumbKey, "", thumbBlob, 0, null, false, null, baseDomain);
             }
             console.log(`🎬 動画サムネイル自動アップロード完了: ${thumbKey} (${thumbBytes.length} bytes)`);
           }
@@ -5160,11 +5365,17 @@ async function fetchAndRenderR2Files() {
       article.dataset.size = String(item.Size || 0);
       article.dataset.cid = itemCid || "";
 
+      // 🌐 このファイルに保存されている配信ドメイン (allowedHost / d) があればそれを初期ドメインとして優先適用
+      const itemAllowedHost = item.metadata?.allowedHost || item.metadata?.d;
+      const fileInitialDomain = itemAllowedHost
+        ? (itemAllowedHost.startsWith("http") ? itemAllowedHost : `https://${itemAllowedHost}`)
+        : (isFilebase ? (hasAdminAccess() ? getKvDeliveryBaseDomain() : baseDomain) : null);
+
       let publicUrl = isFilebase
         ? (hasAdminAccess()
-            ? `${getKvDeliveryBaseDomain()}/${encodeURIComponent(item.Key)}`
-            : (itemCid ? `${baseDomain}/i/${itemCid}/${encodeURIComponent(item.Key)}` : `${baseDomain}/${encodeURIComponent(item.Key)}`))
-        : getPublicUrl(item.Key);
+            ? `${fileInitialDomain || getKvDeliveryBaseDomain()}/${encodeURIComponent(item.Key)}`
+            : (itemCid ? `${fileInitialDomain || baseDomain}/i/${itemCid}/${encodeURIComponent(item.Key)}` : `${fileInitialDomain || baseDomain}/${encodeURIComponent(item.Key)}`))
+        : (itemAllowedHost ? `${fileInitialDomain}/${encodeURIComponent(item.Key)}` : getPublicUrl(item.Key));
       const devUrl = isFilebase ? null : getDevUrl(item.Key);
 
       const hasPassword = Boolean(item.password || item.metadata?.passwordHash || item.metadata?.password);
@@ -5183,7 +5394,7 @@ async function fetchAndRenderR2Files() {
           const days = Math.floor(hoursRemaining / 24);
           const remHours = hoursRemaining % 24;
           const timeText = days > 0 ? `${days}日${remHours > 0 ? " " + remHours + "時間" : ""}` : `${hoursRemaining}時間`;
-          ttlBadgeHtml = `<span style="background: rgba(245, 158, 11, 0.2); color: #fcd34d; border: 1px solid rgba(245, 158, 11, 0.5); font-size: 11px; padding: 2px 7px; border-radius: 4px; font-weight: 700; display: inline-flex; align-items: center; gap: 4px;" title="設定された期限が過ぎると自動消滅します">⏳ 残り ${timeText}</span>`;
+          ttlBadgeHtml = `<span class="ttl-countdown-badge" style="background: rgba(245, 158, 11, 0.2); color: #fcd34d; border: 1px solid rgba(245, 158, 11, 0.5); font-size: 11px; padding: 2px 7px; border-radius: 4px; font-weight: 700; display: inline-flex; align-items: center; gap: 4px;" title="設定された期限が過ぎると自動消滅します">⏳ 残り ${timeText}</span>`;
         }
       }
 
@@ -5256,7 +5467,9 @@ async function fetchAndRenderR2Files() {
         `;
 
         const r2CardDomainSelect = createCardDomainSelectHtml(publicUrl, "r2-file-domain-select");
+        const r2CardTtlSelect = createCardTtlSelectHtml(item.expiresAt, "r2-file-ttl-select");
         actionButtonsHtml = `
+          ${r2CardTtlSelect}
           ${r2CardDomainSelect}
           <button type="button" class="ghost-button copy-r2-url-btn" data-url="${escapeHtml(publicUrl)}">${escapeHtml(dict.copyUrl)}</button>
           ${!hasPassword ? `<button type="button" class="ghost-button civitai-r2-post-btn" data-url="${escapeHtml(publicUrl)}" data-name="${escapeHtml(item.Key)}" style="color: #38bdf8; border-color: rgba(56, 189, 248, 0.4);" title="Civitai の投稿画面を開く">🎨 Civitai</button>` : ""}
@@ -5264,7 +5477,9 @@ async function fetchAndRenderR2Files() {
         `;
       } else {
         const r2CardDomainSelect = createCardDomainSelectHtml(publicUrl, "r2-file-domain-select");
+        const r2CardTtlSelect = createCardTtlSelectHtml(item.expiresAt, "r2-file-ttl-select");
         actionButtonsHtml = `
+          ${r2CardTtlSelect}
           ${r2CardDomainSelect}
           <button type="button" class="ghost-button copy-r2-url-btn" data-url="${escapeHtml(publicUrl)}">${escapeHtml(dict.copyUrl)}</button>
           ${!hasPassword ? `<button type="button" class="ghost-button civitai-r2-post-btn" data-url="${escapeHtml(publicUrl)}" data-name="${escapeHtml(item.Key)}" style="color: #38bdf8; border-color: rgba(56, 189, 248, 0.4);" title="Civitai の投稿画面を開く">🎨 Civitai</button>` : ""}
@@ -5425,10 +5640,14 @@ r2FileList?.addEventListener("click", async (e) => {
     let url = target.dataset.url;
     const article = target.closest(".result-item");
     const key = article?.dataset?.key;
-    const baseDomain = (getSelectedR2Domain() || (typeof window !== "undefined" ? window.location.origin : "")).replace(/\/$/, "");
+    const cardSelect = article?.querySelector(".r2-file-domain-select");
+    const chosenDomain = (cardSelect?.value || getSelectedR2Domain() || (typeof window !== "undefined" ? window.location.origin : "")).replace(/\/$/, "");
 
     if (isFilebase && key) {
-      url = `${baseDomain}/${encodeURIComponent(key)}`;
+      url = `${chosenDomain}/${encodeURIComponent(key)}`;
+      target.dataset.url = url;
+    } else if (url && cardSelect?.value) {
+      url = switchUrlDomain(url, cardSelect.value);
       target.dataset.url = url;
     }
 
@@ -5500,9 +5719,10 @@ r2FileList?.addEventListener("click", async (e) => {
       let size = currentSize;
       let mime = "";
 
+      let existingKvFiles = [];
       try {
-        const kvFiles = await fetchKvFiles();
-        const currentKv = kvFiles.find(f => f.name === oldKey);
+        existingKvFiles = await fetchKvFiles();
+        const currentKv = existingKvFiles.find(f => f.name === oldKey);
         if (currentKv) {
           if (!cid) cid = currentKv.metadata?.cid;
           if (!size) size = currentKv.metadata?.size || 0;
@@ -5518,6 +5738,18 @@ r2FileList?.addEventListener("click", async (e) => {
         return;
       }
 
+      // 🛡️ 同名ファイル存在チェック:
+      // 変更先 newKey が既に存在し、かつ CID が異なる場合は上書き破壊を防ぐため中断
+      const conflictingFile = existingKvFiles.find(f => f.name === newKey);
+      if (conflictingFile) {
+        const targetCid = conflictingFile.metadata?.cid || conflictingFile.metadata?.c;
+        if (targetCid && targetCid !== cid) {
+          alert(`⚠️ 同名の別ファイル「${newKey}」が既に存在します。\n別のファイル名を指定してください。`);
+          row.innerHTML = originalHtml;
+          return;
+        }
+      }
+
       saveBtn.disabled = true;
       saveBtn.textContent = "...";
 
@@ -5529,6 +5761,7 @@ r2FileList?.addEventListener("click", async (e) => {
         let ttl = 0;
         let expiresAt = null;
         let password = "";
+        let allowedHost = null;
         try {
           const kvFiles = await fetchKvFiles();
           const currentKv = kvFiles.find(f => f.name === oldKey);
@@ -5538,10 +5771,11 @@ r2FileList?.addEventListener("click", async (e) => {
             ttl = currentKv.metadata.ttl || 0;
             expiresAt = currentKv.metadata.expiresAt || null;
             password = currentKv.metadata.password || "";
+            allowedHost = currentKv.metadata.allowedHost || currentKv.metadata.d || null;
           }
         } catch (e) {}
 
-        await registerKvCid(newKey, cid, size, mime, originalS3Key, password, null, ttl, expiresAt, unpinned, kuboStatus);
+        await registerKvCid(newKey, cid, size, mime, originalS3Key, password, null, ttl, expiresAt, unpinned, kuboStatus, allowedHost);
         storeIpfsCid(newKey, cid);
         storeIpfsCid(originalS3Key, cid);
         storeIpfsCid(oldKey, cid);
@@ -6532,37 +6766,73 @@ const copyUploadApiUrlBtn = document.querySelector("#copyUploadApiUrlBtn");
 const copyCurlCmdBtn = document.querySelector("#copyCurlCmdBtn");
 const downloadSendToBatBtn = document.querySelector("#downloadSendToBatBtn");
 
-function getDedicatedUploadUrlWithDomain() {
-  const baseDomain = (getSelectedR2Domain() || (typeof window !== "undefined" ? window.location.origin : "")).replace(/\/$/, "");
+function getDedicatedUploadEndpoint() {
+  const customWorkerUrl = getCustomKvWorkerUrl();
+  const baseDomain = (customWorkerUrl || (typeof window !== "undefined" ? window.location.origin : "")).replace(/\/$/, "");
   return `${baseDomain}/api/upload`;
+}
+
+function getDedicatedUploadFullUrl() {
+  const endpoint = getDedicatedUploadEndpoint();
+  const selectedDomain = (getSelectedR2Domain() || "").replace(/\/$/, "");
+  const token = getAdminApiToken();
+
+  const url = new URL(endpoint, typeof window !== "undefined" ? window.location.origin : "http://localhost");
+  if (selectedDomain) {
+    url.searchParams.set("domain", selectedDomain);
+  }
+  if (token) {
+    url.searchParams.set("token", token);
+  }
+  return url.toString();
 }
 
 function updateDedicatedUploadApiUI() {
   if (!dedicatedUploadApiUrlInput) return;
-  const endpoint = getDedicatedUploadUrlWithDomain();
-  dedicatedUploadApiUrlInput.value = endpoint;
+  dedicatedUploadApiUrlInput.value = getDedicatedUploadFullUrl();
 }
 
 r2DomainSelect?.addEventListener("change", updateDedicatedUploadApiUI);
+adminApiToken?.addEventListener("input", updateDedicatedUploadApiUI);
+kvWorkerUrl?.addEventListener("input", updateDedicatedUploadApiUI);
 setTimeout(updateDedicatedUploadApiUI, 200);
 
 copyUploadApiUrlBtn?.addEventListener("click", async () => {
-  const endpoint = getDedicatedUploadUrlWithDomain();
-  await copyToClipboard(endpoint, copyUploadApiUrlBtn, "📋 コピー完了!");
+  const fullUrl = getDedicatedUploadFullUrl();
+  await copyToClipboard(fullUrl, copyUploadApiUrlBtn, "📋 コピー完了!");
 });
 
 copyCurlCmdBtn?.addEventListener("click", async () => {
-  const endpoint = getDedicatedUploadUrlWithDomain();
-  const curlCmd = `curl -X POST "${endpoint}" -F "file=@/path/to/image.webp"`;
+  const endpoint = getDedicatedUploadEndpoint();
+  const selectedDomain = (getSelectedR2Domain() || "").replace(/\/$/, "");
+  const token = getAdminApiToken();
+
+  const url = new URL(endpoint, typeof window !== "undefined" ? window.location.origin : "http://localhost");
+  if (selectedDomain) {
+    url.searchParams.set("domain", selectedDomain);
+  }
+
+  let curlCmd = `curl -X POST "${url.toString()}"`;
+  if (token) {
+    curlCmd += ` \\\n  -H "Authorization: Bearer ${token}"`;
+  }
+  curlCmd += ` \\\n  -F "file=@/path/to/image.webp"`;
+
   await copyToClipboard(curlCmd, copyCurlCmdBtn, "💻 コピー完了!");
 });
 
 downloadSendToBatBtn?.addEventListener("click", () => {
-  const endpoint = getDedicatedUploadUrlWithDomain();
-  if (!endpoint) {
-    alert("⚠️ 配信ドメインURLを設定してください。");
-    return;
+  const endpoint = getDedicatedUploadEndpoint();
+  const selectedDomain = (getSelectedR2Domain() || "").replace(/\/$/, "");
+  const token = getAdminApiToken();
+
+  const url = new URL(endpoint, typeof window !== "undefined" ? window.location.origin : "http://localhost");
+  if (selectedDomain) {
+    url.searchParams.set("domain", selectedDomain);
   }
+
+  const endpointUrlStr = url.toString();
+  const escapedToken = token.replace(/"/g, '`"');
 
   const batContent = `<# :
 @echo off
@@ -6579,7 +6849,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command "$s=[
 exit /b
 #>
 
-$endpoint = "${endpoint}"
+$endpoint = "${endpointUrlStr}"
+$token = "${escapedToken}"
 $batPath = $env:BAT_PATH
 $rawArgs = $env:BAT_ARGS
 
@@ -6607,7 +6878,11 @@ $errors = @()
 
 foreach ($f in $files) {
     if (Test-Path $f -PathType Leaf) {
-        $curlArgs = @('-s', '-X', 'POST', '-F', ('file=@' + $f), $endpoint)
+        $curlArgs = @('-s', '-X', 'POST')
+        if ($token) {
+            $curlArgs += @('-H', ('Authorization: Bearer ' + $token))
+        }
+        $curlArgs += @('-F', ('file=@' + $f), $endpoint)
         
         try {
             $raw = & curl.exe @curlArgs
@@ -6655,4 +6930,5 @@ if ($errors.Count -gt 0) {
 
   alert("📥 設定済みの「Cividgeへアップロード.bat」をダウンロードしました！\n\n【登録手順】\nダウンロードしたバッチファイルをダブルクリックすると、自動でWindowsの「送る」メニューに登録されます。\n\n【使い方】\nエクスプローラーで画像や動画を右クリック ➜「送る」➜「Cividgeへアップロード」で投稿完了＆URLが自動コピーされます！\n\n【解除・削除方法】\nWin + R キーを押し「shell:sendto」と入力して開いたフォルダから、本ファイルを削除してください。");
 });
+
 
