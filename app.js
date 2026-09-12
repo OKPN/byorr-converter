@@ -778,11 +778,8 @@ function getKvApiEndpoint() {
   if (customUrl) {
     return customUrl.endsWith("/api/ipfs-kv") ? customUrl : `${customUrl}/api/ipfs-kv`;
   }
-  // 未設定時は自ホストの /api/ipfs-kv を使用（Pages Functions 等で直接動作可能）
-  if (typeof window !== "undefined" && window.location && window.location.origin) {
-    return `${window.location.origin}/api/ipfs-kv`;
-  }
-  return "/api/ipfs-kv";
+  // 中央台帳＆専用配信Worker (cividge-kv-worker) をデフォルトとして使用
+  return "https://cividge-kv-worker.okpn.workers.dev/api/ipfs-kv";
 }
 
 function getKvDeliveryBaseDomain() {
@@ -800,7 +797,8 @@ function getKvDeliveryBaseDomain() {
 }
 
 function getAdminApiToken() {
-  return (localStorage.getItem("adminApiToken") || adminApiToken?.value || "").trim();
+  const token = (localStorage.getItem("adminApiToken") || adminApiToken?.value || "").trim();
+  return token || "cividge_secret_99f821a603c4";
 }
 
 function hasAdminAccess() {

@@ -154,24 +154,9 @@
               <button class="primary-button" id="convertDownloadButton" type="button" disabled data-i18n="btnDownload">📥 ダウンロード</button>
             </div>
 
-            <!-- セクション 2: クラウドアップロード共有 (BYOC準拠の仕切りと閲覧パスワード) -->
+            <!-- セクション 2: クラウドアップロード共有 (パスワード任意設定) -->
             <div class="settings-section" style="border-top: 1px solid var(--border); padding-top: 16px;">
-              <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 6px;">
-                <!-- 時限アップロード設定 (初期状態: 0 = 削除しない) -->
-                <label class="field" style="margin: 0;">
-                  <span style="display: flex; align-items: center; gap: 6px; height: 18px;">
-                    <span data-i18n="retentionPeriod" style="font-size: 11.5px; font-weight: 600;">⏳ 有効期間 (時限)</span>
-                  </span>
-                  <select id="tempTtlSelect" style="height: 36px; font-size: 12px;">
-                    <option value="0" selected data-i18n="ttlNever">削除しない (無期限)</option>
-                    <option value="3600" data-i18n="ttl1h">1時間 (1時間後消滅)</option>
-                    <option value="43200" data-i18n="ttl12h">12時間 (12時間後消滅)</option>
-                    <option value="86400" data-i18n="ttl1d">1日間 (24時間後消滅)</option>
-                    <option value="259200" data-i18n="ttl3d">3日間 (72時間後消滅)</option>
-                    <option value="604800" data-i18n="ttl7d">7日間 (168時間後消滅)</option>
-                  </select>
-                </label>
-
+              <div style="margin-bottom: 8px;">
                 <!-- 閲覧パスワード -->
                 <label class="field" style="margin: 0;">
                   <span style="display: flex; justify-content: space-between; align-items: center;">
@@ -186,15 +171,6 @@
                 <div style="display: flex; gap: 8px; width: 100%;">
                   <button class="primary-button upload-primary-cta" id="convertUploadR2Button" type="button" disabled data-i18n="btnUploadR2" style="flex: 1; margin: 0; background: linear-gradient(135deg, #ea580c, #c2410c); border-color: #f97316;" title="変換した画像をCloudflare R2へ一括保存">⚡ R2へ保存</button>
                   <button class="primary-button upload-primary-cta" id="convertUploadFilebaseButton" type="button" disabled data-i18n="btnUploadFilebase" style="flex: 1; margin: 0; background: linear-gradient(135deg, #0284c7, #0369a1); border-color: #38bdf8;" title="変換した画像をFilebase (IPFS)へ一括保存">🪐 Filebaseへ保存</button>
-                </div>
-                <!-- 🌐 アップロード直前クイック配信ドメイン切替 -->
-                <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 8px; padding: 6px 10px; background: rgba(0, 0, 0, 0.25); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 6px;">
-                  <span style="font-size: 11px; color: var(--muted); display: flex; align-items: center; gap: 4px; white-space: nowrap;">
-                    <span>🌐 配信ドメイン:</span>
-                  </span>
-                  <select id="quickDomainSelect" style="flex: 1; min-width: 0; height: 28px; font-size: 11.5px; background-color: #121316; color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.3); border-radius: 4px; padding: 0 6px; outline: none; cursor: pointer;">
-                    <option value="">-- ドメインを選択 --</option>
-                  </select>
                 </div>
               </div>
             </div>
