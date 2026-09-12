@@ -1092,8 +1092,6 @@ const DEFAULT_PRESET_DOMAINS = [
   "https://misskey-media.pages.dev",
   "https://content-relay.pages.dev",
   "https://blobs-cache.pages.dev",
-  "https://cividge.pages.dev",
-  "https://bbs.punipuni.eu",
 ];
 
 function getR2DomainList() {
@@ -1103,11 +1101,14 @@ function getR2DomainList() {
   } catch (e) {
     list = [];
   }
+  // cividge.pages.dev（トップ専用）や bbs.punipuni.eu は配信ドメインから除外
+  list = list.filter(d => !d.includes("cividge.pages.dev") && !d.includes("bbs.punipuni.eu"));
+
   // 未設定または空の場合はプリセットを初期設定
   if (!list || list.length === 0) {
     list = [...DEFAULT_PRESET_DOMAINS];
   } else {
-    // プリセットに含まれるドメイン（punipuni等）が未登録なら統合
+    // プリセットに含まれるドメインが未登録なら統合
     for (const d of DEFAULT_PRESET_DOMAINS) {
       if (!list.includes(d)) list.push(d);
     }
@@ -1116,8 +1117,8 @@ function getR2DomainList() {
   // 後方互換性：旧 r2PublicDomain / r2DevDomain からの自動移行
   const legacyPub = (localStorage.getItem("r2PublicDomain") || "").trim();
   const legacyDev = (localStorage.getItem("r2DevDomain") || "").trim();
-  if (legacyPub && !list.includes(legacyPub)) list.push(legacyPub);
-  if (legacyDev && !list.includes(legacyDev)) list.push(legacyDev);
+  if (legacyPub && !legacyPub.includes("cividge.pages.dev") && !legacyPub.includes("bbs.punipuni.eu") && !list.includes(legacyPub)) list.push(legacyPub);
+  if (legacyDev && !legacyDev.includes("cividge.pages.dev") && !legacyDev.includes("bbs.punipuni.eu") && !list.includes(legacyDev)) list.push(legacyDev);
 
   // 重複排除 & 空白除去
   return [...new Set(list.map(d => d.trim().replace(/\/$/, "")).filter(Boolean))];
