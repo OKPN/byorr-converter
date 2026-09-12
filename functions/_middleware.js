@@ -419,7 +419,7 @@ export async function onRequest(context) {
     const allowedHostnames = allowedDomain.split(",").map(h => h.trim().toLowerCase().replace(/^https?:\/\//, "").split('/')[0].split(':')[0]).filter(Boolean);
     const currentHostname = url.hostname.toLowerCase();
     if (allowedHostnames.length > 0 && !allowedHostnames.includes(currentHostname)) {
-      return renderNotFoundResponse(request, 86400); // 許可外ドメインアクセスは1日エッジキャッシュで即遮断
+      return renderNotFoundResponse(request, 60); // 許可外ドメインアクセスは1分キャッシュ（DDoS対策を維持しつつドメイン切替の反映を迅速化）
     }
   }
 
