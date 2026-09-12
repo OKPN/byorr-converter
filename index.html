@@ -604,8 +604,8 @@
     </div>
 
     <!-- 🌐 配信ドメイン エイリアス作成モーダル -->
-    <div id="aliasCreateModal" class="modal-backdrop" style="display: none;">
-      <div class="modal-content" style="max-width: 440px; text-align: left; padding: 22px 24px;">
+    <div id="aliasCreateModal" class="modal-backdrop" style="display: none; align-items: center; justify-content: center;">
+      <div class="modal-content" style="max-width: 440px; margin: auto; text-align: left; padding: 22px 24px;">
         <h3 style="margin-top: 0; font-size: 16px; font-weight: 700; color: var(--text); display: flex; align-items: center; gap: 8px;">
           <span>🌐</span> 配信ドメイン エイリアス作成
         </h3>
@@ -620,17 +620,6 @@
           <label class="field" style="margin: 0;">
             <span style="font-size: 11px; color: var(--muted);">追加する配信ドメイン:</span>
             <select id="aliasTargetDomainSelect" style="height: 34px; font-size: 12px; background: rgba(0,0,0,0.4); border: 1px solid rgba(56, 189, 248, 0.4); border-radius: 6px; padding: 0 8px; color: #38bdf8; outline: none;">
-            </select>
-          </label>
-          <label class="field" style="margin: 0;">
-            <span style="font-size: 11px; color: var(--muted);">時限削除（このドメイン専用の有効期限）:</span>
-            <select id="aliasTargetTtlSelect" style="height: 34px; font-size: 12px; background: rgba(0,0,0,0.4); border: 1px solid rgba(245, 158, 11, 0.4); border-radius: 6px; padding: 0 8px; color: #fcd34d; outline: none;">
-              <option value="0">⏳ 削除しない（無期限）</option>
-              <option value="3600">⏳ 1時間後に削除</option>
-              <option value="43200">⏳ 12時間後に削除</option>
-              <option value="86400">⏳ 24時間後に削除</option>
-              <option value="259200">⏳ 3日後に削除</option>
-              <option value="604800">⏳ 7日後に削除</option>
             </select>
           </label>
         </div>

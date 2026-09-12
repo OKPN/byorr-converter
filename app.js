@@ -1092,6 +1092,7 @@ const DEFAULT_PRESET_DOMAINS = [
   "https://misskey-media.pages.dev",
   "https://content-relay.pages.dev",
   "https://blobs-cache.pages.dev",
+  "https://punipuni-media.pages.dev",
 ];
 
 function getR2DomainList() {
@@ -6421,6 +6422,7 @@ r2FileList?.addEventListener("click", async (e) => {
     const displayName = article?.dataset?.displayname || (oldKey && oldKey.includes(":") ? oldKey.split(":").slice(1).join(":") : oldKey);
     const s3Key = article?.dataset?.s3key || displayName || oldKey;
     const cid = article?.dataset?.cid || "";
+    const size = Number(article?.dataset?.size || 0);
     const currentDomain = article?.dataset?.allowedhost || "";
 
     const availableDomains = getR2DomainList().filter(d => {
@@ -6436,7 +6438,6 @@ r2FileList?.addEventListener("click", async (e) => {
     const modal = document.getElementById("aliasCreateModal");
     const filenameInput = document.getElementById("aliasTargetFilenameInput");
     const domainSelect = document.getElementById("aliasTargetDomainSelect");
-    const ttlSelect = document.getElementById("aliasTargetTtlSelect");
     const cancelBtn = document.getElementById("cancelAliasBtn");
     const submitBtn = document.getElementById("submitAliasBtn");
 
@@ -6450,26 +6451,11 @@ r2FileList?.addEventListener("click", async (e) => {
       let icon = "🌐 ";
       if (d.includes(".pages.dev")) icon = "⚡ ";
       else if (d.includes(".r2.dev")) icon = "📦 ";
-      else if (d.includes("punipuni")) icon = "✨ ";
       opt.textContent = `${icon}${d}`;
       domainSelect.appendChild(opt);
     });
 
-    // 既存の残り時間をデフォルト選択
-    if (ttlSelect) {
-      const domExpiresAt = Number(article?.dataset?.expiresat || 0) || null;
-      if (domExpiresAt && domExpiresAt > Date.now()) {
-        const diff = Math.round((domExpiresAt - Date.now()) / 1000);
-        if (diff <= 3600) ttlSelect.value = "3600";
-        else if (diff <= 43200) ttlSelect.value = "43200";
-        else if (diff <= 86400) ttlSelect.value = "86400";
-        else if (diff <= 259200) ttlSelect.value = "259200";
-        else ttlSelect.value = "604800";
-      } else {
-        ttlSelect.value = "0";
-      }
-    }
-
+    // モーダルを完全に画面中央に表示
     modal.style.display = "flex";
 
     const closeModal = () => {
@@ -6493,9 +6479,15 @@ r2FileList?.addEventListener("click", async (e) => {
       try {
         let unpinned = false;
         let kuboStatus = null;
-        let ttl = ttlSelect ? Number(ttlSelect.value || 0) : 0;
-        let expiresAt = ttl > 0 ? (Date.now() + ttl * 1000) : null;
+        let ttl = 0;
+        let expiresAt = null;
         let password = "";
+
+        const domExpiresAt = Number(article?.dataset?.expiresat || 0) || null;
+        if (domExpiresAt && domExpiresAt > Date.now()) {
+          expiresAt = domExpiresAt;
+          ttl = Math.round((domExpiresAt - Date.now()) / 1000);
+        }
 
         try {
           const kvFiles = await fetchKvFiles();
@@ -6503,6 +6495,10 @@ r2FileList?.addEventListener("click", async (e) => {
           if (currentKv && currentKv.metadata) {
             unpinned = Boolean(currentKv.metadata.unpinned);
             kuboStatus = currentKv.metadata.kuboStatus || null;
+            if (!expiresAt) {
+              ttl = currentKv.metadata.ttl || 0;
+              expiresAt = currentKv.metadata.expiresAt || null;
+            }
             password = currentKv.metadata.password || "";
           }
         } catch (e) {}
