@@ -161,9 +161,9 @@ Yes! You can deploy multiple Pages projects (e.g. `blob-bin.pages.dev`, `content
 
 ---
 
-## 🤝 Integration with BYOC / BYORR Converter
+## 🤝 Integration with Cividge
 
-In [BYOC Converter](https://byoc-converter.pages.dev) or [BYORR Converter](https://byorr-converter.pages.dev):
+In [Cividge](https://cividge.pages.dev):
 1. Expand the Cloudflare Settings section.
 2. Add your `https://my-media-bin.pages.dev` URL in the **Public Direct Domain** settings.
 3. Every uploaded image or video will now automatically generate direct, permanent, copy-pasteable links powered by your free Pages CDN!
