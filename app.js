@@ -6165,6 +6165,32 @@ r2FileList?.addEventListener("click", async (e) => {
         true // overwriteAllowedHost: 選択されたドメインのみを単一で設定（カンマ結合破損を完全防止）
       );
 
+      // 🛡️ 元のファイルが単体キー（プレフィックス無し）だった場合、元ドメイン側の個別キー [originalHost]:[filename] も登録して完全対称・確実配信を保証
+      if (!oldKey.includes(":") && currentDomain) {
+        const origCleanHost = currentDomain.replace(/^https?:\/\//, "").split("/")[0].split(":")[0].toLowerCase();
+        if (origCleanHost && origCleanHost !== cleanHost) {
+          const origKeyWithHost = `${origCleanHost}:${targetFilename}`;
+          const origTtl = currentMeta.ttl || 0;
+          const origExpiresAt = currentMeta.expiresAt || null;
+          await registerKvCid(
+            origKeyWithHost,
+            currentCid,
+            size,
+            mime,
+            s3Key,
+            password,
+            null,
+            origTtl,
+            origExpiresAt,
+            unpinned,
+            kuboStatus,
+            currentDomain,
+            true
+          );
+          storeIpfsCid(origKeyWithHost, currentCid);
+        }
+      }
+
       storeIpfsCid(aliasKey, currentCid);
       storeIpfsCid(targetFilename, currentCid);
 
