@@ -778,8 +778,7 @@ function getKvApiEndpoint() {
   if (customUrl) {
     return customUrl.endsWith("/api/ipfs-kv") ? customUrl : `${customUrl}/api/ipfs-kv`;
   }
-  // 中央台帳＆専用配信Worker (cividge-kv-worker) をデフォルトとして使用
-  return "https://cividge-kv-worker.okpn.workers.dev/api/ipfs-kv";
+  return "";
 }
 
 function getKvDeliveryBaseDomain() {
@@ -797,15 +796,14 @@ function getKvDeliveryBaseDomain() {
 }
 
 function getAdminApiToken() {
-  const token = (localStorage.getItem("adminApiToken") || adminApiToken?.value || "").trim();
-  return token || "cividge_secret_99f821a603c4";
+  return (localStorage.getItem("adminApiToken") || adminApiToken?.value || "").trim();
 }
 
 function hasAdminAccess() {
-  // 🛡️ KV台帳モード: 管理者トークン (Admin Token) が設定されているか、独自KV Worker URLが指定されている場合に有効化
+  // 🛡️ KV台帳モード: 管理者トークン (Admin Token) と KV Worker URL が設定されている場合に有効化
   const custom = getCustomKvWorkerUrl();
   const token = getAdminApiToken();
-  return Boolean(token || custom);
+  return Boolean(token && custom);
 }
 
 async function registerKvCid(key, cid = "", size = 0, mime = "", s3Key = "", password = "", blobOrBytes = null, ttl = 0, expiresAt = null, unpinned = false, kuboStatus = null, allowedHost = null, overwriteAllowedHost = false) {
@@ -1094,14 +1092,14 @@ function getR2DomainList() {
   } catch (e) {
     list = [];
   }
-  // cividge.pages.dev（トップ専用）や bbs.punipuni.eu は配信ドメインから除外
-  list = list.filter(d => !d.includes("cividge.pages.dev") && !d.includes("bbs.punipuni.eu"));
+  // cividge.pages.dev（トップ専用）は配信ドメインから除外
+  list = list.filter(d => !d.includes("cividge.pages.dev"));
 
   // 後方互換性：旧 r2PublicDomain / r2DevDomain からの移行（未登録時のみ）
   const legacyPub = (localStorage.getItem("r2PublicDomain") || "").trim();
   const legacyDev = (localStorage.getItem("r2DevDomain") || "").trim();
-  if (legacyPub && !legacyPub.includes("cividge.pages.dev") && !legacyPub.includes("bbs.punipuni.eu") && !list.includes(legacyPub)) list.push(legacyPub);
-  if (legacyDev && !legacyDev.includes("cividge.pages.dev") && !legacyDev.includes("bbs.punipuni.eu") && !list.includes(legacyDev)) list.push(legacyDev);
+  if (legacyPub && !legacyPub.includes("cividge.pages.dev") && !list.includes(legacyPub)) list.push(legacyPub);
+  if (legacyDev && !legacyDev.includes("cividge.pages.dev") && !list.includes(legacyDev)) list.push(legacyDev);
 
   // 重複排除 & 空白除去
   return [...new Set(list.map(d => d.trim().replace(/\/$/, "")).filter(Boolean))];
