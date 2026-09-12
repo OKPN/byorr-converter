@@ -5286,22 +5286,22 @@ function renderStorageOnboardingCard() {
       <div class="onboarding-step-grid">
         <!-- STEP 1: cividge-kv-worker デプロイ & 連携案内 -->
         <div class="onboarding-step-box">
-          <span class="onboarding-step-badge" style="background: rgba(245, 158, 11, 0.2); color: #f59e0b;">STEP 1: KV 台帳 Worker 連携 (高速短縮URL・時限削除)</span>
+          <span class="onboarding-step-badge" style="background: rgba(245, 158, 11, 0.2); color: #f59e0b;">STEP 1: KV 台帳 Worker 連携 (必須: 高速短縮URL・時限削除・保護)</span>
           <div style="font-size: 11.5px; color: var(--muted); line-height: 1.5;">
-            短縮URLや時限削除・パスワード保護を使用する場合は、各自の Cloudflare に <code>kv-worker</code> をデプロイします。
+            短縮URL・時限削除・パスワード保護・安全なエッジキャッシュ配信を行うため、各自の Cloudflare に <code>kv-worker</code> をデプロイします。
             <div style="margin: 8px 0; padding: 8px; background: rgba(0,0,0,0.4); border-radius: 6px; font-family: monospace; font-size: 11px; color: #cbd5e1;">
-              cd kv-worker<br>
+              cd cividge-kv-worker<br>
               npx wrangler deploy
             </div>
-            デプロイ後に発行された Worker URL と設定した ADMIN_TOKEN を入力してください。(未入力の場合は直リンクモードで動作します)
+            デプロイ後に発行された Worker URL と設定した ADMIN_TOKEN を入力してください。
           </div>
 
           <div class="onboarding-input-field">
-            <label>KV 台帳 Worker URL (任意)</label>
-            <input type="text" id="obKvUrl" placeholder="例: https://cividge-kv.yourname.workers.dev" value="${escapeHtml(kvUrlVal)}">
+            <label>KV 台帳 Worker URL <span style="color: #ef4444; font-weight: bold;">(必須)</span></label>
+            <input type="text" id="obKvUrl" placeholder="例: https://cividge-kv-worker.yourname.workers.dev" value="${escapeHtml(kvUrlVal)}">
           </div>
           <div class="onboarding-input-field">
-            <label>Admin API Token (任意)</label>
+            <label>Admin API Token <span style="color: #ef4444; font-weight: bold;">(必須)</span></label>
             <input type="password" id="obAdminToken" placeholder="例: your-secret-token" value="${escapeHtml(adminTokenVal)}">
           </div>
         </div>
@@ -5309,15 +5309,24 @@ function renderStorageOnboardingCard() {
         <!-- STEP 2: ストレージ認証情報 (R2またはFilebase個別画面) -->
         <div class="onboarding-step-box">
           <span class="onboarding-step-badge" style="background: ${isFb ? 'rgba(56, 189, 248, 0.2); color: #38bdf8;' : 'rgba(249, 115, 22, 0.2); color: #fb923c;'}">
-            STEP 2: ${isFb ? "🪐 Filebase (IPFS) 設定" : "⚡ Cloudflare R2 設定"}
+            STEP 2: ${isFb ? "🪐 Filebase (IPFS) & 独自配信エッジ設定" : "⚡ Cloudflare R2 & 独自配信エッジ設定"}
           </span>
+          <div style="font-size: 11.5px; color: var(--muted); line-height: 1.5; margin-bottom: 8px;">
+            ${isFb 
+              ? "IPFSファイルを独自エッジ経由（/i/…）で高速キャッシュ配信するために、各自の配信用 Pages をデプロイして発行されたアドレスを設定します。" 
+              : "ファイルを独自エッジ経由（/raw/…）で爆速配信するために、各自の配信用 Pages をデプロイして発行されたアドレスを設定します。"}
+            <div style="margin: 6px 0; padding: 6px 8px; background: rgba(0,0,0,0.4); border-radius: 6px; font-family: monospace; font-size: 11px; color: #cbd5e1;">
+              npx wrangler pages deploy dist --project-name=my-media
+            </div>
+            ※ 発行された <code>https://my-media.pages.dev</code> を下の「公開・配信ドメイン」に入力してください。
+          </div>
 
           ${isFb ? `
           <!-- Filebase 専用設定フォーム -->
           <div id="obFbFields" style="display: flex; flex-direction: column; gap: 8px;">
             <div class="onboarding-input-field">
-              <label>公開・配信ドメイン (必須)</label>
-              <input type="text" id="obDomainInput" placeholder="例: https://content-cache.pages.dev" value="${escapeHtml(currentDomain)}">
+              <label>公開・配信ドメイン <span style="color: #ef4444; font-weight: bold;">(必須: pages.dev)</span></label>
+              <input type="text" id="obDomainInput" placeholder="例: https://my-media.pages.dev" value="${escapeHtml(currentDomain)}">
             </div>
             <div class="onboarding-input-field">
               <label>Filebase バケット名</label>
@@ -5336,8 +5345,8 @@ function renderStorageOnboardingCard() {
           <!-- R2 専用設定フォーム -->
           <div id="obR2Fields" style="display: flex; flex-direction: column; gap: 8px;">
             <div class="onboarding-input-field">
-              <label>公開・配信ドメイン (必須)</label>
-              <input type="text" id="obR2DomainInput" placeholder="例: https://content-cache.pages.dev" value="${escapeHtml(currentDomain)}">
+              <label>公開・配信ドメイン <span style="color: #ef4444; font-weight: bold;">(必須: pages.dev)</span></label>
+              <input type="text" id="obR2DomainInput" placeholder="例: https://my-media.pages.dev" value="${escapeHtml(currentDomain)}">
             </div>
             <div class="onboarding-input-field">
               <label>Cloudflare Account ID</label>
@@ -5425,11 +5434,22 @@ function renderStorageOnboardingCard() {
 
   obConnectBtn?.addEventListener("click", async () => {
     syncOnboardingInputs();
+
+    const kvUrl = (localStorage.getItem("kvWorkerUrl") || kvWorkerUrl?.value || "").trim();
+    const adminTok = (localStorage.getItem("adminApiToken") || adminApiToken?.value || "").trim();
+
+    if (!kvUrl || !adminTok) {
+      if (obStatusNotice) {
+        obStatusNotice.textContent = "⚠️ STEP 1 の KV 台帳 Worker URL と Admin API Token を入力してください。";
+      }
+      return;
+    }
+
     const configured = isFb ? isFilebaseConfigured() : isR2Configured();
 
     if (!configured) {
       if (obStatusNotice) {
-        obStatusNotice.textContent = "⚠️ 配信ドメインおよびストレージ認証情報（バケット名、Key、Secret）を入力してください。";
+        obStatusNotice.textContent = "⚠️ 公開・配信ドメイン(pages.dev) およびストレージ認証情報をすべて入力してください。";
       }
       return;
     }
