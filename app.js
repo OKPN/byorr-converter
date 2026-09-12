@@ -5162,15 +5162,23 @@ async function fetchAndRenderR2Files() {
 
       // 1. KV に登録されている名前（公開URL名）を最優先でリスト構築
       for (const kvItem of kvFiles) {
-        const kvName = kvItem.name;
-        const kvCid = kvItem.metadata?.cid || getStoredIpfsCid(kvName);
+        const rawKey = kvItem.name;
+        // hostname:filename の形式（別ドメイン個別キー）なら表示ファイル名を抽出
+        const colonIdx = rawKey.indexOf(":");
+        const displayName = (colonIdx > 0 && !rawKey.startsWith("tombstone_") && !rawKey.startsWith("blob_"))
+          ? rawKey.substring(colonIdx + 1)
+          : rawKey;
+
+        const kvCid = kvItem.metadata?.cid || getStoredIpfsCid(rawKey) || getStoredIpfsCid(displayName);
         const recordedS3Key = kvItem.metadata?.s3Key;
 
         let matchedS3 = null;
         if (recordedS3Key && s3KeyToItem.has(recordedS3Key)) {
           matchedS3 = s3KeyToItem.get(recordedS3Key);
-        } else if (s3KeyToItem.has(kvName)) {
-          matchedS3 = s3KeyToItem.get(kvName);
+        } else if (s3KeyToItem.has(rawKey)) {
+          matchedS3 = s3KeyToItem.get(rawKey);
+        } else if (s3KeyToItem.has(displayName)) {
+          matchedS3 = s3KeyToItem.get(displayName);
         } else if (kvCid && s3CidToItem.has(kvCid)) {
           matchedS3 = s3CidToItem.get(kvCid);
         }
@@ -5178,7 +5186,8 @@ async function fetchAndRenderR2Files() {
         if (matchedS3) {
           consumedS3Keys.add(matchedS3.Key);
           contents.push({
-            Key: kvName,
+            Key: displayName,
+            rawKey: rawKey,
             s3Key: matchedS3.Key,
             Size: matchedS3.Size || kvItem.metadata?.size || 0,
             LastModified: matchedS3.LastModified || (kvItem.metadata?.lastModified ? new Date(kvItem.metadata.lastModified) : null),
@@ -5191,13 +5200,15 @@ async function fetchAndRenderR2Files() {
             metadata: kvItem.metadata || {},
           });
           if (kvCid) {
-            storeIpfsCid(kvName, kvCid);
+            storeIpfsCid(rawKey, kvCid);
+            storeIpfsCid(displayName, kvCid);
             storeIpfsCid(matchedS3.Key, kvCid);
           }
         } else {
           // S3 に実体がない（アンピン後など）
           contents.push({
-            Key: kvName,
+            Key: displayName,
+            rawKey: rawKey,
             s3Key: null,
             Size: kvItem.metadata?.size || 0,
             LastModified: kvItem.metadata?.lastModified ? new Date(kvItem.metadata.lastModified) : null,
@@ -5209,7 +5220,10 @@ async function fetchAndRenderR2Files() {
             ttl: kvItem.metadata?.ttl || 0,
             metadata: kvItem.metadata || {},
           });
-          if (kvCid) storeIpfsCid(kvName, kvCid);
+          if (kvCid) {
+            storeIpfsCid(rawKey, kvCid);
+            storeIpfsCid(displayName, kvCid);
+          }
         }
       }
 
@@ -5264,9 +5278,23 @@ async function fetchAndRenderR2Files() {
         console.log("⏳ 期限切れファイルを検知 (" + expiredItems.length + "件) -> 自動リンク抹消開始", expiredItems.map(i => i.Key));
         (async () => {
           for (const expItem of expiredItems) {
+            const expItemKey = expItem.rawKey || expItem.Key;
             try {
-              await deleteKvCid(expItem.Key);
-              if (expItem.isFromS3 && s3 && bucketName && (expItem.s3Key || expItem.Key)) {
+              await deleteKvCid(expItemKey);
+
+              // 🛡️ 他の有効なカードが同じ S3 実体を共有しているか確認
+              const otherActive = contents.some(other => {
+                if (other === expItem) return false;
+                const otherKey = other.rawKey || other.Key;
+                if (otherKey === expItemKey) return false;
+                if (other.expiresAt && nowMs > Number(other.expiresAt)) return false; // 期限切れ同士は除外
+                if (expItem.s3Key && other.s3Key && expItem.s3Key === other.s3Key) return true;
+                if (expItem.cid && other.cid && expItem.cid === other.cid) return true;
+                return false;
+              });
+
+              // 他に共有している有効なエイリアスカードが無い場合のみ S3 実体を削除
+              if (!otherActive && expItem.isFromS3 && s3 && bucketName && (expItem.s3Key || expItem.Key)) {
                 const delCmd = new DeleteObjectCommand({
                   Bucket: bucketName,
                   Key: expItem.s3Key || expItem.Key,
@@ -5274,13 +5302,13 @@ async function fetchAndRenderR2Files() {
                 await s3.send(delCmd);
               }
             } catch (delErr) {
-              console.warn("Auto-expiry cleanup failed for " + expItem.Key + ":", delErr);
+              console.warn("Auto-expiry cleanup failed for " + expItemKey + ":", delErr);
             }
           }
         })();
         // 即座に一覧の見た目からも期限切れファイルを除外
-        const expiredKeySet = new Set(expiredItems.map(i => i.Key));
-        contents = contents.filter(i => !expiredKeySet.has(i.Key));
+        const expiredKeySet = new Set(expiredItems.map(i => i.rawKey || i.Key));
+        contents = contents.filter(i => !expiredKeySet.has(i.rawKey || i.Key));
       }
     }
 
@@ -5400,8 +5428,12 @@ async function fetchAndRenderR2Files() {
       
       const itemCid = isFilebase ? (item.cid || getStoredIpfsCid(item.Key) || (item.s3Key ? getStoredIpfsCid(item.s3Key) : null)) : null;
 
-      article.dataset.key = item.Key || "";
-      article.dataset.s3key = item.s3Key || item.Key || "";
+      const itemKey = item.rawKey || item.Key || "";
+      const itemDisplayName = item.Key || "";
+
+      article.dataset.key = itemKey;
+      article.dataset.displayname = itemDisplayName;
+      article.dataset.s3key = item.s3Key || itemDisplayName || itemKey;
       article.dataset.size = String(item.Size || 0);
       article.dataset.cid = itemCid || "";
       article.dataset.expiresat = item.expiresAt ? String(item.expiresAt) : "0";
@@ -5517,8 +5549,8 @@ async function fetchAndRenderR2Files() {
           ${r2CardTtlSelect}
           ${r2CardDomainSelect}
           <button type="button" class="ghost-button copy-r2-url-btn" data-url="${escapeHtml(publicUrl)}">${escapeHtml(dict.copyUrl)}</button>
-          ${!hasPassword ? `<button type="button" class="ghost-button civitai-r2-post-btn" data-url="${escapeHtml(publicUrl)}" data-name="${escapeHtml(item.Key)}" style="color: #38bdf8; border-color: rgba(56, 189, 248, 0.4);" title="Civitai の投稿画面を開く">🎨 Civitai</button>` : ""}
-          <button type="button" class="ghost-button danger-button delete-r2-file-btn" data-key="${escapeHtml(item.Key)}" data-s3key="${escapeHtml(item.s3Key || item.Key)}" data-cid="${escapeHtml(itemCid || "")}" data-origin="${isFromS3 ? '1' : '0'}" title="ファイルを削除し、KVマッピング・ストレージ実体を抹消します（自宅Kuboも自動回収・GC）">削除</button>
+          ${!hasPassword ? `<button type="button" class="ghost-button civitai-r2-post-btn" data-url="${escapeHtml(publicUrl)}" data-name="${escapeHtml(itemDisplayName)}" style="color: #38bdf8; border-color: rgba(56, 189, 248, 0.4);" title="Civitai の投稿画面を開く">🎨 Civitai</button>` : ""}
+          <button type="button" class="ghost-button danger-button delete-r2-file-btn" data-key="${escapeHtml(itemKey)}" data-s3key="${escapeHtml(item.s3Key || itemDisplayName)}" data-cid="${escapeHtml(itemCid || "")}" data-origin="${isFromS3 ? '1' : '0'}" title="ファイルを削除し、KVマッピング・ストレージ実体を抹消します（自宅Kuboも自動回収・GC）">削除</button>
         `;
       } else {
         const r2CardDomainSelect = createCardDomainSelectHtml(publicUrl, "r2-file-domain-select");
@@ -5527,14 +5559,14 @@ async function fetchAndRenderR2Files() {
           ${r2CardTtlSelect}
           ${r2CardDomainSelect}
           <button type="button" class="ghost-button copy-r2-url-btn" data-url="${escapeHtml(publicUrl)}">${escapeHtml(dict.copyUrl)}</button>
-          ${!hasPassword ? `<button type="button" class="ghost-button civitai-r2-post-btn" data-url="${escapeHtml(publicUrl)}" data-name="${escapeHtml(item.Key)}" style="color: #38bdf8; border-color: rgba(56, 189, 248, 0.4);" title="Civitai の投稿画面を開く">🎨 Civitai</button>` : ""}
+          ${!hasPassword ? `<button type="button" class="ghost-button civitai-r2-post-btn" data-url="${escapeHtml(publicUrl)}" data-name="${escapeHtml(itemDisplayName)}" style="color: #38bdf8; border-color: rgba(56, 189, 248, 0.4);" title="Civitai の投稿画面を開く">🎨 Civitai</button>` : ""}
           ${devUrl ? `<button type="button" class="ghost-button copy-r2-dev-url-btn" data-url="${escapeHtml(devUrl)}">${escapeHtml(dict.devCopyUrl)}</button>` : ""}
-          <button type="button" class="ghost-button danger-button delete-r2-file-btn" data-key="${escapeHtml(item.Key)}" data-origin="1">${escapeHtml(dict.deleteNow)}</button>
+          <button type="button" class="ghost-button danger-button delete-r2-file-btn" data-key="${escapeHtml(itemKey)}" data-origin="1">${escapeHtml(dict.deleteNow)}</button>
         `;
       }
 
       const renameBtnHtml = isFilebase
-        ? `<button type="button" class="rename-file-btn" data-key="${escapeHtml(item.Key)}" data-s3key="${escapeHtml(item.s3Key || item.Key)}" data-size="${item.Size || 0}" data-cid="${escapeHtml(itemCid || "")}" title="ファイル名を変更" style="background: none; border: none; cursor: pointer; padding: 2px 4px; font-size: 14px; opacity: 0.8; transition: opacity 0.15s; line-height: 1;">✏️</button>`
+        ? `<button type="button" class="rename-file-btn" data-key="${escapeHtml(itemKey)}" data-displayname="${escapeHtml(itemDisplayName)}" data-s3key="${escapeHtml(item.s3Key || itemDisplayName)}" data-size="${item.Size || 0}" data-cid="${escapeHtml(itemCid || "")}" title="ファイル名を変更" style="background: none; border: none; cursor: pointer; padding: 2px 4px; font-size: 14px; opacity: 0.8; transition: opacity 0.15s; line-height: 1;">✏️</button>`
         : "";
 
       // 小型 CID コピーバッジ ＆ ノード探索リンク
@@ -5551,19 +5583,19 @@ async function fetchAndRenderR2Files() {
       }
 
       article.innerHTML = `
-        <input type="checkbox" class="r2-file-checkbox" data-key="${escapeHtml(item.Key)}" style="width: 18px; height: 18px; cursor: pointer; accent-color: var(--accent); align-self: center; margin-right: 4px;">
+        <input type="checkbox" class="r2-file-checkbox" data-key="${escapeHtml(itemKey)}" style="width: 18px; height: 18px; cursor: pointer; accent-color: var(--accent); align-self: center; margin-right: 4px;">
         <a href="${escapeHtml(publicUrl)}" target="_blank" rel="noopener noreferrer" class="thumb-link" title="表示">
           ${thumbHtml}
         </a>
         <div style="flex: 1; min-width: 0;">
           <div class="item-name-row" style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap;">
-            <span class="item-name" style="font-weight: 600; word-break: break-all;">${escapeHtml(item.Key)}</span>
+            <span class="item-name" style="font-weight: 600; word-break: break-all;">${escapeHtml(itemDisplayName)}</span>
             ${renameBtnHtml}
             ${cidBadgeHtml}
             <span style="color: #64748b; font-size: 11px; white-space: nowrap;">${formatBytes(item.Size || 0)}</span>
             ${pwdBadgeHtml}
             ${ttlBadgeHtml}
-            <span class="r2-wf-badge-placeholder" data-key="${escapeHtml(item.Key)}"></span>
+            <span class="r2-wf-badge-placeholder" data-key="${escapeHtml(itemKey)}"></span>
           </div>
           <div class="item-meta" style="color: var(--muted); margin-top: 5px; font-size: 11px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
             <span>更新日: ${escapeHtml(dateStr)}</span>
@@ -5689,7 +5721,8 @@ r2FileList?.addEventListener("click", async (e) => {
     const chosenDomain = (cardSelect?.value || getSelectedR2Domain() || (typeof window !== "undefined" ? window.location.origin : "")).replace(/\/$/, "");
 
     if (isFilebase && key) {
-      url = `${chosenDomain}/${encodeURIComponent(key)}`;
+      const displayName = article?.dataset?.displayname || (key.includes(":") ? key.split(":").slice(1).join(":") : key);
+      url = `${chosenDomain}/${encodeURIComponent(displayName)}`;
       target.dataset.url = url;
     } else if (url && cardSelect?.value) {
       url = switchUrlDomain(url, cardSelect.value);
@@ -5891,11 +5924,15 @@ r2FileList?.addEventListener("click", async (e) => {
       }
     }
 
-    // ダイアログを表示して対象ドメインとファイル名を取得
-    const dialogResult = await showDomainAliasDialog(oldKey, currentDomain, domainList);
+    const displayName = article?.dataset?.displayname || (oldKey.includes(":") ? oldKey.split(":").slice(1).join(":") : oldKey);
+
+    // ダイアログを表示して対象ドメインとファイル名・独立TTLを取得
+    const dialogResult = await showDomainAliasDialog(displayName, currentDomain, domainList);
     if (!dialogResult) return;
 
-    const { filename: targetFilename, targetDomain } = dialogResult;
+    const { filename: targetFilename, targetDomain, ttl: aliasTtl } = dialogResult;
+    const cleanHost = targetDomain.replace(/^https?:\/\//, "").split("/")[0].split(":")[0].toLowerCase();
+    const aliasKey = `${cleanHost}:${targetFilename}`;
 
     // 既存ファイルとの衝突チェック
     let existingKvFiles = [];
@@ -5905,19 +5942,10 @@ r2FileList?.addEventListener("click", async (e) => {
       console.warn("fetchKvFiles error during alias creation:", e);
     }
 
-    const conflicting = existingKvFiles.find(f => f.name === targetFilename);
+    const conflicting = existingKvFiles.find(f => f.name === aliasKey || (f.name === targetFilename && (f.metadata?.allowedHost || f.metadata?.d || "").toLowerCase() === cleanHost));
     if (conflicting) {
-      const c = conflicting.metadata?.cid || conflicting.metadata?.c;
-      const d = (conflicting.metadata?.allowedHost || conflicting.metadata?.d || "").toLowerCase();
-      const targetHost = targetDomain.replace(/^https?:\/\//, "").split("/")[0].toLowerCase();
-      if (c && c !== currentCid) {
-        await showCustomAlert(`⚠️ 「${targetFilename}」は異なるデータ（別CID）で既に存在します。\n別のファイル名を指定してください。`, "ファイル名衝突");
-        return;
-      }
-      if (d && d === targetHost) {
-        await showCustomAlert(`⚠️ ドメイン「${targetDomain}」には既に「${targetFilename}」が登録されています。`, "登録済み");
-        return;
-      }
+      await showCustomAlert(`⚠️ ドメイン「${targetDomain}」には既に「${targetFilename}」が登録されています。`, "登録済み");
+      return;
     }
 
     btn.disabled = true;
@@ -5927,28 +5955,28 @@ r2FileList?.addEventListener("click", async (e) => {
     try {
       // 既存メタデータの引き継ぎ
       let currentMeta = {};
-      const currentKv = existingKvFiles.find(f => f.name === oldKey);
+      const currentKv = existingKvFiles.find(f => f.name === oldKey || f.name === targetFilename);
       if (currentKv && currentKv.metadata) {
         currentMeta = currentKv.metadata;
       }
 
       const mime = currentMeta.mime || "";
-      const ttl = currentMeta.ttl || 0;
-      const expiresAt = currentMeta.expiresAt || null;
+      const selectedTtl = typeof aliasTtl === "number" ? aliasTtl : (currentMeta.ttl || 0);
+      const expiresAt = selectedTtl > 0 ? (Date.now() + selectedTtl * 1000) : null;
       const password = currentMeta.password || "";
       const unpinned = Boolean(currentMeta.unpinned);
       const kuboStatus = currentMeta.kuboStatus || null;
 
-      // KV にエイリアスとして新規登録（同一CID、同一s3Key、指定された targetDomain を単一上書きで適用）
+      // KV にエイリアスとして新規登録（キー: cleanHost:targetFilename、同一CID、同一s3Key、指定された targetDomain を単一上書きで適用）
       await registerKvCid(
-        targetFilename,
+        aliasKey,
         currentCid,
         size,
         mime,
         s3Key,
         password,
         null,
-        ttl,
+        selectedTtl,
         expiresAt,
         unpinned,
         kuboStatus,
@@ -5956,6 +5984,7 @@ r2FileList?.addEventListener("click", async (e) => {
         true // overwriteAllowedHost: 選択されたドメインのみを単一で設定（カンマ結合破損を完全防止）
       );
 
+      storeIpfsCid(aliasKey, currentCid);
       storeIpfsCid(targetFilename, currentCid);
 
       btn.textContent = "✅";
@@ -6719,6 +6748,7 @@ function showDomainAliasDialog(currentKey, currentDomain, domainList) {
     const modal = document.getElementById("aliasCreateModal");
     const filenameInput = document.getElementById("aliasTargetFilenameInput");
     const domainSelect = document.getElementById("aliasTargetDomainSelect");
+    const ttlSelect = document.getElementById("aliasTargetTtlSelect");
     const submitBtn = document.getElementById("submitAliasBtn");
     const cancelBtn = document.getElementById("cancelAliasBtn");
 
@@ -6726,24 +6756,11 @@ function showDomainAliasDialog(currentKey, currentDomain, domainList) {
       // フォールバック
       const newDomain = prompt("追加する配信ドメインを入力してください:", domainList[0] || "");
       if (!newDomain) return resolve(null);
-      return resolve({ filename: currentKey, targetDomain: newDomain });
+      return resolve({ filename: currentKey, targetDomain: newDomain, ttl: 0 });
     }
 
-    // 別ドメイン用のエイリアスファイル名初期候補（例: sample-misskey.mp4）を自動生成
-    const extMatch = currentKey.match(/\.[^.]+$/);
-    const ext = extMatch ? extMatch[0] : "";
-    const baseName = extMatch ? currentKey.slice(0, -ext.length) : currentKey;
-
-    const generateSuggestedName = (domain) => {
-      let slug = "";
-      try {
-        const h = new URL(domain.startsWith("http") ? domain : `https://${domain}`).hostname;
-        slug = h.split(".")[0];
-      } catch (e) {
-        slug = "alias";
-      }
-      return `${baseName}-${slug}${ext}`;
-    };
+    // 同一ファイル名をそのまま固定表示
+    filenameInput.value = currentKey;
 
     // ドメイン候補オプション生成（現在と異なるドメインを優先選択）
     domainSelect.innerHTML = "";
@@ -6761,50 +6778,33 @@ function showDomainAliasDialog(currentKey, currentDomain, domainList) {
       domainSelect.appendChild(opt);
     });
 
-    const initialDomain = firstOtherDomain || domainList[0] || "";
     if (firstOtherDomain) {
       domainSelect.value = firstOtherDomain;
     }
-    filenameInput.value = initialDomain ? generateSuggestedName(initialDomain) : currentKey;
 
-    let userManuallyEditedFilename = false;
-    const onFilenameInput = () => {
-      userManuallyEditedFilename = true;
-    };
-    filenameInput.addEventListener("input", onFilenameInput);
-
-    const onDomainChange = () => {
-      if (!userManuallyEditedFilename && domainSelect.value) {
-        filenameInput.value = generateSuggestedName(domainSelect.value);
-      }
-    };
-    domainSelect.addEventListener("change", onDomainChange);
+    if (ttlSelect) {
+      ttlSelect.value = "0"; // デフォルトは無期限
+    }
 
     modal.style.display = "grid";
-    filenameInput.focus();
 
     const cleanup = (result) => {
       modal.style.display = "none";
       submitBtn.removeEventListener("click", onSubmit);
       cancelBtn.removeEventListener("click", onCancel);
       modal.removeEventListener("click", onBackdrop);
-      filenameInput.removeEventListener("input", onFilenameInput);
-      domainSelect.removeEventListener("change", onDomainChange);
       resolve(result);
     };
 
     const onSubmit = () => {
-      const filename = filenameInput.value.trim();
+      const filename = filenameInput.value.trim() || currentKey;
       const targetDomain = domainSelect.value.trim();
-      if (!filename) {
-        alert("⚠️ ファイル名を入力してください。");
-        return;
-      }
+      const ttl = ttlSelect ? Number(ttlSelect.value || 0) : 0;
       if (!targetDomain) {
         alert("⚠️ 配信ドメインを選択してください。");
         return;
       }
-      cleanup({ filename, targetDomain });
+      cleanup({ filename, targetDomain, ttl });
     };
 
     const onCancel = () => cleanup(null);

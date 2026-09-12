@@ -599,12 +599,23 @@
         </p>
         <div style="display: flex; flex-direction: column; gap: 12px; margin-bottom: 20px;">
           <label class="field" style="margin: 0;">
-            <span style="font-size: 11px; color: var(--muted);">対象ファイル名:</span>
-            <input type="text" id="aliasTargetFilenameInput" style="height: 32px; font-size: 12px; background: rgba(0,0,0,0.3); border: 1px solid var(--border); border-radius: 6px; padding: 0 8px; color: var(--text);" value="">
+            <span style="font-size: 11px; color: var(--muted);">対象ファイル名（同名維持）:</span>
+            <input type="text" id="aliasTargetFilenameInput" style="height: 32px; font-size: 12px; background: rgba(0,0,0,0.3); border: 1px solid var(--border); border-radius: 6px; padding: 0 8px; color: #38bdf8; font-family: monospace; font-weight: 600;" value="" readonly>
           </label>
           <label class="field" style="margin: 0;">
             <span style="font-size: 11px; color: var(--muted);">追加する配信ドメイン:</span>
             <select id="aliasTargetDomainSelect" style="height: 34px; font-size: 12px; background: rgba(0,0,0,0.4); border: 1px solid rgba(56, 189, 248, 0.4); border-radius: 6px; padding: 0 8px; color: #38bdf8; outline: none;">
+            </select>
+          </label>
+          <label class="field" style="margin: 0;">
+            <span style="font-size: 11px; color: var(--muted);">時限削除（このドメイン専用の有効期限）:</span>
+            <select id="aliasTargetTtlSelect" style="height: 34px; font-size: 12px; background: rgba(0,0,0,0.4); border: 1px solid rgba(245, 158, 11, 0.4); border-radius: 6px; padding: 0 8px; color: #fcd34d; outline: none;">
+              <option value="0">⏳ 削除しない（無期限）</option>
+              <option value="3600">⏳ 1時間後に削除</option>
+              <option value="43200">⏳ 12時間後に削除</option>
+              <option value="86400">⏳ 24時間後に削除</option>
+              <option value="259200">⏳ 3日後に削除</option>
+              <option value="604800">⏳ 7日後に削除</option>
             </select>
           </label>
         </div>
