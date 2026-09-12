@@ -6618,6 +6618,20 @@ r2FileList?.addEventListener("click", async (e) => {
     const cid = target.dataset.cid;
     if (!cid) return;
 
+    const endpoint = getKuboRpcEndpoint();
+    const isLocal = endpoint.includes("127.0.0.1") || endpoint.includes("localhost");
+    const isTailscale = endpoint.includes(".ts.net") || endpoint.startsWith("https://");
+    if (!isLocal && !isTailscale && !endpoint.startsWith("http://")) {
+      await showCustomAlert("Kuboノードへの接続エンドポイントが設定されていません。\n\n設定画面からKubo RPCエンドポイント（http://127.0.0.1:5001等）を設定してください。", "⚠️ 未接続");
+      return;
+    }
+
+    const ok = await showCustomConfirm(
+      `自宅Kuboノードへ '${key}' をPin留め（保持）しますか？\n\n（P2Pネットワーク経由でデータをノード内にダウンロード・固定保持します）`,
+      "🏠 Kubo Pin留めの確認"
+    );
+    if (!ok) return;
+
     target.disabled = true;
     const origText = target.textContent;
     target.textContent = "確認中...";
