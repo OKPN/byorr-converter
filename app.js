@@ -776,14 +776,26 @@ async function registerKvCid(key, cid = "", size = 0, mime = "", s3Key = "", pas
       const cleanHost = String(allowedHost).trim().toLowerCase().replace(/^https?:\/\//, "").split('/')[0].split(':')[0];
       if (cleanHost) payload.allowedHost = cleanHost;
     }
-    if (ttl && ttl > 0) {
-      payload.ttl = ttl;
-      payload.expiresAt = expiresAt || (Date.now() + ttl * 1000);
-      try {
-        const ttlMap = JSON.parse(localStorage.getItem("fileTtlMap") || "{}");
-        ttlMap[key] = { ttl, expiresAt: payload.expiresAt };
-        localStorage.setItem("fileTtlMap", JSON.stringify(ttlMap));
-      } catch (e) {}
+    if (ttl !== null && ttl !== undefined) {
+      if (ttl > 0) {
+        payload.ttl = ttl;
+        payload.expiresAt = expiresAt || (Date.now() + ttl * 1000);
+        try {
+          const ttlMap = JSON.parse(localStorage.getItem("fileTtlMap") || "{}");
+          ttlMap[key] = { ttl, expiresAt: payload.expiresAt };
+          localStorage.setItem("fileTtlMap", JSON.stringify(ttlMap));
+        } catch (e) {}
+      } else {
+        // ⏳ 0 または無期限化: KV側にも明示的に解除を指示
+        payload.ttl = 0;
+        payload.expiresAt = 0;
+        payload.clearTtl = true;
+        try {
+          const ttlMap = JSON.parse(localStorage.getItem("fileTtlMap") || "{}");
+          delete ttlMap[key];
+          localStorage.setItem("fileTtlMap", JSON.stringify(ttlMap));
+        } catch (e) {}
+      }
     }
     if (password && typeof password === "string" && password.trim().length > 0) {
       payload.password = password.trim();
@@ -4241,11 +4253,17 @@ r2FileList?.addEventListener("change", (e) => {
       if (civitaiBtn) civitaiBtn.dataset.url = updatedUrl;
       if (thumbLink) thumbLink.href = updatedUrl;
 
-      // 🌐 KV台帳の allowedHost を非同期で更新
+      // 🌐 KV台帳の allowedHost を非同期で更新（既存の有効期限をそのまま維持）
       const key = article?.dataset?.key;
       const s3Key = article?.dataset?.s3key || key;
       const cid = article?.dataset?.cid || "";
       const size = Number(article?.dataset?.size || 0);
+      const rawExpiresAt = Number(article?.dataset?.expiresat || 0);
+      const existingExpiresAt = rawExpiresAt > 0 ? rawExpiresAt : null;
+      const existingTtl = existingExpiresAt && existingExpiresAt > Date.now() ? Math.round((existingExpiresAt - Date.now()) / 1000) : 0;
+
+      article.dataset.allowedhost = newDomain;
+
       if (key && hasAdminAccess()) {
         registerKvCid(
           key,
@@ -4255,8 +4273,8 @@ r2FileList?.addEventListener("change", (e) => {
           s3Key,
           "",
           null,
-          0,
-          null,
+          existingTtl,
+          existingExpiresAt,
           false,
           null,
           newDomain
@@ -4282,8 +4300,10 @@ r2FileList?.addEventListener("change", (e) => {
     const s3Key = article?.dataset?.s3key || key;
     const cid = article?.dataset?.cid || "";
     const size = Number(article?.dataset?.size || 0);
+    const currentDomain = article?.dataset?.allowedhost || article?.querySelector(".r2-file-domain-select")?.value || null;
 
     const expiresAt = ttlSeconds > 0 ? (Date.now() + ttlSeconds * 1000) : 0;
+    article.dataset.expiresat = String(expiresAt);
 
     // UI上のバッジ表示を即座に更新
     let ttlBadge = article.querySelector(".ttl-countdown-badge");
@@ -4305,7 +4325,7 @@ r2FileList?.addEventListener("change", (e) => {
       if (ttlBadge) ttlBadge.style.display = "none";
     }
 
-    // 🌐 KV台帳の有効期限を即座に更新（0なら無期限化）
+    // 🌐 KV台帳の有効期限を即座に更新（既存ドメインallowedHostも維持して送信、0なら無期限化）
     if (key && hasAdminAccess()) {
       registerKvCid(
         key,
@@ -4319,7 +4339,7 @@ r2FileList?.addEventListener("change", (e) => {
         expiresAt,
         false,
         null,
-        null
+        currentDomain
       ).then(() => {
         // 成功フィードバック
         e.target.style.transition = "all 0.2s ease";
@@ -5367,6 +5387,8 @@ async function fetchAndRenderR2Files() {
       article.dataset.s3key = item.s3Key || item.Key || "";
       article.dataset.size = String(item.Size || 0);
       article.dataset.cid = itemCid || "";
+      article.dataset.expiresat = item.expiresAt ? String(item.expiresAt) : "0";
+      article.dataset.allowedhost = (item.metadata?.allowedHost || item.metadata?.d || "") || "";
 
       // 🌐 このファイルに保存されている配信ドメイン (allowedHost / d) があればそれを初期ドメインとして優先適用
       const itemAllowedHost = item.metadata?.allowedHost || item.metadata?.d;
