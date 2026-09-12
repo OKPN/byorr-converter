@@ -307,11 +307,12 @@ function renderOgpHtml(filename, rawUrl, ext, isVideo, origin) {
 </html>`;
 }
 
-function renderNotFoundResponse(request, cdnCacheSeconds = 60) {
+function renderNotFoundResponse(request, cdnCacheSeconds = 60, reason = "unknown") {
   const accept = request.headers.get("accept") || "";
   const headers = {
     "Cache-Control": "no-cache",
     ...(cdnCacheSeconds > 0 ? { "Cloudflare-CDN-Cache-Control": `public, max-age=${cdnCacheSeconds}` } : {}),
+    "X-Debug-Reason": reason,
   };
 
   if (accept.includes("text/html")) {
@@ -372,7 +373,7 @@ export async function onRequest(context) {
   const extMatch = pathname.match(/\.(webp|png|jpe?g|gif|jxl|avif|bmp|ico|mp4|webm|mov|m4v|avi|ogv|mp3|wav|ogg|m4a|flac|aac|pdf|txt|md|json|csv)$/i) ||
                    filename.match(/\.(webp|png|jpe?g|gif|jxl|avif|bmp|ico|mp4|webm|mov|m4v|avi|ogv|mp3|wav|ogg|m4a|flac|aac|pdf|txt|md|json|csv)$/i);
   if (!extMatch && isDeliveryEdge) {
-    return renderNotFoundResponse(request, 86400); // 1日エッジキャッシュ
+    return renderNotFoundResponse(request, 86400, "non_media_edge_blocked"); // 1日エッジキャッシュ
   }
 
   const response = await context.next();
@@ -434,7 +435,7 @@ export async function onRequest(context) {
   // ⏳ 時限アップロードの有効期限チェック（期限切れは即座に404、短縮キー e にも対応）
   const expiresTimestamp = meta.e ? (meta.e * 1000) : meta.expiresAt;
   if (expiresTimestamp && Date.now() > Number(expiresTimestamp)) {
-    return renderNotFoundResponse(request);
+    return renderNotFoundResponse(request, 60, "expired");
   }
 
   // 🌐 配信ドメイン制限チェック（設定されたドメイン以外からのアクセスは即座に404で遮断）
@@ -450,7 +451,7 @@ export async function onRequest(context) {
     // 公式配信エッジ同士であれば常に相互配信を許可。それ以外（独自ドメイン指定等）の場合は厳格に照合
     if (allowedHostnames.length > 0 && !allowedHostnames.includes(currentHostname)) {
       if (!(isCurrentOfficial && isAnyAllowedOfficial)) {
-        return renderNotFoundResponse(request, 60); // 許可外ドメインアクセスは1分キャッシュ（DDoS対策を維持しつつドメイン切替の反映を迅速化）
+        return renderNotFoundResponse(request, 60, `domain_mismatch:allowed=${allowedDomain}:curr=${currentHostname}`); // 許可外ドメインアクセスは1分キャッシュ（DDoS対策を維持しつつドメイン切替の反映を迅速化）
       }
     }
   }
@@ -638,7 +639,7 @@ export async function onRequest(context) {
 
 
   if (!upstreamResponse || !upstreamResponse.ok) {
-    return renderNotFoundResponse(request);
+    return renderNotFoundResponse(request, 60, `upstream_failed:cid=${targetCid}:cand=${candidates.join(",")}`);
   }
 
   const headers = new Headers();
