@@ -1087,14 +1087,6 @@ async function fetchKvFiles() {
 
 // --- 🌐 R2 公開・配信ドメイン管理 ---
 
-const DEFAULT_PRESET_DOMAINS = [
-  "https://content-cache.pages.dev",
-  "https://misskey-media.pages.dev",
-  "https://content-relay.pages.dev",
-  "https://blobs-cache.pages.dev",
-  "https://punipuni-media.pages.dev",
-];
-
 function getR2DomainList() {
   let list = [];
   try {
@@ -1105,17 +1097,7 @@ function getR2DomainList() {
   // cividge.pages.dev（トップ専用）や bbs.punipuni.eu は配信ドメインから除外
   list = list.filter(d => !d.includes("cividge.pages.dev") && !d.includes("bbs.punipuni.eu"));
 
-  // 未設定または空の場合はプリセットを初期設定
-  if (!list || list.length === 0) {
-    list = [...DEFAULT_PRESET_DOMAINS];
-  } else {
-    // プリセットに含まれるドメインが未登録なら統合
-    for (const d of DEFAULT_PRESET_DOMAINS) {
-      if (!list.includes(d)) list.push(d);
-    }
-  }
-
-  // 後方互換性：旧 r2PublicDomain / r2DevDomain からの自動移行
+  // 後方互換性：旧 r2PublicDomain / r2DevDomain からの移行（未登録時のみ）
   const legacyPub = (localStorage.getItem("r2PublicDomain") || "").trim();
   const legacyDev = (localStorage.getItem("r2DevDomain") || "").trim();
   if (legacyPub && !legacyPub.includes("cividge.pages.dev") && !legacyPub.includes("bbs.punipuni.eu") && !list.includes(legacyPub)) list.push(legacyPub);
@@ -1177,9 +1159,9 @@ function createCardDomainBadgeHtml(currentUrl, extraClass = "") {
 
   return `
     <div class="card-domain-badge-wrapper ${extraClass}" style="display: inline-flex; align-items: center; gap: 4px;">
-      <span class="card-domain-badge" title="配信中ドメイン: ${escapeHtml(currentDomain)}" style="height: 28px; font-size: 11px; max-width: 150px; background: rgba(56, 189, 248, 0.12); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.35); border-radius: 4px; padding: 0 7px; display: inline-flex; align-items: center; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
+      <button type="button" class="card-domain-badge copy-card-url-btn" data-url="${escapeHtml(currentUrl)}" title="クリックして配信URLをコピー: ${escapeHtml(currentUrl)}" style="height: 28px; font-size: 11px; max-width: 150px; background: rgba(56, 189, 248, 0.12); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.35); border-radius: 4px; padding: 0 7px; display: inline-flex; align-items: center; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer;">
         ${icon}${escapeHtml(clean)}
-      </span>
+      </button>
       <button type="button" class="ghost-button add-domain-alias-btn" title="このファイルの配信ドメインを増やして別カードを作成（同一CID）" style="height: 28px; width: 28px; min-width: 28px; padding: 0; font-size: 14px; font-weight: bold; color: #38bdf8; border-color: rgba(56, 189, 248, 0.4); display: inline-flex; align-items: center; justify-content: center; border-radius: 4px;">＋</button>
     </div>
   `;
@@ -5995,7 +5977,7 @@ function renderCurrentStoragePage() {
       </a>
       <div style="flex: 1; min-width: 0;">
         <div class="item-name-row" style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap;">
-          <span class="item-name item-url-copyable" data-url="${escapeHtml(publicUrl)}" title="クリックして配信URLをコピー" style="font-weight: 600; word-break: break-all; cursor: pointer; text-decoration: underline; text-decoration-style: dotted; text-underline-offset: 3px;">${escapeHtml(itemDisplayName)}</span>
+          <span class="item-name" style="font-weight: 600; word-break: break-all;">${escapeHtml(itemDisplayName)}</span>
           ${renameBtnHtml}
           ${cidBadgeHtml}
           <span style="color: #64748b; font-size: 11px; white-space: nowrap;">${formatBytes(item.Size || 0)}</span>
@@ -6093,8 +6075,11 @@ function renderCurrentStoragePage() {
               if (thumbLink) thumbLink.href = newPublicUrl;
 
               // コピー用 URL を最新化
-              const copyItem = article.querySelector(".item-url-copyable");
-              if (copyItem) copyItem.dataset.url = newPublicUrl;
+              const domainBtn = article.querySelector(".copy-card-url-btn");
+              if (domainBtn) {
+                domainBtn.dataset.url = newPublicUrl;
+                domainBtn.title = `クリックして配信URLをコピー: ${newPublicUrl}`;
+              }
 
               // CID バッジを動的挿入
               const nameRow = article.querySelector(".item-name-row");
@@ -6208,18 +6193,20 @@ r2FileList?.addEventListener("click", async (e) => {
   const s3 = getS3Client(activeStorageTab);
   const bucketName = getBucketName(activeStorageTab);
 
-  // 📋 ファイル名（URL）クリックで直接クリップボードにコピー
-  if (target.classList.contains("item-url-copyable") || target.closest(".item-url-copyable")) {
-    const itemElem = target.classList.contains("item-url-copyable") ? target : target.closest(".item-url-copyable");
-    const url = itemElem?.dataset?.url;
+  // 📋 配信ドメインバッジ（＋の左）クリックで直接クリップボードにコピー
+  if (target.classList.contains("copy-card-url-btn") || target.closest(".copy-card-url-btn")) {
+    const btn = target.classList.contains("copy-card-url-btn") ? target : target.closest(".copy-card-url-btn");
+    const url = btn?.dataset?.url;
     if (url) {
       await copyToClipboard(url);
-      const origText = itemElem.textContent;
-      itemElem.textContent = "📋 コピー完了！";
-      itemElem.style.color = "#34d399";
+      const origHtml = btn.innerHTML;
+      btn.innerHTML = "📋 コピー完了！";
+      btn.style.color = "#34d399";
+      btn.style.borderColor = "#34d399";
       setTimeout(() => {
-        itemElem.textContent = origText;
-        itemElem.style.color = "";
+        btn.innerHTML = origHtml;
+        btn.style.color = "";
+        btn.style.borderColor = "";
       }, 1400);
     }
     return;
