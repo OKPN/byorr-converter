@@ -1854,23 +1854,33 @@ function loadTemplates(selectedValue = "") {
 // --- 🔐 PINコードによる暗号化/復号化 ---
 function encryptPayloadWithPin(payloadObj, pin) {
   const jsonStr = JSON.stringify(payloadObj);
-  let result = "";
-  for (let i = 0; i < jsonStr.length; i++) {
-    const charCode = jsonStr.charCodeAt(i) ^ pin.charCodeAt(i % pin.length);
-    result += String.fromCharCode(charCode);
+  const utf8Bytes = new TextEncoder().encode(jsonStr);
+  const pinBytes = new TextEncoder().encode(pin);
+  const xorBytes = new Uint8Array(utf8Bytes.length);
+  for (let i = 0; i < utf8Bytes.length; i++) {
+    xorBytes[i] = utf8Bytes[i] ^ pinBytes[i % pinBytes.length];
   }
-  return btoa(encodeURIComponent(result));
+  let binStr = "";
+  for (let i = 0; i < xorBytes.length; i++) {
+    binStr += String.fromCharCode(xorBytes[i]);
+  }
+  return btoa(binStr);
 }
 
 function decryptPayloadWithPin(encodedStr, pin) {
   try {
-    const raw = decodeURIComponent(atob(encodedStr));
-    let result = "";
-    for (let i = 0; i < raw.length; i++) {
-      const charCode = raw.charCodeAt(i) ^ pin.charCodeAt(i % pin.length);
-      result += String.fromCharCode(charCode);
+    const binStr = atob(encodedStr);
+    const xorBytes = new Uint8Array(binStr.length);
+    for (let i = 0; i < binStr.length; i++) {
+      xorBytes[i] = binStr.charCodeAt(i);
     }
-    return JSON.parse(result);
+    const pinBytes = new TextEncoder().encode(pin);
+    const utf8Bytes = new Uint8Array(xorBytes.length);
+    for (let i = 0; i < xorBytes.length; i++) {
+      utf8Bytes[i] = xorBytes[i] ^ pinBytes[i % pinBytes.length];
+    }
+    const decodedStr = new TextDecoder().decode(utf8Bytes);
+    return JSON.parse(decodedStr);
   } catch {
     return null;
   }
@@ -1938,11 +1948,6 @@ function buildAppExportPayload() {
   if (enableRename !== null) payload.ren = (enableRename === "true");
   const pattern = localStorage.getItem("renamePattern");
   if (pattern) payload.pat = pattern;
-
-  try {
-    const cidMap = JSON.parse(localStorage.getItem("ipfsCidMap") || "{}");
-    if (Object.keys(cidMap).length > 0) payload.cm = cidMap;
-  } catch (e) {}
 
   return payload;
 }
@@ -2069,9 +2074,9 @@ async function generatePinBackupUrl() {
   saveR2SettingsAuto();
 
   const payload = buildAppExportPayload();
-  const hasData = (payload.a && payload.b) || payload.cu || (payload.cul && payload.cul.length > 0);
+  const hasData = payload.a || payload.fb || payload.kv || payload.ku || payload.cu || (payload.cul && payload.cul.length > 0) || (payload.dl && payload.dl.length > 0);
   if (!hasData) {
-    alert("⚠️ バックアップする設定（R2接続情報またはCivitaiクリエイターリスト）がありません。");
+    alert("⚠️ バックアップする設定（クラウドストレージ接続設定またはCivitaiクリエイターリスト）がありません。");
     return;
   }
 
@@ -5952,7 +5957,6 @@ function renderCurrentStoragePage() {
       actionButtonsHtml = `
         ${r2CardTtlSelect}
         ${r2CardDomainBadge}
-        <button type="button" class="ghost-button copy-r2-url-btn" data-url="${escapeHtml(publicUrl)}">${escapeHtml(dict.copyUrl)}</button>
         ${!hasPassword ? `<button type="button" class="ghost-button civitai-r2-post-btn" data-url="${escapeHtml(publicUrl)}" data-name="${escapeHtml(itemDisplayName)}" style="color: #38bdf8; border-color: rgba(56, 189, 248, 0.4);" title="Civitai の投稿画面を開く">🎨 Civitai</button>` : ""}
         <button type="button" class="ghost-button danger-button delete-r2-file-btn" data-key="${escapeHtml(itemKey)}" data-s3key="${escapeHtml(item.s3Key || itemDisplayName)}" data-cid="${escapeHtml(itemCid || "")}" data-origin="${isFromS3 ? '1' : '0'}" title="ファイルを削除し、KVマッピング・ストレージ実体を抹消します（自宅Kuboも自動回収・GC）">削除</button>
       `;
@@ -5962,7 +5966,6 @@ function renderCurrentStoragePage() {
       actionButtonsHtml = `
         ${r2CardTtlSelect}
         ${r2CardDomainBadge}
-        <button type="button" class="ghost-button copy-r2-url-btn" data-url="${escapeHtml(publicUrl)}">${escapeHtml(dict.copyUrl)}</button>
         ${!hasPassword ? `<button type="button" class="ghost-button civitai-r2-post-btn" data-url="${escapeHtml(publicUrl)}" data-name="${escapeHtml(itemDisplayName)}" style="color: #38bdf8; border-color: rgba(56, 189, 248, 0.4);" title="Civitai の投稿画面を開く">🎨 Civitai</button>` : ""}
         ${devUrl ? `<button type="button" class="ghost-button copy-r2-dev-url-btn" data-url="${escapeHtml(devUrl)}">${escapeHtml(dict.devCopyUrl)}</button>` : ""}
         <button type="button" class="ghost-button danger-button delete-r2-file-btn" data-key="${escapeHtml(itemKey)}" data-origin="1">${escapeHtml(dict.deleteNow)}</button>
@@ -5987,12 +5990,12 @@ function renderCurrentStoragePage() {
 
     article.innerHTML = `
       <input type="checkbox" class="r2-file-checkbox" data-key="${escapeHtml(itemKey)}" style="width: 18px; height: 18px; cursor: pointer; accent-color: var(--accent); align-self: center; margin-right: 4px;">
-      <a href="${escapeHtml(publicUrl)}" target="_blank" rel="noopener noreferrer" class="thumb-link" title="表示">
+      <a href="${escapeHtml(publicUrl)}" target="_blank" rel="noopener noreferrer" class="thumb-link" title="別タブで開く">
         ${thumbHtml}
       </a>
       <div style="flex: 1; min-width: 0;">
         <div class="item-name-row" style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap;">
-          <span class="item-name" style="font-weight: 600; word-break: break-all;">${escapeHtml(itemDisplayName)}</span>
+          <span class="item-name item-url-copyable" data-url="${escapeHtml(publicUrl)}" title="クリックして配信URLをコピー" style="font-weight: 600; word-break: break-all; cursor: pointer; text-decoration: underline; text-decoration-style: dotted; text-underline-offset: 3px;">${escapeHtml(itemDisplayName)}</span>
           ${renameBtnHtml}
           ${cidBadgeHtml}
           <span style="color: #64748b; font-size: 11px; white-space: nowrap;">${formatBytes(item.Size || 0)}</span>
@@ -6089,9 +6092,9 @@ function renderCurrentStoragePage() {
               const thumbLink = article.querySelector("a.thumb-link");
               if (thumbLink) thumbLink.href = newPublicUrl;
 
-              // コピー用ボタンの URL を最新化
-              const copyBtn = article.querySelector(".copy-r2-url-btn");
-              if (copyBtn) copyBtn.dataset.url = newPublicUrl;
+              // コピー用 URL を最新化
+              const copyItem = article.querySelector(".item-url-copyable");
+              if (copyItem) copyItem.dataset.url = newPublicUrl;
 
               // CID バッジを動的挿入
               const nameRow = article.querySelector(".item-name-row");
@@ -6205,10 +6208,19 @@ r2FileList?.addEventListener("click", async (e) => {
   const s3 = getS3Client(activeStorageTab);
   const bucketName = getBucketName(activeStorageTab);
 
-  if (target.classList.contains("copy-r2-url-btn")) {
-    const url = target.dataset.url;
+  // 📋 ファイル名（URL）クリックで直接クリップボードにコピー
+  if (target.classList.contains("item-url-copyable") || target.closest(".item-url-copyable")) {
+    const itemElem = target.classList.contains("item-url-copyable") ? target : target.closest(".item-url-copyable");
+    const url = itemElem?.dataset?.url;
     if (url) {
-      await copyToClipboard(url, target);
+      await copyToClipboard(url);
+      const origText = itemElem.textContent;
+      itemElem.textContent = "📋 コピー完了！";
+      itemElem.style.color = "#34d399";
+      setTimeout(() => {
+        itemElem.textContent = origText;
+        itemElem.style.color = "";
+      }, 1400);
     }
     return;
   }
