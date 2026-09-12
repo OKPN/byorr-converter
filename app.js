@@ -1087,10 +1087,6 @@ async function fetchKvFiles() {
 
 // --- 🌐 R2 公開・配信ドメイン管理 ---
 
-const DEFAULT_PRESET_DOMAINS = [
-  "https://punipuni-media.pages.dev",
-];
-
 function getR2DomainList() {
   let list = [];
   try {
@@ -1100,15 +1096,6 @@ function getR2DomainList() {
   }
   // cividge.pages.dev（トップ専用）や bbs.punipuni.eu は配信ドメインから除外
   list = list.filter(d => !d.includes("cividge.pages.dev") && !d.includes("bbs.punipuni.eu"));
-
-  // 未設定または空の場合は個人利用プリセットを初期設定
-  if (!list || list.length === 0) {
-    list = [...DEFAULT_PRESET_DOMAINS];
-  } else {
-    for (const d of DEFAULT_PRESET_DOMAINS) {
-      if (!list.includes(d)) list.push(d);
-    }
-  }
 
   // 後方互換性：旧 r2PublicDomain / r2DevDomain からの移行（未登録時のみ）
   const legacyPub = (localStorage.getItem("r2PublicDomain") || "").trim();
