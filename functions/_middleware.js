@@ -406,33 +406,7 @@ export async function onRequest(context) {
           debugKvInfo = `hit_current_raw:${currentHost}:${rawFilename}`;
         }
       }
-      // 2. 姉妹公式配信エッジのドメイン個別キーも順次フォールバック照会（ドメイン切り替え時にも即座に発見可能にする）
-      if (!kvRes || !kvRes.value) {
-        const officialHosts = [
-          "content-cache.pages.dev",
-          "content-relay.pages.dev",
-          "misskey-media.pages.dev",
-          "blobs-cache.pages.dev",
-          "cividge.pages.dev"
-        ].filter(h => h !== currentHost);
-        for (const sisterHost of officialHosts) {
-          let sRes = await env.IPFS_KV.getWithMetadata(`${sisterHost}:${filename}`);
-          if (sRes && sRes.value) {
-            kvRes = sRes;
-            debugKvInfo = `hit_sister:${sisterHost}:${filename}`;
-            break;
-          }
-          if (filename !== rawFilename) {
-            sRes = await env.IPFS_KV.getWithMetadata(`${sisterHost}:${rawFilename}`);
-            if (sRes && sRes.value) {
-              kvRes = sRes;
-              debugKvInfo = `hit_sister_raw:${sisterHost}:${rawFilename}`;
-              break;
-            }
-          }
-        }
-      }
-      // 3. 見つからなければ従来のファイル名単体キーで照会
+      // 2. 見つからなければ従来のファイル名単体キーで照会
       if (!kvRes || !kvRes.value) {
         let singleRes = await env.IPFS_KV.getWithMetadata(filename);
         if (singleRes && singleRes.value) {
@@ -466,20 +440,14 @@ export async function onRequest(context) {
   }
 
   // 🌐 配信ドメイン制限チェック（設定されたドメイン以外からのアクセスは即座に404で遮断）
-  // 🌟 公式配信エッジ群（content-cache, content-relay, misskey-media, blobs-cache, cividge）は相互にスムーズな切り替え・配信を許可
   const allowedDomain = meta.d || meta.allowedHost;
   if (allowedDomain && typeof allowedDomain === "string" && allowedDomain.trim()) {
     const allowedHostnames = allowedDomain.split(",").map(h => h.trim().toLowerCase().replace(/^https?:\/\//, "").split('/')[0].split(':')[0]).filter(Boolean);
     const currentHostname = url.hostname.toLowerCase();
-    const isOfficialEdge = (h) => h.includes("content-relay") || h.includes("content-cache") || h.includes("blobs-cache") || h.includes("misskey-media") || h.includes("cividge.pages.dev");
-    const isCurrentOfficial = isOfficialEdge(currentHostname);
-    const isAnyAllowedOfficial = allowedHostnames.some(h => isOfficialEdge(h));
 
-    // 公式配信エッジ同士であれば常に相互配信を許可。それ以外（独自ドメイン指定等）の場合は厳格に照合
+    // 許可ドメイン一覧に現在のホストが含まれていない場合は即座に404で遮断
     if (allowedHostnames.length > 0 && !allowedHostnames.includes(currentHostname)) {
-      if (!(isCurrentOfficial && isAnyAllowedOfficial)) {
-        return renderNotFoundResponse(request, 60, `domain_mismatch:allowed=${allowedDomain}:curr=${currentHostname}`); // 許可外ドメインアクセスは1分キャッシュ（DDoS対策を維持しつつドメイン切替の反映を迅速化）
-      }
+      return renderNotFoundResponse(request, 60, `domain_mismatch:allowed=${allowedDomain}:curr=${currentHostname}`);
     }
   }
 
