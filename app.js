@@ -689,21 +689,32 @@ async function configureFilebaseCors() {
 }
 
 // --- 🪐 IPFS CID キャッシュ管理 ---
+function isValidIpfsCid(cid) {
+  if (!cid || typeof cid !== "string") return false;
+  const trimmed = cid.trim();
+  // CIDv0: Base58btc、通常 "Qm" で始まり46文字（Base58文字セット: 1-9A-HJ-NP-Za-km-z）
+  if (/^Qm[1-9A-HJ-NP-Za-km-z]{44}$/.test(trimmed)) return true;
+  // CIDv1: 通常 "bafy" または "bafk" で始まり59文字以上
+  if (/^(bafy|bafk)[a-z0-9]{50,}$/.test(trimmed)) return true;
+  return false;
+}
+
 function getStoredIpfsCid(key) {
   if (!key) return null;
   try {
     const map = JSON.parse(localStorage.getItem("ipfsCidMap") || "{}");
-    return map[key] || null;
+    const cid = map[key] || null;
+    return isValidIpfsCid(cid) ? cid : null;
   } catch (e) {
     return null;
   }
 }
 
 function storeIpfsCid(key, cid) {
-  if (!key || !cid) return;
+  if (!key || !cid || !isValidIpfsCid(cid)) return;
   try {
     const map = JSON.parse(localStorage.getItem("ipfsCidMap") || "{}");
-    map[key] = cid;
+    map[key] = cid.trim();
     localStorage.setItem("ipfsCidMap", JSON.stringify(map));
   } catch (e) {}
 }
@@ -762,11 +773,11 @@ function getAdminApiToken() {
 }
 
 function hasAdminAccess() {
-  // 各自の cividge-kv-worker URL がある場合、または自ホスト/ローカル環境でAPIエンドポイントが存在する場合はKV台帳モードとして動作
+  // 🛡️ KV台帳モード: ユーザー自身が cividge-kv-worker の URL と 管理者トークン (Admin Token) を明示的に設定している場合のみ有効化
+  // （未設定時は一般ユーザーモード: Filebase S3 + CID直リンで責任分離）
   const custom = getCustomKvWorkerUrl();
-  if (custom) return true;
-  // 自ホスト(/api/ipfs-kv) が利用可能な環境なら有効
-  return Boolean(getKvApiEndpoint());
+  const token = getAdminApiToken();
+  return Boolean(custom && token);
 }
 
 async function registerKvCid(key, cid = "", size = 0, mime = "", s3Key = "", password = "", blobOrBytes = null, ttl = 0, expiresAt = null, unpinned = false, kuboStatus = null, allowedHost = null, overwriteAllowedHost = false) {
@@ -4931,23 +4942,30 @@ async function uploadImage(result, targetProvider = "r2", customPassword = null)
 
     let ipfsCid = null;
     if (isFilebase) {
+      const checkAndValidateCid = (raw) => {
+        if (!raw || typeof raw !== "string") return null;
+        const candidate = raw.trim();
+        return isValidIpfsCid(candidate) ? candidate : null;
+      };
+
       // PutObject レスポンスヘッダーから CID を探索
       const headers = putOutput?.$metadata?.httpHeaders || {};
-      ipfsCid = headers["x-amz-meta-cid"] || headers["x-amz-meta-ipfs-hash"];
+      ipfsCid = checkAndValidateCid(headers["x-amz-meta-cid"] || headers["x-amz-meta-ipfs-hash"]);
 
-      // レスポンスヘッダーに無ければ HeadObject を最大3回リトライして試行
-      for (let attempt = 0; attempt < 3 && !ipfsCid; attempt++) {
+      // レスポンスヘッダーに無ければ HeadObject を最大5回リトライして試行
+      for (let attempt = 0; attempt < 5 && !ipfsCid; attempt++) {
         try {
-          if (attempt > 0) await new Promise(r => setTimeout(r, 600));
+          await new Promise(r => setTimeout(r, 600 + attempt * 400));
           const headOutput = await s3.send(new HeadObjectCommand({
             Bucket: bucketName,
             Key: result.name,
           }));
           const hHeaders = headOutput?.$metadata?.httpHeaders || {};
-          ipfsCid = hHeaders["x-amz-meta-cid"] ||
-                    hHeaders["x-amz-meta-ipfs-hash"] ||
-                    headOutput?.Metadata?.cid ||
-                    headOutput?.Metadata?.["ipfs-hash"];
+          const candidate = hHeaders["x-amz-meta-cid"] ||
+                            hHeaders["x-amz-meta-ipfs-hash"] ||
+                            headOutput?.Metadata?.cid ||
+                            headOutput?.Metadata?.["ipfs-hash"];
+          ipfsCid = checkAndValidateCid(candidate);
         } catch (hErr) {
           console.warn(`HeadObject CID lookup attempt ${attempt + 1} failed:`, hErr);
         }
@@ -4965,7 +4983,7 @@ async function uploadImage(result, targetProvider = "r2", customPassword = null)
     const baseDomain = (getSelectedR2Domain() || (typeof window !== "undefined" ? window.location.origin : "")).replace(/\/$/, "");
 
     if (isFilebase) {
-      if (ipfsCid) {
+      if (ipfsCid && isValidIpfsCid(ipfsCid)) {
         result.ipfsCid = ipfsCid;
         storeIpfsCid(result.name, ipfsCid);
       }
@@ -6046,6 +6064,39 @@ function renderCurrentStoragePage() {
       }
     });
 
+    // 🪐 画像・サムネイルが 404 / 読み込み失敗した際、S3 から直接 Blob を取得して確実に即座表示するフォールバック
+    if (isImage) {
+      const thumbImg = article.querySelector("img.thumb");
+      if (thumbImg) {
+        thumbImg.addEventListener("error", async function onThumbError() {
+          this.removeEventListener("error", onThumbError);
+          try {
+            const provider = isFilebase ? "filebase" : "r2";
+            const s3 = getS3Client(provider);
+            const bucket = getBucketName(provider);
+            const s3Key = item.s3Key || item.Key;
+            if (s3 && bucket && s3Key) {
+              const res = await s3.send(new GetObjectCommand({
+                Bucket: bucket,
+                Key: s3Key,
+              }));
+              if (res && res.Body) {
+                const blob = res.Body instanceof Blob ? res.Body : new Blob([await res.Body.transformToByteArray()]);
+                const objUrl = URL.createObjectURL(blob);
+                this.src = objUrl;
+                return;
+              }
+            }
+          } catch (e) {
+            // S3 直接取得も失敗した場合はバッジ表示
+          }
+          if (this.parentElement) {
+            this.parentElement.innerHTML = `<div class="thumb format-badge">${escapeHtml(ext.toUpperCase() || 'IMG')}</div>`;
+          }
+        }, { once: true });
+      }
+    }
+
     // 🪐 Filebase かつ CID が未取得のアイテムについて、バックグラウンドで S3 から CID を自動解決して即時反映
     if (isFilebase && !itemCid && item.isFromS3) {
       (async () => {
@@ -6059,10 +6110,11 @@ function renderCurrentStoragePage() {
               Key: s3TargetKey,
             }));
             const hHeaders = headOutput?.$metadata?.httpHeaders || {};
-            const resolvedCid = hHeaders["x-amz-meta-cid"] ||
-                                hHeaders["x-amz-meta-ipfs-hash"] ||
-                                headOutput?.Metadata?.cid ||
-                                headOutput?.Metadata?.["ipfs-hash"];
+            const rawCid = hHeaders["x-amz-meta-cid"] ||
+                           hHeaders["x-amz-meta-ipfs-hash"] ||
+                           headOutput?.Metadata?.cid ||
+                           headOutput?.Metadata?.["ipfs-hash"];
+            const resolvedCid = isValidIpfsCid(rawCid) ? rawCid.trim() : null;
             if (resolvedCid) {
               storeIpfsCid(itemKey, resolvedCid);
               storeIpfsCid(itemDisplayName, resolvedCid);

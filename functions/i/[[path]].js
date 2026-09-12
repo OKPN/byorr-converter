@@ -51,53 +51,55 @@ export async function onRequest(context) {
     zip: "application/zip",
   };
 
-  // 2. IPFS ゲートウェイへ fetch（エッジキャッシュ有効化）
-  // Filebase S3 では単一ファイル単位で CID が生成されるため、まずは cid 単体で fetch
+  // 2. IPFS ゲートウェイへ fetch（エッジキャッシュ有効化 & タイムアウト制御）
   async function fetchGateway(baseUrl, path) {
-    return await fetch(`${baseUrl}/${path}`, {
-      headers: {
-        "User-Agent": "Cividge-IPFS-Relay/1.0",
-        ...(request.headers.get("Range") ? { "Range": request.headers.get("Range") } : {}),
-      },
-      cf: {
-        cacheEverything: true,
-        cacheTtl: 86400 * 30, // 30 日間 Cloudflare エッジにキャッシュ
-      },
-    });
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 3500); // 3.5秒タイムアウト
+    try {
+      const res = await fetch(`${baseUrl}/${path}`, {
+        signal: controller.signal,
+        headers: {
+          "User-Agent": "Cividge-IPFS-Relay/1.0",
+          ...(request.headers.get("Range") ? { "Range": request.headers.get("Range") } : {}),
+        },
+        cf: {
+          cacheEverything: true,
+          cacheTtl: 86400 * 30, // 30 日間 Cloudflare エッジにキャッシュ
+        },
+      });
+      clearTimeout(timeoutId);
+      return res;
+    } catch (err) {
+      clearTimeout(timeoutId);
+      return null;
+    }
   }
 
-  const primaryBase = "https://ipfs.filebase.io/ipfs";
-  const fallbackBase = "https://ipfs.io/ipfs";
+  const gateways = [
+    "https://ipfs.filebase.io/ipfs",
+    "https://cloudflare-ipfs.com/ipfs",
+    "https://4everland.io/ipfs",
+    "https://ipfs.io/ipfs",
+    "https://dweb.link/ipfs",
+  ];
 
   let upstreamResponse = null;
-  try {
-    // 優先1: Filebase ゲートウェイに cid 単体で問い合わせ
-    upstreamResponse = await fetchGateway(primaryBase, cid);
-    
-    // 404 かつ subPath がある場合、ディレクトリ CID かもしれないので subPath 付きで試行
-    if (!upstreamResponse.ok && subPath) {
-      const dirTry = await fetchGateway(primaryBase, `${cid}/${subPath}`);
-      if (dirTry.ok) upstreamResponse = dirTry;
-    }
-
-    // 失敗時は公式ゲートウェイへフォールバック
-    if (!upstreamResponse.ok) {
-      const fbTry = await fetchGateway(fallbackBase, cid);
-      if (fbTry.ok) {
-        upstreamResponse = fbTry;
-      } else if (subPath) {
-        const fbDirTry = await fetchGateway(fallbackBase, `${cid}/${subPath}`);
-        if (fbDirTry.ok) upstreamResponse = fbDirTry;
-      }
-    }
-  } catch (err) {
+  for (const gw of gateways) {
     try {
-      upstreamResponse = await fetchGateway(fallbackBase, cid);
-    } catch (fallbackErr) {
-      return new Response("502 Bad Gateway: Failed to fetch from IPFS gateways", {
-        status: 502,
-        headers: { "Content-Type": "text/plain; charset=utf-8" },
-      });
+      const res = await fetchGateway(gw, cid);
+      if (res && res.ok) {
+        upstreamResponse = res;
+        break;
+      }
+      if (subPath) {
+        const dirRes = await fetchGateway(gw, `${cid}/${subPath}`);
+        if (dirRes && dirRes.ok) {
+          upstreamResponse = dirRes;
+          break;
+        }
+      }
+    } catch (err) {
+      // 次のゲートウェイへフォールバック
     }
   }
 
