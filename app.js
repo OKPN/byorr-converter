@@ -737,6 +737,37 @@ function blobToBase64(blobOrBytes) {
   });
 }
 
+// 🪐 画像・サムネイルが 404 / 読み込み失敗した際、S3 から直接 Blob を取得して確実に即座表示する共通フォールバック
+async function loadFallbackImageFromS3(imgElement, key, s3Key = null, provider = "filebase") {
+  if (!imgElement || (!key && !s3Key)) return;
+  try {
+    const s3 = getS3Client(provider);
+    const bucket = getBucketName(provider);
+    const targetKey = s3Key || key;
+    if (s3 && bucket && targetKey) {
+      const res = await s3.send(new GetObjectCommand({
+        Bucket: bucket,
+        Key: targetKey,
+      }));
+      if (res && res.Body) {
+        const blob = res.Body instanceof Blob ? res.Body : new Blob([await res.Body.transformToByteArray()]);
+        const objUrl = URL.createObjectURL(blob);
+        imgElement.src = objUrl;
+        return true;
+      }
+    }
+  } catch (e) {
+    console.debug("S3 direct thumbnail fallback failed:", e);
+  }
+  const ext = (s3Key || key || "").split('.').pop().toLowerCase();
+  if (imgElement.parentElement) {
+    imgElement.parentElement.innerHTML = `<div class="thumb format-badge">${escapeHtml(ext.toUpperCase() || 'IMG')}</div>`;
+  }
+  return false;
+}
+if (typeof window !== "undefined") {
+  window.loadFallbackImageFromS3 = loadFallbackImageFromS3;
+}
 // --- 🛡️ KV台帳エンドポイント ＆ APIトークン（BYOC・責任分離） ---
 function getCustomKvWorkerUrl() {
   return (localStorage.getItem("kvWorkerUrl") || kvWorkerUrl?.value || "").trim().replace(/\/$/, "");
@@ -4385,6 +4416,16 @@ r2FileList?.addEventListener("change", (e) => {
       if (civitaiBtn) civitaiBtn.dataset.url = updatedUrl;
       if (thumbLink) thumbLink.href = updatedUrl;
 
+      // 🖼️ サムネイル画像のドメインも即座に新URLに更新
+      const thumbImg = article?.querySelector("img.thumb");
+      if (thumbImg) {
+        thumbImg.src = switchUrlDomain(thumbImg.src, newDomain);
+      }
+      const thumbVideo = article?.querySelector("video.thumb");
+      if (thumbVideo) {
+        thumbVideo.src = switchUrlDomain(thumbVideo.src, newDomain);
+      }
+
       // 🌐 KV台帳の allowedHost を非同期で更新（既存の有効期限をそのまま維持）
       const key = article?.dataset?.key;
       const s3Key = article?.dataset?.s3key || key;
@@ -5947,7 +5988,9 @@ function renderCurrentStoragePage() {
         </div>
       `;
     } else if (isImage) {
-      thumbHtml = `<img class="thumb" alt="" src="${escapeHtml(publicUrl)}" loading="lazy" onerror="this.onerror=null; this.parentElement.innerHTML='<div class=\\'thumb format-badge\\'>${escapeHtml(ext.toUpperCase() || 'IMG')}</div>';">`;
+      const s3TargetKey = item.s3Key || item.Key || "";
+      const s3Provider = isFilebase ? "filebase" : "r2";
+      thumbHtml = `<img class="thumb" alt="" src="${escapeHtml(publicUrl)}" loading="lazy" onerror="this.onerror=null; if(window.loadFallbackImageFromS3){window.loadFallbackImageFromS3(this, '${escapeHtml(itemKey)}', '${escapeHtml(s3TargetKey)}', '${s3Provider}');}else{this.parentElement.innerHTML='<div class=\\'thumb format-badge\\'>${escapeHtml(ext.toUpperCase() || 'IMG')}</div>';}">`;
     } else if (isVideo) {
       thumbHtml = `<video class="thumb" src="${escapeHtml(publicUrl)}#t=0.5" preload="metadata" muted playsinline style="object-fit: cover; pointer-events: none;"></video>`;
     } else {
