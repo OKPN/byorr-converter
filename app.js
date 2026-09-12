@@ -1093,9 +1093,12 @@ function createCardDomainSelectHtml(currentUrl, extraClass = "") {
   });
 
   return `
-    <select class="card-domain-switcher ${extraClass}" title="配信ドメインを着せ替える" style="height: 28px; font-size: 11px; max-width: 130px; background: rgba(0,0,0,0.4); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.4); border-radius: 4px; padding: 0 4px; outline: none; cursor: pointer;">
-      ${optionsHtml}
-    </select>
+    <div class="card-domain-select-wrapper" style="display: inline-flex; align-items: center; gap: 4px;">
+      <select class="card-domain-switcher ${extraClass}" title="配信ドメインを着せ替える" style="height: 28px; font-size: 11px; max-width: 130px; background: rgba(0,0,0,0.4); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.4); border-radius: 4px; padding: 0 4px; outline: none; cursor: pointer;">
+        ${optionsHtml}
+      </select>
+      <button type="button" class="add-domain-alias-btn ghost-button" title="➕ このファイルの別配信ドメインエイリアスを作成" style="height: 28px; width: 28px; padding: 0; display: inline-flex; align-items: center; justify-content: center; font-size: 13px; font-weight: bold; border-color: rgba(56, 189, 248, 0.4); color: #38bdf8; line-height: 1; border-radius: 4px;" aria-label="エイリアス追加">➕</button>
+    </div>
   `;
 }
 
@@ -5815,6 +5818,110 @@ r2FileList?.addEventListener("click", async (e) => {
     return;
   }
 
+  // 🌐 配信ドメイン エイリアス追加ボタン（パターンB: 同一CIDで別レコード作成）
+  if (target.classList.contains("add-domain-alias-btn") || target.closest(".add-domain-alias-btn")) {
+    const btn = target.classList.contains("add-domain-alias-btn") ? target : target.closest(".add-domain-alias-btn");
+    const article = btn.closest(".result-item");
+    const oldKey = article?.dataset?.key;
+    const s3Key = article?.dataset?.s3key || oldKey;
+    const currentCid = article?.dataset?.cid || getStoredIpfsCid(oldKey) || getStoredIpfsCid(s3Key);
+    const size = parseInt(article?.dataset?.size || "0", 10);
+    const cardSelect = article?.querySelector(".r2-file-domain-select");
+    const currentDomain = cardSelect?.value || getSelectedR2Domain() || "";
+
+    if (!oldKey || !currentCid) {
+      await showCustomAlert("⚠️ ファイルの CID 情報が見つからないためエイリアスを作成できません。", "エラー");
+      return;
+    }
+
+    const domainList = getR2DomainList();
+    if (domainList.length <= 1) {
+      await showCustomAlert("⚠️ 配信ドメインが1つしか登録されていません。\n設定画面から別の配信ドメイン（Pages等）を追加してください。", "エイリアス作成");
+      return;
+    }
+
+    // ダイアログを表示して対象ドメインとファイル名を取得
+    const dialogResult = await showDomainAliasDialog(oldKey, currentDomain, domainList);
+    if (!dialogResult) return;
+
+    const { filename: targetFilename, targetDomain } = dialogResult;
+
+    // 既存ファイルとの衝突チェック
+    let existingKvFiles = [];
+    try {
+      existingKvFiles = await fetchKvFiles();
+    } catch (e) {
+      console.warn("fetchKvFiles error during alias creation:", e);
+    }
+
+    const conflicting = existingKvFiles.find(f => f.name === targetFilename);
+    if (conflicting) {
+      const c = conflicting.metadata?.cid || conflicting.metadata?.c;
+      const d = (conflicting.metadata?.allowedHost || conflicting.metadata?.d || "").toLowerCase();
+      const targetHost = targetDomain.replace(/^https?:\/\//, "").split("/")[0].toLowerCase();
+      if (c && c !== currentCid) {
+        await showCustomAlert(`⚠️ 「${targetFilename}」は異なるデータ（別CID）で既に存在します。\n別のファイル名を指定してください。`, "ファイル名衝突");
+        return;
+      }
+      if (d && d === targetHost) {
+        await showCustomAlert(`⚠️ ドメイン「${targetDomain}」には既に「${targetFilename}」が登録されています。`, "登録済み");
+        return;
+      }
+    }
+
+    btn.disabled = true;
+    const origText = btn.textContent;
+    btn.textContent = "⏳";
+
+    try {
+      // 既存メタデータの引き継ぎ
+      let currentMeta = {};
+      const currentKv = existingKvFiles.find(f => f.name === oldKey);
+      if (currentKv && currentKv.metadata) {
+        currentMeta = currentKv.metadata;
+      }
+
+      const mime = currentMeta.mime || "";
+      const ttl = currentMeta.ttl || 0;
+      const expiresAt = currentMeta.expiresAt || null;
+      const password = currentMeta.password || "";
+      const unpinned = Boolean(currentMeta.unpinned);
+      const kuboStatus = currentMeta.kuboStatus || null;
+
+      // KV にエイリアスとして新規登録（同一CID、同一s3Key、指定された targetDomain）
+      await registerKvCid(
+        targetFilename,
+        currentCid,
+        size,
+        mime,
+        s3Key,
+        password,
+        null,
+        ttl,
+        expiresAt,
+        unpinned,
+        kuboStatus,
+        targetDomain
+      );
+
+      storeIpfsCid(targetFilename, currentCid);
+
+      btn.textContent = "✅";
+      setTimeout(async () => {
+        btn.textContent = origText;
+        btn.disabled = false;
+        await fetchAndRenderR2Files();
+      }, 500);
+
+    } catch (err) {
+      console.error("Alias creation failed:", err);
+      btn.textContent = origText;
+      btn.disabled = false;
+      await showCustomAlert(`エイリアス作成に失敗しました: ${err.message}`, "❌ エラー");
+    }
+    return;
+  }
+
   // 📋 小型 CID コピーボタン
   if (target.classList.contains("copy-cid-btn")) {
     const cid = target.dataset.cid;
@@ -6547,6 +6654,87 @@ function showCustomAlert(message, title = "お知らせ") {
     modal.addEventListener("click", onBackdrop);
   });
 }
+
+/**
+ * 🌐 配信ドメイン エイリアス作成ダイアログ
+ * @param {string} currentKey - 対象ファイル名
+ * @param {string} currentDomain - 現在選択されているドメイン
+ * @param {string[]} domainList - 利用可能なドメイン一覧
+ * @returns {Promise<{ filename: string, targetDomain: string } | null>}
+ */
+function showDomainAliasDialog(currentKey, currentDomain, domainList) {
+  return new Promise((resolve) => {
+    const modal = document.getElementById("aliasCreateModal");
+    const filenameInput = document.getElementById("aliasTargetFilenameInput");
+    const domainSelect = document.getElementById("aliasTargetDomainSelect");
+    const submitBtn = document.getElementById("submitAliasBtn");
+    const cancelBtn = document.getElementById("cancelAliasBtn");
+
+    if (!modal || !filenameInput || !domainSelect || !submitBtn || !cancelBtn) {
+      // フォールバック
+      const newDomain = prompt("追加する配信ドメインを入力してください:", domainList[0] || "");
+      if (!newDomain) return resolve(null);
+      return resolve({ filename: currentKey, targetDomain: newDomain });
+    }
+
+    filenameInput.value = currentKey;
+
+    // ドメイン候補オプション生成（現在と異なるドメインを優先選択）
+    domainSelect.innerHTML = "";
+    let firstOtherDomain = null;
+    domainList.forEach(domain => {
+      let icon = "🌐 ";
+      if (domain.includes(".pages.dev")) icon = "⚡ ";
+      else if (domain.includes(".r2.dev")) icon = "📦 ";
+      let clean = domain.replace(/^https?:\/\//, "").replace(/\/$/, "");
+      const isCurrent = currentDomain && domain.toLowerCase() === currentDomain.toLowerCase();
+      if (!isCurrent && !firstOtherDomain) firstOtherDomain = domain;
+      const opt = document.createElement("option");
+      opt.value = domain;
+      opt.textContent = `${icon}${clean}${isCurrent ? " (現在のドメイン)" : ""}`;
+      domainSelect.appendChild(opt);
+    });
+
+    if (firstOtherDomain) {
+      domainSelect.value = firstOtherDomain;
+    }
+
+    modal.style.display = "grid";
+    filenameInput.focus();
+
+    const cleanup = (result) => {
+      modal.style.display = "none";
+      submitBtn.removeEventListener("click", onSubmit);
+      cancelBtn.removeEventListener("click", onCancel);
+      modal.removeEventListener("click", onBackdrop);
+      resolve(result);
+    };
+
+    const onSubmit = () => {
+      const filename = filenameInput.value.trim();
+      const targetDomain = domainSelect.value.trim();
+      if (!filename) {
+        alert("⚠️ ファイル名を入力してください。");
+        return;
+      }
+      if (!targetDomain) {
+        alert("⚠️ 配信ドメインを選択してください。");
+        return;
+      }
+      cleanup({ filename, targetDomain });
+    };
+
+    const onCancel = () => cleanup(null);
+    const onBackdrop = (e) => {
+      if (e.target === modal) cleanup(null);
+    };
+
+    submitBtn.addEventListener("click", onSubmit);
+    cancelBtn.addEventListener("click", onCancel);
+    modal.addEventListener("click", onBackdrop);
+  });
+}
+
 
 function formatBytes(bytes) {
   if (!bytes || bytes === 0) return "0 B";

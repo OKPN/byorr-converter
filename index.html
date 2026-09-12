@@ -588,6 +588,33 @@
       </div>
     </div>
 
+    <!-- 🌐 配信ドメイン エイリアス作成モーダル -->
+    <div id="aliasCreateModal" class="modal-backdrop" style="display: none;">
+      <div class="modal-content" style="max-width: 440px; text-align: left; padding: 22px 24px;">
+        <h3 style="margin-top: 0; font-size: 16px; font-weight: 700; color: var(--text); display: flex; align-items: center; gap: 8px;">
+          <span>🌐</span> 配信ドメイン エイリアス作成
+        </h3>
+        <p style="font-size: 12px; color: var(--muted); margin: 8px 0 16px; line-height: 1.5;">
+          同じ実体データ（CID）を共有したまま、別の配信ドメインを指定した独立したカード（レコード）を作成します。
+        </p>
+        <div style="display: flex; flex-direction: column; gap: 12px; margin-bottom: 20px;">
+          <label class="field" style="margin: 0;">
+            <span style="font-size: 11px; color: var(--muted);">対象ファイル名:</span>
+            <input type="text" id="aliasTargetFilenameInput" style="height: 32px; font-size: 12px; background: rgba(0,0,0,0.3); border: 1px solid var(--border); border-radius: 6px; padding: 0 8px; color: var(--text);" value="">
+          </label>
+          <label class="field" style="margin: 0;">
+            <span style="font-size: 11px; color: var(--muted);">追加する配信ドメイン:</span>
+            <select id="aliasTargetDomainSelect" style="height: 34px; font-size: 12px; background: rgba(0,0,0,0.4); border: 1px solid rgba(56, 189, 248, 0.4); border-radius: 6px; padding: 0 8px; color: #38bdf8; outline: none;">
+            </select>
+          </label>
+        </div>
+        <div style="display: flex; gap: 10px; justify-content: flex-end;">
+          <button class="ghost-button" id="cancelAliasBtn" type="button" style="min-width: 90px;">キャンセル</button>
+          <button class="primary-button" id="submitAliasBtn" type="button" style="min-width: 110px; margin: 0; background: #0284c7; border-color: #38bdf8;">エイリアス作成</button>
+        </div>
+      </div>
+    </div>
+
     <script type="module" src="./app.js"></script>
   </body>
 </html>
