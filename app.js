@@ -5144,10 +5144,15 @@ async function fetchAndRenderR2Files() {
         }
         const recordedS3Key = kvItem.metadata.s3Key;
         const cid = kvItem.metadata.cid;
-        if (recordedS3Key && cid) {
-          storeIpfsCid(recordedS3Key, cid);
-          if (s3KeyToItem.has(recordedS3Key)) {
-            s3CidToItem.set(cid, s3KeyToItem.get(recordedS3Key));
+        if (cid) {
+          if (recordedS3Key) {
+            storeIpfsCid(recordedS3Key, cid);
+            if (s3KeyToItem.has(recordedS3Key)) {
+              s3CidToItem.set(cid, s3KeyToItem.get(recordedS3Key));
+            }
+          }
+          if (s3KeyToItem.has(kvItem.name)) {
+            s3CidToItem.set(cid, s3KeyToItem.get(kvItem.name));
           }
         }
       }
@@ -6728,7 +6733,17 @@ function showDomainAliasDialog(currentKey, currentDomain, domainList) {
     const extMatch = currentKey.match(/\.[^.]+$/);
     const ext = extMatch ? extMatch[0] : "";
     const baseName = extMatch ? currentKey.slice(0, -ext.length) : currentKey;
-    filenameInput.value = currentKey;
+
+    const generateSuggestedName = (domain) => {
+      let slug = "";
+      try {
+        const h = new URL(domain.startsWith("http") ? domain : `https://${domain}`).hostname;
+        slug = h.split(".")[0];
+      } catch (e) {
+        slug = "alias";
+      }
+      return `${baseName}-${slug}${ext}`;
+    };
 
     // ドメイン候補オプション生成（現在と異なるドメインを優先選択）
     domainSelect.innerHTML = "";
@@ -6746,9 +6761,24 @@ function showDomainAliasDialog(currentKey, currentDomain, domainList) {
       domainSelect.appendChild(opt);
     });
 
+    const initialDomain = firstOtherDomain || domainList[0] || "";
     if (firstOtherDomain) {
       domainSelect.value = firstOtherDomain;
     }
+    filenameInput.value = initialDomain ? generateSuggestedName(initialDomain) : currentKey;
+
+    let userManuallyEditedFilename = false;
+    const onFilenameInput = () => {
+      userManuallyEditedFilename = true;
+    };
+    filenameInput.addEventListener("input", onFilenameInput);
+
+    const onDomainChange = () => {
+      if (!userManuallyEditedFilename && domainSelect.value) {
+        filenameInput.value = generateSuggestedName(domainSelect.value);
+      }
+    };
+    domainSelect.addEventListener("change", onDomainChange);
 
     modal.style.display = "grid";
     filenameInput.focus();
@@ -6758,6 +6788,8 @@ function showDomainAliasDialog(currentKey, currentDomain, domainList) {
       submitBtn.removeEventListener("click", onSubmit);
       cancelBtn.removeEventListener("click", onCancel);
       modal.removeEventListener("click", onBackdrop);
+      filenameInput.removeEventListener("input", onFilenameInput);
+      domainSelect.removeEventListener("change", onDomainChange);
       resolve(result);
     };
 
