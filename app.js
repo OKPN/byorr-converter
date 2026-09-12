@@ -493,6 +493,16 @@ let activeStorageTab = localStorage.getItem("activeStorageTab") || "r2";
 const r2FileList = document.querySelector("#r2FileList");
 const reloadR2FilesButton = document.querySelector("#reloadR2FilesButton");
 const deleteSelectedR2FilesButton = document.querySelector("#deleteSelectedR2FilesButton");
+const r2PaginationControls = document.querySelector("#r2PaginationControls");
+const r2PrevPageBtn = document.querySelector("#r2PrevPageBtn");
+const r2NextPageBtn = document.querySelector("#r2NextPageBtn");
+const r2PageInfo = document.querySelector("#r2PageInfo");
+const r2PerPageSelect = document.querySelector("#r2PerPageSelect");
+
+// 📄 ストレージ一覧ページネーション状態
+let storageCurrentPage = 1;
+let storagePerPage = parseInt(localStorage.getItem("storagePerPage") || "10", 10);
+let storageCachedContents = [];
 const storageLimitRange = document.querySelector("#storageLimitRange");
 const storageLimitInput = document.querySelector("#storageLimitInput");
 const storageLimitOutput = document.querySelector("#storageLimitOutput");
@@ -5063,9 +5073,65 @@ function updateStorageTabsUi() {
   }
 }
 
+// 📄 ストレージ一覧 ページネーション描画 & UI更新
+function updateStoragePaginationUI(totalItems) {
+  if (!r2PaginationControls || !r2PageInfo || !r2PrevPageBtn || !r2NextPageBtn) return;
+
+  if (storagePerPage <= 0) {
+    // 「すべて」表示
+    storageCurrentPage = 1;
+    r2PageInfo.textContent = `全 ${totalItems} 件`;
+    r2PrevPageBtn.disabled = true;
+    r2NextPageBtn.disabled = true;
+    return;
+  }
+
+  const totalPages = Math.max(1, Math.ceil(totalItems / storagePerPage));
+  if (storageCurrentPage > totalPages) {
+    storageCurrentPage = totalPages;
+  }
+  if (storageCurrentPage < 1) {
+    storageCurrentPage = 1;
+  }
+
+  r2PageInfo.textContent = `${storageCurrentPage} / ${totalPages} (${totalItems}件)`;
+  r2PrevPageBtn.disabled = storageCurrentPage <= 1;
+  r2NextPageBtn.disabled = storageCurrentPage >= totalPages;
+
+  if (r2PerPageSelect) {
+    r2PerPageSelect.value = String(storagePerPage);
+  }
+}
+
+// ◀ 前へ
+r2PrevPageBtn?.addEventListener("click", () => {
+  if (storageCurrentPage > 1) {
+    storageCurrentPage--;
+    renderCurrentStoragePage();
+  }
+});
+
+// ▶ 次へ
+r2NextPageBtn?.addEventListener("click", () => {
+  const totalPages = Math.max(1, Math.ceil(storageCachedContents.length / (storagePerPage || 1)));
+  if (storageCurrentPage < totalPages) {
+    storageCurrentPage++;
+    renderCurrentStoragePage();
+  }
+});
+
+// 表示件数変更
+r2PerPageSelect?.addEventListener("change", (e) => {
+  storagePerPage = parseInt(e.target.value, 10);
+  localStorage.setItem("storagePerPage", String(storagePerPage));
+  storageCurrentPage = 1;
+  renderCurrentStoragePage();
+});
+
 storageTabR2?.addEventListener("click", () => {
   activeStorageTab = "r2";
   localStorage.setItem("activeStorageTab", "r2");
+  storageCurrentPage = 1;
   updateStorageTabsUi();
   syncStorageLimitControl();
   fetchAndRenderR2Files();
@@ -5074,12 +5140,16 @@ storageTabR2?.addEventListener("click", () => {
 storageTabFilebase?.addEventListener("click", () => {
   activeStorageTab = "filebase";
   localStorage.setItem("activeStorageTab", "filebase");
+  storageCurrentPage = 1;
   updateStorageTabsUi();
   syncStorageLimitControl();
   fetchAndRenderR2Files();
 });
 
-reloadR2FilesButton?.addEventListener("click", fetchAndRenderR2Files);
+reloadR2FilesButton?.addEventListener("click", () => {
+  storageCurrentPage = 1;
+  fetchAndRenderR2Files();
+});
 
 async function fetchAndRenderR2Files() {
   if (!r2FileList) return;
@@ -5419,208 +5489,9 @@ async function fetchAndRenderR2Files() {
       }
     }
 
-    contents.forEach(item => {
-      const article = document.createElement("article");
-      article.className = "result-item";
-      const ext = item.Key ? item.Key.split('.').pop().toLowerCase() : "";
-      const isVideo = ["mp4", "webm", "ogv", "mov", "m4v"].includes(ext);
-      const isImage = ["jpg", "jpeg", "png", "webp", "gif", "avif"].includes(ext);
-      
-      const itemCid = isFilebase ? (item.cid || getStoredIpfsCid(item.Key) || (item.s3Key ? getStoredIpfsCid(item.s3Key) : null)) : null;
-
-      const itemKey = item.rawKey || item.Key || "";
-      const itemDisplayName = item.Key || "";
-
-      article.dataset.key = itemKey;
-      article.dataset.displayname = itemDisplayName;
-      article.dataset.s3key = item.s3Key || itemDisplayName || itemKey;
-      article.dataset.size = String(item.Size || 0);
-      article.dataset.cid = itemCid || "";
-      article.dataset.expiresat = item.expiresAt ? String(item.expiresAt) : "0";
-      article.dataset.allowedhost = (item.metadata?.allowedHost || item.metadata?.d || "") || "";
-
-      // 🌐 このファイルに保存されている配信ドメイン (allowedHost / d) があればそれを初期ドメインとして優先適用
-      // ⚠️ カンマ区切りの複数ドメインが登録されている場合でも、URL組み立て時は先頭の単一ドメインのみを抽出して破損URLを防ぐ
-      const rawAllowedHost = item.metadata?.allowedHost || item.metadata?.d || "";
-      const firstAllowedHost = rawAllowedHost ? rawAllowedHost.split(",")[0].trim() : "";
-      article.dataset.allowedhost = firstAllowedHost;
-      const fileInitialDomain = firstAllowedHost
-        ? (firstAllowedHost.startsWith("http") ? firstAllowedHost : `https://${firstAllowedHost}`)
-        : (isFilebase ? (hasAdminAccess() ? getKvDeliveryBaseDomain() : baseDomain) : null);
-
-      let publicUrl = isFilebase
-        ? (hasAdminAccess()
-            ? `${fileInitialDomain || getKvDeliveryBaseDomain()}/${encodeURIComponent(item.Key)}`
-            : (itemCid ? `${fileInitialDomain || baseDomain}/i/${itemCid}/${encodeURIComponent(item.Key)}` : `${fileInitialDomain || baseDomain}/${encodeURIComponent(item.Key)}`))
-        : (firstAllowedHost ? `${fileInitialDomain}/${encodeURIComponent(item.Key)}` : getPublicUrl(item.Key));
-      const devUrl = isFilebase ? null : getDevUrl(item.Key);
-
-      const hasPassword = Boolean(item.password || item.metadata?.passwordHash || item.metadata?.password);
-      const plainPwd = item.password || item.metadata?.password;
-      const pwdBadgeHtml = hasPassword
-        ? `<span class="password-badge" style="background: rgba(99, 102, 241, 0.2); color: #a5b4fc; border: 1px solid rgba(99, 102, 241, 0.5); font-size: 11px; padding: 2px 7px; border-radius: 4px; font-weight: 700; display: inline-flex; align-items: center; gap: 4px;" title="閲覧パスワードが設定されています">🔒 ${plainPwd ? `合言葉: ${escapeHtml(plainPwd)}` : "パスワード保護"}</span>`
-        : "";
-
-      let ttlBadgeHtml = "";
-      if (item.expiresAt) {
-        const msRemaining = Number(item.expiresAt) - Date.now();
-        if (msRemaining <= 0) {
-          ttlBadgeHtml = '<span style="background: rgba(239, 68, 68, 0.2); color: #fca5a5; border: 1px solid rgba(239, 68, 68, 0.5); font-size: 11px; padding: 2px 7px; border-radius: 4px; font-weight: 700; display: inline-flex; align-items: center; gap: 4px;" title="有効期限が切れています">⚠️ 期限切れ</span>';
-        } else {
-          const hoursRemaining = Math.max(1, Math.ceil(msRemaining / (1000 * 3600)));
-          const days = Math.floor(hoursRemaining / 24);
-          const remHours = hoursRemaining % 24;
-          const timeText = days > 0 ? `${days}日${remHours > 0 ? " " + remHours + "時間" : ""}` : `${hoursRemaining}時間`;
-          ttlBadgeHtml = `<span class="ttl-countdown-badge" style="background: rgba(245, 158, 11, 0.2); color: #fcd34d; border: 1px solid rgba(245, 158, 11, 0.5); font-size: 11px; padding: 2px 7px; border-radius: 4px; font-weight: 700; display: inline-flex; align-items: center; gap: 4px;" title="設定された期限が過ぎると自動消滅します">⏳ 残り ${timeText}</span>`;
-        }
-      }
-
-      let thumbHtml = "";
-      if (hasPassword) {
-        // パスワード保護ファイルは直接読み込むと未認証で404/認証フォームになるため、保護アイコンプレースホルダーを表示
-        thumbHtml = `
-          <div class="thumb format-badge" style="background: rgba(99, 102, 241, 0.12); color: #818cf8; border: 1px dashed rgba(99, 102, 241, 0.4); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;">
-            <span style="font-size: 20px;">🔒</span>
-            <span style="font-size: 9px; font-weight: 700; letter-spacing: 0.5px;">PROTECTED</span>
-          </div>
-        `;
-      } else if (isImage) {
-        thumbHtml = `<img class="thumb" alt="" src="${escapeHtml(publicUrl)}" loading="lazy" onerror="this.onerror=null; this.parentElement.innerHTML='<div class=\\'thumb format-badge\\'>${escapeHtml(ext.toUpperCase() || 'IMG')}</div>';">`;
-      } else if (isVideo) {
-        thumbHtml = `<video class="thumb" src="${escapeHtml(publicUrl)}#t=0.5" preload="metadata" muted playsinline style="object-fit: cover; pointer-events: none;"></video>`;
-      } else {
-        thumbHtml = `<div class="thumb format-badge">${escapeHtml(ext.toUpperCase() || "FILE")}</div>`;
-      }
-
-      const dateStr = item.LastModified ? new Date(item.LastModified).toLocaleDateString() : "";
-
-      // 案A: Filebase と 自宅Kubo のステータスを独立して表示＆操作可能にする
-      let storageTierHtml = "";
-      let actionButtonsHtml = "";
-
-      if (isFilebase) {
-        const isFromS3 = Boolean(item.isFromS3);
-        const isKuboPinned = item.metadata?.kuboStatus === "pinned";
-
-        // Filebase 状態バッジ（クリックでアンピン/解放可能）
-        const fbBadgeHtml = isFromS3
-          ? `<button type="button" class="unpin-file-btn" data-key="${escapeHtml(item.Key)}" data-s3key="${escapeHtml(item.s3Key || item.Key)}" data-cid="${escapeHtml(itemCid || "")}" style="cursor: pointer; font-size: 10px; padding: 2px 7px; border-radius: 4px; background: rgba(34,197,94,0.15); color: #22c55e; border: 1px solid rgba(34,197,94,0.4); font-weight: 600; display: inline-flex; align-items: center; gap: 3px;" title="Filebaseに保存中（クリックでアンピン）">☁️ Filebase: 保持中</button>`
-          : `<span style="font-size: 10px; padding: 2px 7px; border-radius: 4px; background: rgba(148,163,184,0.12); color: #94a3b8; border: 1px dashed rgba(148,163,184,0.3); font-weight: 500;" title="Filebaseから削除（アンピン）済み">☁️ Filebase: 未保持</span>`;
-
-        // 自宅 Kubo 状態バッジ（未設定・オフライン時はグレーアウト/disabled）
-        let kuboBadgeHtml = "";
-        if (!isKuboAutoPin) {
-          // Kubo連携が無効（チェックOFF）
-          kuboBadgeHtml = `<span class="kubo-badge-${escapeHtml(item.Key)}" style="font-size: 10px; padding: 2px 7px; border-radius: 4px; background: rgba(148,163,184,0.08); color: #64748b; border: 1px dashed rgba(148,163,184,0.25); font-weight: 500; cursor: not-allowed; display: inline-flex; align-items: center; gap: 3px;" title="自宅Kubo機能は無効（設定で有効化可能）">🏠 Kubo: 未設定</span>`;
-        } else if (isKuboPinned) {
-          // 🏠 自宅Kubo保持中（Tailscale/HTTPS設定かつオンライン時のみブラウザからのPin解除を許可、それ以外は安全保護表示）
-          const kuboEndpoint = getKuboRpcEndpoint();
-          const isTailscaleKubo = kuboEndpoint.includes(".ts.net") || kuboEndpoint.startsWith("https://");
-          const canUnpinKubo = isKuboOnline && isTailscaleKubo;
-
-          kuboBadgeHtml = canUnpinKubo
-            ? `<button type="button" class="kubo-unpin-manual-btn kubo-badge-${escapeHtml(item.Key)}" data-key="${escapeHtml(item.Key)}" data-cid="${escapeHtml(itemCid || "")}" style="cursor: pointer; font-size: 10px; padding: 2px 7px; border-radius: 4px; background: rgba(168,85,247,0.15); color: #c084fc; border: 1px solid rgba(168,85,247,0.4); font-weight: 600; display: inline-flex; align-items: center; gap: 3px;" title="🏠 自宅KuboにPin留め済み（クリックでPin解除）">🏠 Kubo: 保持中</button>`
-            : `<span class="kubo-badge-${escapeHtml(item.Key)}" style="font-size: 10px; padding: 2px 7px; border-radius: 4px; background: rgba(168,85,247,0.12); color: #c084fc; border: 1px solid rgba(168,85,247,0.3); font-weight: 600; display: inline-flex; align-items: center; gap: 3px;" title="🏠 自宅Kuboに保護中（※Pin解除はTailscale経由で接続するか、WebUI/CLIから行ってください）">🏠 Kubo: 保持中</span>`;
-        } else if (itemCid) {
-          // 未保持（オンラインならPin留めボタン、オフラインならグレーアウト）
-          kuboBadgeHtml = isKuboOnline
-            ? `<button type="button" class="kubo-pin-manual-btn kubo-badge-${escapeHtml(item.Key)}" data-key="${escapeHtml(item.Key)}" data-cid="${escapeHtml(itemCid)}" data-url="${escapeHtml(publicUrl)}" style="cursor: pointer; font-size: 10px; padding: 2px 7px; border-radius: 4px; background: rgba(245,158,11,0.12); color: #fbbf24; border: 1px solid rgba(245,158,11,0.35); font-weight: 600; display: inline-flex; align-items: center; gap: 3px;" title="自宅Kubo未保持（クリックで自宅PCにPin留め保存）">🏠 Kubo: 未保持</button>`
-            : `<span class="kubo-badge-${escapeHtml(item.Key)}" style="font-size: 10px; padding: 2px 7px; border-radius: 4px; background: rgba(148,163,184,0.08); color: #64748b; border: 1px dashed rgba(148,163,184,0.25); font-weight: 500; cursor: not-allowed; display: inline-flex; align-items: center; gap: 3px;" title="自宅Kubo未保持（自宅ノード未検出・オフライン）">🏠 Kubo: 未保持 (オフライン)</span>`;
-        }
-
-        // 🌊 IPFS 漂流中バッジ（Filebase未保持 かつ Kubo未保持: 固定Pinがなく需要駆動で7日延命/自然淘汰される状態）
-        let driftingBadgeHtml = "";
-        const hasKuboRecord = isKuboPinned || item.metadata?.kuboStatus === "pinned" || item.kuboStatus === "pinned";
-        if (!isFromS3 && !hasKuboRecord) {
-          driftingBadgeHtml = `<span class="drifting-badge-${escapeHtml(item.Key)}" style="font-size: 10px; padding: 2px 7px; border-radius: 4px; background: rgba(239, 68, 68, 0.15); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.4); font-weight: 600; display: inline-flex; align-items: center; gap: 3px;" title="どの固定ノードにもPin留めされていません。需要（7日以内のアクセス）があれば世界中のキャッシュで生存し、アクセスが途絶えると自然消滅します。">🌊 IPFS: 漂流中</span>`;
-        }
-
-        storageTierHtml = `
-          <div style="display: inline-flex; gap: 6px; align-items: center; flex-wrap: wrap;">
-            ${fbBadgeHtml}
-            ${kuboBadgeHtml}
-            ${driftingBadgeHtml}
-          </div>
-        `;
-
-        const r2CardDomainSelect = createCardDomainSelectHtml(publicUrl, "r2-file-domain-select");
-        const r2CardTtlSelect = createCardTtlSelectHtml(item.expiresAt, "r2-file-ttl-select");
-        actionButtonsHtml = `
-          ${r2CardTtlSelect}
-          ${r2CardDomainSelect}
-          <button type="button" class="ghost-button copy-r2-url-btn" data-url="${escapeHtml(publicUrl)}">${escapeHtml(dict.copyUrl)}</button>
-          ${!hasPassword ? `<button type="button" class="ghost-button civitai-r2-post-btn" data-url="${escapeHtml(publicUrl)}" data-name="${escapeHtml(itemDisplayName)}" style="color: #38bdf8; border-color: rgba(56, 189, 248, 0.4);" title="Civitai の投稿画面を開く">🎨 Civitai</button>` : ""}
-          <button type="button" class="ghost-button danger-button delete-r2-file-btn" data-key="${escapeHtml(itemKey)}" data-s3key="${escapeHtml(item.s3Key || itemDisplayName)}" data-cid="${escapeHtml(itemCid || "")}" data-origin="${isFromS3 ? '1' : '0'}" title="ファイルを削除し、KVマッピング・ストレージ実体を抹消します（自宅Kuboも自動回収・GC）">削除</button>
-        `;
-      } else {
-        const r2CardDomainSelect = createCardDomainSelectHtml(publicUrl, "r2-file-domain-select");
-        const r2CardTtlSelect = createCardTtlSelectHtml(item.expiresAt, "r2-file-ttl-select");
-        actionButtonsHtml = `
-          ${r2CardTtlSelect}
-          ${r2CardDomainSelect}
-          <button type="button" class="ghost-button copy-r2-url-btn" data-url="${escapeHtml(publicUrl)}">${escapeHtml(dict.copyUrl)}</button>
-          ${!hasPassword ? `<button type="button" class="ghost-button civitai-r2-post-btn" data-url="${escapeHtml(publicUrl)}" data-name="${escapeHtml(itemDisplayName)}" style="color: #38bdf8; border-color: rgba(56, 189, 248, 0.4);" title="Civitai の投稿画面を開く">🎨 Civitai</button>` : ""}
-          ${devUrl ? `<button type="button" class="ghost-button copy-r2-dev-url-btn" data-url="${escapeHtml(devUrl)}">${escapeHtml(dict.devCopyUrl)}</button>` : ""}
-          <button type="button" class="ghost-button danger-button delete-r2-file-btn" data-key="${escapeHtml(itemKey)}" data-origin="1">${escapeHtml(dict.deleteNow)}</button>
-        `;
-      }
-
-      const renameBtnHtml = isFilebase
-        ? `<button type="button" class="rename-file-btn" data-key="${escapeHtml(itemKey)}" data-displayname="${escapeHtml(itemDisplayName)}" data-s3key="${escapeHtml(item.s3Key || itemDisplayName)}" data-size="${item.Size || 0}" data-cid="${escapeHtml(itemCid || "")}" title="ファイル名を変更" style="background: none; border: none; cursor: pointer; padding: 2px 4px; font-size: 14px; opacity: 0.8; transition: opacity 0.15s; line-height: 1;">✏️</button>`
-        : "";
-
-      // 小型 CID コピーバッジ ＆ ノード探索リンク
-      let cidBadgeHtml = "";
-      if (itemCid) {
-        const shortCid = itemCid.length > 12 ? `${itemCid.slice(0, 6)}...${itemCid.slice(-4)}` : itemCid;
-        const indexerUrl = `https://cid.contact/cid/${encodeURIComponent(itemCid)}`;
-        cidBadgeHtml = `
-          <div style="display: inline-flex; align-items: center; gap: 3px;">
-            <button type="button" class="copy-cid-btn" data-cid="${escapeHtml(itemCid)}" style="cursor: pointer; font-size: 10px; font-family: monospace; padding: 1px 6px; border-radius: 4px; background: rgba(56, 189, 248, 0.1); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.3); line-height: 1.4;" title="IPFS CID: ${escapeHtml(itemCid)} (クリックでコピー)">📦 ${escapeHtml(shortCid)} 📋</button>
-            <a href="${escapeHtml(indexerUrl)}" target="_blank" rel="noopener noreferrer" style="font-size: 10px; padding: 1px 5px; border-radius: 4px; background: rgba(148, 163, 184, 0.1); color: #94a3b8; border: 1px solid rgba(148, 163, 184, 0.25); text-decoration: none; display: inline-flex; align-items: center; gap: 2px; line-height: 1.4;" title="CID.contact (公式IPFSネットワークインデクサー) でこのCIDを保持している世界中のノード/プロバイダーを検索">🌐 ノード確認 ↗</a>
-          </div>
-        `;
-      }
-
-      article.innerHTML = `
-        <input type="checkbox" class="r2-file-checkbox" data-key="${escapeHtml(itemKey)}" style="width: 18px; height: 18px; cursor: pointer; accent-color: var(--accent); align-self: center; margin-right: 4px;">
-        <a href="${escapeHtml(publicUrl)}" target="_blank" rel="noopener noreferrer" class="thumb-link" title="表示">
-          ${thumbHtml}
-        </a>
-        <div style="flex: 1; min-width: 0;">
-          <div class="item-name-row" style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap;">
-            <span class="item-name" style="font-weight: 600; word-break: break-all;">${escapeHtml(itemDisplayName)}</span>
-            ${renameBtnHtml}
-            ${cidBadgeHtml}
-            <span style="color: #64748b; font-size: 11px; white-space: nowrap;">${formatBytes(item.Size || 0)}</span>
-            ${pwdBadgeHtml}
-            ${ttlBadgeHtml}
-            <span class="r2-wf-badge-placeholder" data-key="${escapeHtml(itemKey)}"></span>
-          </div>
-          <div class="item-meta" style="color: var(--muted); margin-top: 5px; font-size: 11px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
-            <span>更新日: ${escapeHtml(dateStr)}</span>
-            ${storageTierHtml}
-          </div>
-        </div>
-        <div class="result-actions" style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
-          ${actionButtonsHtml}
-        </div>
-      `;
-
-      r2FileList.append(article);
-
-      // R2 ファイルのワークフロー有無を非同期で判定し、存在する場合のみバッジを表示
-      checkRemoteFileWf(item.Key, publicUrl).then(hasWf => {
-        if (hasWf) {
-          const placeholder = article.querySelector('.r2-wf-badge-placeholder');
-          if (placeholder) {
-            placeholder.innerHTML = '<span class="meta-badge" style="background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.4); font-size: 10px; padding: 1px 6px; border-radius: 4px; font-weight: 600;" title="ComfyUIワークフローまたはプロンプトが含まれています。">🧬 ワークフローあり</span>';
-          }
-        }
-      });
-    });
-
-    updateSelectedR2ActionButtonsState();
+    // 全件キャッシュとページネーションUI更新
+    storageCachedContents = contents;
+    renderCurrentStoragePage();
 
     // 🪐 IPFS ガベージコレクション検知: S3から削除済み（残留中）のファイルがIPFS上から消失していたら自動でKVから掃除
     if (isFilebase) {
@@ -5633,6 +5504,217 @@ async function fetchAndRenderR2Files() {
     console.error("Storage fetch error:", error);
     r2FileList.innerHTML = `<span class="item-meta error" style="padding: 18px; color: var(--danger); display: block; text-align: center;">通信エラー: ${escapeHtml(error.message)}</span>`;
   }
+}
+
+// 📄 現在のページに該当するストレージカード群をDOM描画
+function renderCurrentStoragePage() {
+  if (!r2FileList) return;
+  const lang = getAppLanguage();
+  const dict = i18nDict[lang] || i18nDict.ja;
+  const isFilebase = activeStorageTab === "filebase";
+  const baseDomain = (getSelectedR2Domain() || (typeof window !== "undefined" ? window.location.origin : "")).replace(/\/$/, "");
+  const totalItems = storageCachedContents.length;
+
+  updateStoragePaginationUI(totalItems);
+
+  r2FileList.innerHTML = "";
+  if (totalItems === 0) {
+    r2FileList.innerHTML = `<span class="item-meta" style="padding: 18px; color: var(--muted); display: block; text-align: center;">${escapeHtml(dict.noFilesR2)}</span>`;
+    return;
+  }
+
+  // 表示件数に合わせてスライス
+  let pageItems = storageCachedContents;
+  if (storagePerPage > 0) {
+    const startIdx = (storageCurrentPage - 1) * storagePerPage;
+    pageItems = storageCachedContents.slice(startIdx, startIdx + storagePerPage);
+  }
+
+  const isKuboAutoPin = localStorage.getItem("kuboAutoPin") !== "false";
+
+  pageItems.forEach(item => {
+    const article = document.createElement("article");
+    article.className = "result-item";
+    const ext = item.Key ? item.Key.split('.').pop().toLowerCase() : "";
+    const isVideo = ["mp4", "webm", "ogv", "mov", "m4v"].includes(ext);
+    const isImage = ["jpg", "jpeg", "png", "webp", "gif", "avif"].includes(ext);
+    
+    const itemCid = isFilebase ? (item.cid || getStoredIpfsCid(item.Key) || (item.s3Key ? getStoredIpfsCid(item.s3Key) : null)) : null;
+
+    const itemKey = item.rawKey || item.Key || "";
+    const itemDisplayName = item.Key || "";
+
+    article.dataset.key = itemKey;
+    article.dataset.displayname = itemDisplayName;
+    article.dataset.s3key = item.s3Key || itemDisplayName || itemKey;
+    article.dataset.size = String(item.Size || 0);
+    article.dataset.cid = itemCid || "";
+    article.dataset.expiresat = item.expiresAt ? String(item.expiresAt) : "0";
+    article.dataset.allowedhost = (item.metadata?.allowedHost || item.metadata?.d || "") || "";
+
+    // 🌐 このファイルに保存されている配信ドメイン (allowedHost / d) があればそれを初期ドメインとして優先適用
+    const rawAllowedHost = item.metadata?.allowedHost || item.metadata?.d || "";
+    const firstAllowedHost = rawAllowedHost ? rawAllowedHost.split(",")[0].trim() : "";
+    article.dataset.allowedhost = firstAllowedHost;
+    const fileInitialDomain = firstAllowedHost
+      ? (firstAllowedHost.startsWith("http") ? firstAllowedHost : `https://${firstAllowedHost}`)
+      : (isFilebase ? (hasAdminAccess() ? getKvDeliveryBaseDomain() : baseDomain) : null);
+
+    let publicUrl = isFilebase
+      ? (hasAdminAccess()
+          ? `${fileInitialDomain || getKvDeliveryBaseDomain()}/${encodeURIComponent(item.Key)}`
+          : (itemCid ? `${fileInitialDomain || baseDomain}/i/${itemCid}/${encodeURIComponent(item.Key)}` : `${fileInitialDomain || baseDomain}/${encodeURIComponent(item.Key)}`))
+      : (firstAllowedHost ? `${fileInitialDomain}/${encodeURIComponent(item.Key)}` : getPublicUrl(item.Key));
+    const devUrl = isFilebase ? null : getDevUrl(item.Key);
+
+    const hasPassword = Boolean(item.password || item.metadata?.passwordHash || item.metadata?.password);
+    const plainPwd = item.password || item.metadata?.password;
+    const pwdBadgeHtml = hasPassword
+      ? `<span class="password-badge" style="background: rgba(99, 102, 241, 0.2); color: #a5b4fc; border: 1px solid rgba(99, 102, 241, 0.5); font-size: 11px; padding: 2px 7px; border-radius: 4px; font-weight: 700; display: inline-flex; align-items: center; gap: 4px;" title="閲覧パスワードが設定されています">🔒 ${plainPwd ? `合言葉: ${escapeHtml(plainPwd)}` : "パスワード保護"}</span>`
+      : "";
+
+    let ttlBadgeHtml = "";
+    if (item.expiresAt) {
+      const msRemaining = Number(item.expiresAt) - Date.now();
+      if (msRemaining <= 0) {
+        ttlBadgeHtml = '<span style="background: rgba(239, 68, 68, 0.2); color: #fca5a5; border: 1px solid rgba(239, 68, 68, 0.5); font-size: 11px; padding: 2px 7px; border-radius: 4px; font-weight: 700; display: inline-flex; align-items: center; gap: 4px;" title="有効期限が切れています">⚠️ 期限切れ</span>';
+      } else {
+        const hoursRemaining = Math.max(1, Math.ceil(msRemaining / (1000 * 3600)));
+        const days = Math.floor(hoursRemaining / 24);
+        const remHours = hoursRemaining % 24;
+        const timeText = days > 0 ? `${days}日${remHours > 0 ? " " + remHours + "時間" : ""}` : `${hoursRemaining}時間`;
+        ttlBadgeHtml = `<span class="ttl-countdown-badge" style="background: rgba(245, 158, 11, 0.2); color: #fcd34d; border: 1px solid rgba(245, 158, 11, 0.5); font-size: 11px; padding: 2px 7px; border-radius: 4px; font-weight: 700; display: inline-flex; align-items: center; gap: 4px;" title="設定された期限が過ぎると自動消滅します">⏳ 残り ${timeText}</span>`;
+      }
+    }
+
+    let thumbHtml = "";
+    if (hasPassword) {
+      thumbHtml = `
+        <div class="thumb format-badge" style="background: rgba(99, 102, 241, 0.12); color: #818cf8; border: 1px dashed rgba(99, 102, 241, 0.4); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;">
+          <span style="font-size: 20px;">🔒</span>
+          <span style="font-size: 9px; font-weight: 700; letter-spacing: 0.5px;">PROTECTED</span>
+        </div>
+      `;
+    } else if (isImage) {
+      thumbHtml = `<img class="thumb" alt="" src="${escapeHtml(publicUrl)}" loading="lazy" onerror="this.onerror=null; this.parentElement.innerHTML='<div class=\\'thumb format-badge\\'>${escapeHtml(ext.toUpperCase() || 'IMG')}</div>';">`;
+    } else if (isVideo) {
+      thumbHtml = `<video class="thumb" src="${escapeHtml(publicUrl)}#t=0.5" preload="metadata" muted playsinline style="object-fit: cover; pointer-events: none;"></video>`;
+    } else {
+      thumbHtml = `<div class="thumb format-badge">${escapeHtml(ext.toUpperCase() || "FILE")}</div>`;
+    }
+
+    const dateStr = item.LastModified ? new Date(item.LastModified).toLocaleDateString() : "";
+
+    let storageTierHtml = "";
+    let actionButtonsHtml = "";
+
+    if (isFilebase) {
+      const isFromS3 = Boolean(item.isFromS3);
+      const isKuboPinned = item.metadata?.kuboStatus === "pinned";
+
+      const fbBadgeHtml = isFromS3
+        ? `<button type="button" class="unpin-file-btn" data-key="${escapeHtml(itemKey)}" data-s3key="${escapeHtml(item.s3Key || itemDisplayName)}" data-cid="${escapeHtml(itemCid || "")}" style="cursor: pointer; font-size: 10px; padding: 2px 7px; border-radius: 4px; background: rgba(34,197,94,0.15); color: #22c55e; border: 1px solid rgba(34,197,94,0.4); font-weight: 600; display: inline-flex; align-items: center; gap: 3px;" title="Filebaseに保存中（クリックでアンピン）">☁️ Filebase: 保持中</button>`
+        : `<span style="font-size: 10px; padding: 2px 7px; border-radius: 4px; background: rgba(148,163,184,0.12); color: #94a3b8; border: 1px dashed rgba(148,163,184,0.3); font-weight: 500;" title="Filebaseから削除（アンピン）済み">☁️ Filebase: 未保持</span>`;
+
+      let kuboBadgeHtml = "";
+      if (!isKuboAutoPin) {
+        kuboBadgeHtml = `<span class="kubo-badge-${escapeHtml(itemKey)}" style="font-size: 10px; padding: 2px 7px; border-radius: 4px; background: rgba(148,163,184,0.08); color: #64748b; border: 1px dashed rgba(148,163,184,0.25); font-weight: 500; cursor: not-allowed; display: inline-flex; align-items: center; gap: 3px;" title="自宅Kubo機能は無効（設定で有効化可能）">🏠 Kubo: 未設定</span>`;
+      } else if (isKuboPinned) {
+        kuboBadgeHtml = `<span class="kubo-badge-${escapeHtml(itemKey)}" style="font-size: 10px; padding: 2px 7px; border-radius: 4px; background: rgba(168,85,247,0.12); color: #c084fc; border: 1px solid rgba(168,85,247,0.3); font-weight: 600; display: inline-flex; align-items: center; gap: 3px;" title="🏠 自宅Kuboに保護中">🏠 Kubo: 保持中</span>`;
+      } else if (itemCid) {
+        kuboBadgeHtml = `<span class="kubo-badge-${escapeHtml(itemKey)}" style="font-size: 10px; padding: 2px 7px; border-radius: 4px; background: rgba(148,163,184,0.08); color: #64748b; border: 1px dashed rgba(148,163,184,0.25); font-weight: 500; cursor: not-allowed; display: inline-flex; align-items: center; gap: 3px;" title="自宅Kubo未保持">🏠 Kubo: 未保持</span>`;
+      }
+
+      let driftingBadgeHtml = "";
+      const hasKuboRecord = isKuboPinned || item.metadata?.kuboStatus === "pinned" || item.kuboStatus === "pinned";
+      if (!isFromS3 && !hasKuboRecord) {
+        driftingBadgeHtml = `<span class="drifting-badge-${escapeHtml(itemKey)}" style="font-size: 10px; padding: 2px 7px; border-radius: 4px; background: rgba(239, 68, 68, 0.15); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.4); font-weight: 600; display: inline-flex; align-items: center; gap: 3px;" title="どの固定ノードにもPin留めされていません。">🌊 IPFS: 漂流中</span>`;
+      }
+
+      storageTierHtml = `
+        <div style="display: inline-flex; gap: 6px; align-items: center; flex-wrap: wrap;">
+          ${fbBadgeHtml}
+          ${kuboBadgeHtml}
+          ${driftingBadgeHtml}
+        </div>
+      `;
+
+      const r2CardDomainSelect = createCardDomainSelectHtml(publicUrl, "r2-file-domain-select");
+      const r2CardTtlSelect = createCardTtlSelectHtml(item.expiresAt, "r2-file-ttl-select");
+      actionButtonsHtml = `
+        ${r2CardTtlSelect}
+        ${r2CardDomainSelect}
+        <button type="button" class="ghost-button copy-r2-url-btn" data-url="${escapeHtml(publicUrl)}">${escapeHtml(dict.copyUrl)}</button>
+        ${!hasPassword ? `<button type="button" class="ghost-button civitai-r2-post-btn" data-url="${escapeHtml(publicUrl)}" data-name="${escapeHtml(itemDisplayName)}" style="color: #38bdf8; border-color: rgba(56, 189, 248, 0.4);" title="Civitai の投稿画面を開く">🎨 Civitai</button>` : ""}
+        <button type="button" class="ghost-button danger-button delete-r2-file-btn" data-key="${escapeHtml(itemKey)}" data-s3key="${escapeHtml(item.s3Key || itemDisplayName)}" data-cid="${escapeHtml(itemCid || "")}" data-origin="${isFromS3 ? '1' : '0'}" title="ファイルを削除し、KVマッピング・ストレージ実体を抹消します（自宅Kuboも自動回収・GC）">削除</button>
+      `;
+    } else {
+      const r2CardDomainSelect = createCardDomainSelectHtml(publicUrl, "r2-file-domain-select");
+      const r2CardTtlSelect = createCardTtlSelectHtml(item.expiresAt, "r2-file-ttl-select");
+      actionButtonsHtml = `
+        ${r2CardTtlSelect}
+        ${r2CardDomainSelect}
+        <button type="button" class="ghost-button copy-r2-url-btn" data-url="${escapeHtml(publicUrl)}">${escapeHtml(dict.copyUrl)}</button>
+        ${!hasPassword ? `<button type="button" class="ghost-button civitai-r2-post-btn" data-url="${escapeHtml(publicUrl)}" data-name="${escapeHtml(itemDisplayName)}" style="color: #38bdf8; border-color: rgba(56, 189, 248, 0.4);" title="Civitai の投稿画面を開く">🎨 Civitai</button>` : ""}
+        ${devUrl ? `<button type="button" class="ghost-button copy-r2-dev-url-btn" data-url="${escapeHtml(devUrl)}">${escapeHtml(dict.devCopyUrl)}</button>` : ""}
+        <button type="button" class="ghost-button danger-button delete-r2-file-btn" data-key="${escapeHtml(itemKey)}" data-origin="1">${escapeHtml(dict.deleteNow)}</button>
+      `;
+    }
+
+    const renameBtnHtml = isFilebase
+      ? `<button type="button" class="rename-file-btn" data-key="${escapeHtml(itemKey)}" data-displayname="${escapeHtml(itemDisplayName)}" data-s3key="${escapeHtml(item.s3Key || itemDisplayName)}" data-size="${item.Size || 0}" data-cid="${escapeHtml(itemCid || "")}" title="ファイル名を変更" style="background: none; border: none; cursor: pointer; padding: 2px 4px; font-size: 14px; opacity: 0.8; transition: opacity 0.15s; line-height: 1;">✏️</button>`
+      : "";
+
+    let cidBadgeHtml = "";
+    if (itemCid) {
+      const shortCid = itemCid.length > 12 ? `${itemCid.slice(0, 6)}...${itemCid.slice(-4)}` : itemCid;
+      const indexerUrl = `https://cid.contact/cid/${encodeURIComponent(itemCid)}`;
+      cidBadgeHtml = `
+        <div style="display: inline-flex; align-items: center; gap: 3px;">
+          <button type="button" class="copy-cid-btn" data-cid="${escapeHtml(itemCid)}" style="cursor: pointer; font-size: 10px; font-family: monospace; padding: 1px 6px; border-radius: 4px; background: rgba(56, 189, 248, 0.1); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.3); line-height: 1.4;" title="IPFS CID: ${escapeHtml(itemCid)} (クリックでコピー)">📦 ${escapeHtml(shortCid)} 📋</button>
+          <a href="${escapeHtml(indexerUrl)}" target="_blank" rel="noopener noreferrer" style="font-size: 10px; padding: 1px 5px; border-radius: 4px; background: rgba(148, 163, 184, 0.1); color: #94a3b8; border: 1px solid rgba(148, 163, 184, 0.25); text-decoration: none; display: inline-flex; align-items: center; gap: 2px; line-height: 1.4;" title="CID.contact でノード確認">🌐 ノード確認 ↗</a>
+        </div>
+      `;
+    }
+
+    article.innerHTML = `
+      <input type="checkbox" class="r2-file-checkbox" data-key="${escapeHtml(itemKey)}" style="width: 18px; height: 18px; cursor: pointer; accent-color: var(--accent); align-self: center; margin-right: 4px;">
+      <a href="${escapeHtml(publicUrl)}" target="_blank" rel="noopener noreferrer" class="thumb-link" title="表示">
+        ${thumbHtml}
+      </a>
+      <div style="flex: 1; min-width: 0;">
+        <div class="item-name-row" style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap;">
+          <span class="item-name" style="font-weight: 600; word-break: break-all;">${escapeHtml(itemDisplayName)}</span>
+          ${renameBtnHtml}
+          ${cidBadgeHtml}
+          <span style="color: #64748b; font-size: 11px; white-space: nowrap;">${formatBytes(item.Size || 0)}</span>
+          ${pwdBadgeHtml}
+          ${ttlBadgeHtml}
+          <span class="r2-wf-badge-placeholder" data-key="${escapeHtml(itemKey)}"></span>
+        </div>
+        <div class="item-meta" style="color: var(--muted); margin-top: 5px; font-size: 11px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+          <span>更新日: ${escapeHtml(dateStr)}</span>
+          ${storageTierHtml}
+        </div>
+      </div>
+      <div class="result-actions" style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+        ${actionButtonsHtml}
+      </div>
+    `;
+
+    r2FileList.append(article);
+
+    checkRemoteFileWf(item.Key, publicUrl).then(hasWf => {
+      if (hasWf) {
+        const placeholder = article.querySelector('.r2-wf-badge-placeholder');
+        if (placeholder) {
+          placeholder.innerHTML = '<span class="meta-badge" style="background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.4); font-size: 10px; padding: 1px 6px; border-radius: 4px; font-weight: 600;" title="ComfyUIワークフローまたはプロンプトが含まれています。">🧬 ワークフローあり</span>';
+        }
+      }
+    });
+  });
+
+  updateSelectedR2ActionButtonsState();
 }
 
 // 🪐 IPFS ガベージコレクション（消失）検知ユーティリティ

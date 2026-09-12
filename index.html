@@ -452,7 +452,7 @@
               </div>
               <progress id="storageUsageBar" value="0" max="100" style="width: 100%; height: 8px; border-radius: 4px; overflow: hidden; accent-color: var(--accent);"></progress>
             </div>
-            <div class="r2-heading-actions" style="display: flex; gap: 12px; align-items: center; flex-wrap: wrap;">
+            <div class="r2-heading-actions" style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
               <label id="autoCleanupLabel" style="display: none; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); cursor: pointer; user-select: none;" title="R2アクセス時に7日以上経過したファイルを自動的に削除します">
                 <input type="checkbox" id="autoCleanupCheckbox" style="width: 16px; height: 16px; cursor: pointer;">
                 <span>🧹 7日経過したファイルを自動削除</span>
@@ -461,8 +461,22 @@
                 <input type="checkbox" id="autoFifoCheckbox" style="width: 16px; height: 16px; cursor: pointer;">
                 <span>📦 自動容量解放 (FIFO)</span>
               </label>
-              <button class="ghost-button danger-button" id="deleteSelectedR2FilesButton" type="button" style="display: none; min-height: 38px;" data-i18n="btnBatchDelete">選択削除</button>
-              <button class="ghost-button" id="reloadR2FilesButton" type="button" data-i18n="btnReload">更新</button>
+              <button class="ghost-button danger-button" id="deleteSelectedR2FilesButton" type="button" style="display: none; min-height: 34px; padding: 0 10px; font-size: 11.5px;" data-i18n="btnBatchDelete">選択削除</button>
+              
+              <!-- 📄 ページ送りコントロール -->
+              <div id="r2PaginationControls" style="display: inline-flex; align-items: center; gap: 6px; background: rgba(255, 255, 255, 0.04); padding: 2px 8px; border-radius: 6px; border: 1px solid var(--border); height: 34px; box-sizing: border-box;">
+                <button type="button" id="r2PrevPageBtn" class="ghost-button" style="min-height: 26px; width: 26px; padding: 0; display: inline-flex; align-items: center; justify-content: center; font-size: 12px; border-radius: 4px;" title="前のページ" disabled>◀</button>
+                <span id="r2PageInfo" style="font-size: 11.5px; font-weight: 600; color: var(--text); white-space: nowrap; min-width: 50px; text-align: center;">1 / 1</span>
+                <button type="button" id="r2NextPageBtn" class="ghost-button" style="min-height: 26px; width: 26px; padding: 0; display: inline-flex; align-items: center; justify-content: center; font-size: 12px; border-radius: 4px;" title="次のページ" disabled>▶</button>
+                <select id="r2PerPageSelect" style="height: 26px; font-size: 11px; background: rgba(0,0,0,0.3); color: var(--muted); border: 1px solid var(--border); border-radius: 4px; padding: 0 4px; outline: none; cursor: pointer;" title="1ページの表示件数">
+                  <option value="10" selected>10件</option>
+                  <option value="20">20件</option>
+                  <option value="50">50件</option>
+                  <option value="0">すべて</option>
+                </select>
+              </div>
+
+              <button class="ghost-button" id="reloadR2FilesButton" type="button" style="min-height: 34px; padding: 0 12px; font-size: 12px;" data-i18n="btnReload">更新</button>
             </div>
           </div>
           <div class="result-list" id="r2FileList"></div>
