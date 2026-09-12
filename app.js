@@ -5403,16 +5403,19 @@ async function fetchAndRenderR2Files() {
       article.dataset.allowedhost = (item.metadata?.allowedHost || item.metadata?.d || "") || "";
 
       // 🌐 このファイルに保存されている配信ドメイン (allowedHost / d) があればそれを初期ドメインとして優先適用
-      const itemAllowedHost = item.metadata?.allowedHost || item.metadata?.d;
-      const fileInitialDomain = itemAllowedHost
-        ? (itemAllowedHost.startsWith("http") ? itemAllowedHost : `https://${itemAllowedHost}`)
+      // ⚠️ カンマ区切りの複数ドメインが登録されている場合でも、URL組み立て時は先頭の単一ドメインのみを抽出して破損URLを防ぐ
+      const rawAllowedHost = item.metadata?.allowedHost || item.metadata?.d || "";
+      const firstAllowedHost = rawAllowedHost ? rawAllowedHost.split(",")[0].trim() : "";
+      article.dataset.allowedhost = firstAllowedHost;
+      const fileInitialDomain = firstAllowedHost
+        ? (firstAllowedHost.startsWith("http") ? firstAllowedHost : `https://${firstAllowedHost}`)
         : (isFilebase ? (hasAdminAccess() ? getKvDeliveryBaseDomain() : baseDomain) : null);
 
       let publicUrl = isFilebase
         ? (hasAdminAccess()
             ? `${fileInitialDomain || getKvDeliveryBaseDomain()}/${encodeURIComponent(item.Key)}`
             : (itemCid ? `${fileInitialDomain || baseDomain}/i/${itemCid}/${encodeURIComponent(item.Key)}` : `${fileInitialDomain || baseDomain}/${encodeURIComponent(item.Key)}`))
-        : (itemAllowedHost ? `${fileInitialDomain}/${encodeURIComponent(item.Key)}` : getPublicUrl(item.Key));
+        : (firstAllowedHost ? `${fileInitialDomain}/${encodeURIComponent(item.Key)}` : getPublicUrl(item.Key));
       const devUrl = isFilebase ? null : getDevUrl(item.Key);
 
       const hasPassword = Boolean(item.password || item.metadata?.passwordHash || item.metadata?.password);
@@ -5931,7 +5934,7 @@ r2FileList?.addEventListener("click", async (e) => {
       const unpinned = Boolean(currentMeta.unpinned);
       const kuboStatus = currentMeta.kuboStatus || null;
 
-      // KV にエイリアスとして新規登録（同一CID、同一s3Key、指定された targetDomain）
+      // KV にエイリアスとして新規登録（同一CID、同一s3Key、指定された targetDomain を単一上書きで適用）
       await registerKvCid(
         targetFilename,
         currentCid,
@@ -5944,7 +5947,8 @@ r2FileList?.addEventListener("click", async (e) => {
         expiresAt,
         unpinned,
         kuboStatus,
-        targetDomain
+        targetDomain,
+        true // overwriteAllowedHost: 選択されたドメインのみを単一で設定（カンマ結合破損を完全防止）
       );
 
       storeIpfsCid(targetFilename, currentCid);
@@ -6720,6 +6724,10 @@ function showDomainAliasDialog(currentKey, currentDomain, domainList) {
       return resolve({ filename: currentKey, targetDomain: newDomain });
     }
 
+    // 別ドメイン用のエイリアスファイル名初期候補（例: sample-misskey.mp4）を自動生成
+    const extMatch = currentKey.match(/\.[^.]+$/);
+    const ext = extMatch ? extMatch[0] : "";
+    const baseName = extMatch ? currentKey.slice(0, -ext.length) : currentKey;
     filenameInput.value = currentKey;
 
     // ドメイン候補オプション生成（現在と異なるドメインを優先選択）
