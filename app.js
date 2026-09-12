@@ -420,6 +420,7 @@ const enableZipCheck = document.querySelector("#enableZipCheck");
 const convertDownloadButton = document.querySelector("#convertDownloadButton");
 const convertUploadR2Button = document.querySelector("#convertUploadR2Button");
 const convertUploadFilebaseButton = document.querySelector("#convertUploadFilebaseButton");
+const quickDomainSelect = document.querySelector("#quickDomainSelect");
 const clearButton = document.querySelector("#clearButton");
 
 // ☁️ Cloudflare R2 接続設定フォーム要素
@@ -1038,37 +1039,86 @@ function setSelectedR2Domain(domain) {
   localStorage.setItem("r2PublicDomain", clean); // 後方互換
 }
 
+// 🌐 既存のURLのオリジン（ドメイン部分）を指定のドメインに差し替える
+function switchUrlDomain(originalUrl, targetDomain) {
+  if (!originalUrl || !targetDomain) return originalUrl;
+  try {
+    const parsed = new URL(originalUrl);
+    const target = new URL(targetDomain.startsWith("http") ? targetDomain : `https://${targetDomain}`);
+    parsed.protocol = target.protocol;
+    parsed.host = target.host;
+    return parsed.toString();
+  } catch (e) {
+    // URLパース失敗時のフォールバック
+    return originalUrl.replace(/^https?:\/\/[^/]+/, targetDomain.replace(/\/$/, ""));
+  }
+}
+
+// 🌐 各ファイルカード用のドメイン着せ替えセレクトボックスHTML生成
+function createCardDomainSelectHtml(currentUrl, extraClass = "") {
+  const list = getR2DomainList();
+  if (list.length <= 1) return "";
+
+  let currentDomain = "";
+  try {
+    currentDomain = new URL(currentUrl).origin;
+  } catch (e) {
+    currentDomain = getSelectedR2Domain();
+  }
+
+  let optionsHtml = "";
+  list.forEach(domain => {
+    let icon = "🌐 ";
+    if (domain.includes(".pages.dev")) icon = "⚡ ";
+    else if (domain.includes(".r2.dev")) icon = "📦 ";
+    let clean = domain.replace(/^https?:\/\//, "").replace(/\/$/, "");
+    if (clean.length > 20) clean = clean.slice(0, 18) + "..";
+    const isSelected = domain.toLowerCase() === currentDomain.toLowerCase() ? "selected" : "";
+    optionsHtml += `<option value="${escapeHtml(domain)}" ${isSelected}>${icon}${escapeHtml(clean)}</option>`;
+  });
+
+  return `
+    <select class="card-domain-switcher ${extraClass}" title="配信ドメインを着せ替える" style="height: 28px; font-size: 11px; max-width: 130px; background: rgba(0,0,0,0.4); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.4); border-radius: 4px; padding: 0 4px; outline: none; cursor: pointer;">
+      ${optionsHtml}
+    </select>
+  `;
+}
+
 function renderR2DomainSelect() {
-  if (!r2DomainSelect) return;
   const list = getR2DomainList();
   const current = getSelectedR2Domain();
 
-  r2DomainSelect.innerHTML = "";
-
-  if (list.length === 0) {
-    const opt = document.createElement("option");
-    opt.value = "";
-    opt.textContent = "-- 配信ドメインが未登録です (＋から追加) --";
-    r2DomainSelect.append(opt);
-    if (r2DomainDeleteBtn) r2DomainDeleteBtn.disabled = true;
-    return;
-  }
-
-  if (r2DomainDeleteBtn) r2DomainDeleteBtn.disabled = false;
-
-  list.forEach(domain => {
-    const opt = document.createElement("option");
-    opt.value = domain;
-    let icon = "🌐 ";
-    if (domain.includes(".pages.dev")) {
-      icon = "⚡ ";
-    } else if (domain.includes(".r2.dev")) {
-      icon = "📦 ";
+  const populateSelect = (selectElem, emptyText) => {
+    if (!selectElem) return;
+    selectElem.innerHTML = "";
+    if (list.length === 0) {
+      const opt = document.createElement("option");
+      opt.value = "";
+      opt.textContent = emptyText;
+      selectElem.append(opt);
+      return;
     }
-    opt.textContent = `${icon}${domain}`;
-    if (domain === current) opt.selected = true;
-    r2DomainSelect.append(opt);
-  });
+    list.forEach(domain => {
+      const opt = document.createElement("option");
+      opt.value = domain;
+      let icon = "🌐 ";
+      if (domain.includes(".pages.dev")) {
+        icon = "⚡ ";
+      } else if (domain.includes(".r2.dev")) {
+        icon = "📦 ";
+      }
+      opt.textContent = `${icon}${domain}`;
+      if (domain === current) opt.selected = true;
+      selectElem.append(opt);
+    });
+  };
+
+  populateSelect(r2DomainSelect, "-- 配信ドメインが未登録です (＋から追加) --");
+  populateSelect(quickDomainSelect, "-- 配信ドメインを選択 --");
+
+  if (r2DomainDeleteBtn) {
+    r2DomainDeleteBtn.disabled = list.length === 0;
+  }
 }
 
 // --- R2 / Filebase 設定状態の更新 (STEP 1のURL必須ルールを堅持) ---
@@ -1998,11 +2048,25 @@ kvWorkerUrl?.addEventListener("input", saveR2SettingsAuto);
 adminApiToken?.addEventListener("input", saveR2SettingsAuto);
 
 // 🌐 ドメイン選択変更リスナー
-r2DomainSelect?.addEventListener("change", (e) => {
-  setSelectedR2Domain(e.target.value);
+const handleDomainSelectionChange = (newDomain) => {
+  setSelectedR2Domain(newDomain);
+  if (r2DomainSelect && r2DomainSelect.value !== newDomain) {
+    r2DomainSelect.value = newDomain;
+  }
+  if (quickDomainSelect && quickDomainSelect.value !== newDomain) {
+    quickDomainSelect.value = newDomain;
+  }
   updateR2Status();
   render();
   fetchAndRenderR2Files();
+};
+
+r2DomainSelect?.addEventListener("change", (e) => {
+  handleDomainSelectionChange(e.target.value);
+});
+
+quickDomainSelect?.addEventListener("change", (e) => {
+  handleDomainSelectionChange(e.target.value);
 });
 
 // 🌐 ドメイン追加フォーム表示
@@ -3205,6 +3269,84 @@ async function applyFastStartToMp4(mp4BlobOrBuffer) {
   }
 }
 
+// 🖼️ 動画の0秒目（先頭フレーム）を軽量WebPサムネイルとして高速抽出
+async function captureVideoFirstFrame(videoBlob) {
+  return new Promise((resolve) => {
+    try {
+      const video = document.createElement("video");
+      const url = URL.createObjectURL(videoBlob);
+      video.muted = true;
+      video.playsInline = true;
+      video.preload = "auto";
+      video.src = url;
+
+      let resolved = false;
+      const cleanup = () => {
+        if (!resolved) {
+          resolved = true;
+          URL.revokeObjectURL(url);
+          video.remove();
+        }
+      };
+
+      const timer = setTimeout(() => {
+        cleanup();
+        resolve(null);
+      }, 5000); // 最大5秒でタイムアウト
+
+      video.onloadeddata = () => {
+        try {
+          video.currentTime = 0;
+        } catch (e) {}
+      };
+
+      video.onseeked = async () => {
+        try {
+          const canvas = document.createElement("canvas");
+          const maxDim = 640;
+          let w = video.videoWidth || 640;
+          let h = video.videoHeight || 360;
+
+          if (w > maxDim || h > maxDim) {
+            if (w > h) {
+              h = Math.round((h * maxDim) / w);
+              w = maxDim;
+            } else {
+              w = Math.round((w * maxDim) / h);
+              h = maxDim;
+            }
+          }
+
+          canvas.width = w;
+          canvas.height = h;
+          const ctx = canvas.getContext("2d");
+          ctx.drawImage(video, 0, 0, w, h);
+
+          canvas.toBlob((blob) => {
+            clearTimeout(timer);
+            cleanup();
+            resolve(blob);
+          }, "image/webp", 0.82);
+        } catch (err) {
+          console.warn("Frame capture canvas error:", err);
+          clearTimeout(timer);
+          cleanup();
+          resolve(null);
+        }
+      };
+
+      video.onerror = () => {
+        clearTimeout(timer);
+        cleanup();
+        resolve(null);
+      };
+    } catch (e) {
+      console.warn("captureVideoFirstFrame error:", e);
+      resolve(null);
+    }
+  });
+}
+
 async function detectComfyMetadata(file) {
   if (!file) return { hasWorkflow: false, hasPrompt: false, hasA1111: false, type: "none" };
 
@@ -3422,23 +3564,23 @@ async function checkRemoteFileWf(key, publicUrl) {
   return false;
 }
 
-// 許可する拡張子一覧
+// 許可する拡張子一覧（アーカイブ除外、メディア・テキスト系に限定）
 const ALLOWED_EXT_LIST = new Set([
   // 画像
-  "jpg", "jpeg", "png", "webp", "gif", "avif", "jxl", "bmp", "ico", "svg",
+  "jpg", "jpeg", "png", "webp", "gif", "avif", "jxl", "bmp", "ico",
   // 動画
   "mp4", "webm", "ogv", "mov", "m4v", "avi",
   // 音声
   "mp3", "wav", "ogg", "m4a", "flac", "aac",
-  // 圧縮アーカイブ
-  "zip", "7z", "rar", "tar", "gz",
   // 文書・テキスト
   "pdf", "txt", "md", "json", "csv",
 ]);
 
-// 危険な実行ファイル・スクリプト（明確に除外）
+// 危険なファイル・アーカイブ（明確に除外）
 const BLOCKED_EXT_LIST = new Set([
-  "exe", "bat", "cmd", "ps1", "sh", "msi", "com", "vbs", "html", "htm", "js", "mjs", "cjs", "php", "py"
+  "exe", "bat", "cmd", "ps1", "sh", "msi", "com", "vbs", "html", "htm", "js", "mjs", "cjs", "php", "py", "svg",
+  // アーカイブ（zip, 7z, rar等）は除外
+  "zip", "7z", "rar", "tar", "gz", "bz2", "xz"
 ]);
 
 function isFileAcceptable(file) {
@@ -3717,9 +3859,12 @@ function createCardActionHtml(file, result, index) {
       ? `<span class="password-badge" style="font-size: 9.5px; font-weight: 600; color: #818cf8; background: rgba(99, 102, 241, 0.15); border: 1px solid rgba(99, 102, 241, 0.3); padding: 1px 5px; border-radius: 4px;" title="合言葉: ${result.password ? escapeHtml(result.password) : '保護中'}">🔒 保護</span>`
       : "";
 
+    const domainSelectHtml = createCardDomainSelectHtml(result.proxyUrl, "result-card-domain-select");
+
     return `
       ${badgeHtml}
       ${pwdBadge}
+      ${domainSelectHtml}
       <input type="text" class="url-output" value="${escapeHtml(result.proxyUrl)}" readonly style="width: 140px; font-size: 11px; height: 28px; padding: 0 6px; background: rgba(0,0,0,0.3); border: 1px solid rgba(56,189,248,0.4); color: #38bdf8; border-radius: 4px;" title="クリックで全選択＆コピー" onclick="this.select()">
       <button type="button" class="ghost-button copy-button" style="font-size: 11px; padding: 0 8px; height: 28px;">${escapeHtml(dict.copyUrl || "コピー")}</button>
       <button type="button" class="ghost-button download-single-btn" data-index="${index}" style="font-size: 11px; padding: 0 8px; height: 28px;" title="${dlBtnTitle}" ${dlBtnDisabled}>📥 DL</button>
@@ -3991,6 +4136,53 @@ fileList?.addEventListener("click", async (event) => {
     }
     await copyToClipboard(urlToCopy, target);
     return;
+  }
+});
+
+// 🌐 変換結果カード内のドメイン着せ替えセレクト変更
+fileList?.addEventListener("change", (e) => {
+  if (e.target.classList.contains("result-card-domain-select")) {
+    const card = e.target.closest(".unified-file-card");
+    const index = Number(card?.dataset?.index);
+    const newDomain = e.target.value;
+    const inputEl = card?.querySelector(".url-output");
+    const result = state.results[index];
+
+    if (inputEl && newDomain) {
+      const updatedUrl = switchUrlDomain(inputEl.value, newDomain);
+      inputEl.value = updatedUrl;
+      if (result) result.proxyUrl = updatedUrl;
+      // Civitai ボタンの URL も更新
+      const civitaiBtn = card?.querySelector(".civitai-post-btn");
+      if (civitaiBtn) civitaiBtn.dataset.url = updatedUrl;
+    }
+  }
+});
+
+// 🌐 R2/Filebaseファイル一覧カード内のドメイン着せ替えセレクト変更
+r2FileList?.addEventListener("change", (e) => {
+  if (e.target.classList.contains("r2-file-domain-select")) {
+    const article = e.target.closest(".result-item");
+    const newDomain = e.target.value;
+    const copyBtn = article?.querySelector(".copy-r2-url-btn");
+    const civitaiBtn = article?.querySelector(".civitai-r2-post-btn");
+    const thumbLink = article?.querySelector(".thumb-link");
+
+    if (copyBtn && newDomain) {
+      const updatedUrl = switchUrlDomain(copyBtn.dataset.url, newDomain);
+      copyBtn.dataset.url = updatedUrl;
+      if (civitaiBtn) civitaiBtn.dataset.url = updatedUrl;
+      if (thumbLink) thumbLink.href = updatedUrl;
+
+      // 一瞬バッジ的に色を変えてユーザーに更新を伝える
+      copyBtn.style.transition = "all 0.2s ease";
+      copyBtn.style.borderColor = "#38bdf8";
+      copyBtn.style.color = "#38bdf8";
+      setTimeout(() => {
+        copyBtn.style.borderColor = "";
+        copyBtn.style.color = "";
+      }, 600);
+    }
   }
 });
 
@@ -4443,6 +4635,38 @@ async function uploadImage(result, targetProvider = "r2", customPassword = null)
       } else {
         result.proxyUrl = getPublicUrl(result.name);
       }
+    }
+
+    // 🎬 動画の場合は先頭フレームサムネイル（.thumb.webp）を裏で自動生成・保存
+    // Misskey / Twitter / Discord 等の OGP カード用ポスター画像として活用
+    const isVideoFile = ["mp4", "webm", "mov"].includes(ext);
+    if (isVideoFile && uploadBlob) {
+      (async () => {
+        try {
+          const thumbBlob = await captureVideoFirstFrame(uploadBlob);
+          if (thumbBlob) {
+            const thumbKey = `${result.name}.thumb.webp`;
+            const thumbBytes = new Uint8Array(await thumbBlob.arrayBuffer());
+            const thumbCommand = new PutObjectCommand({
+              Bucket: bucketName,
+              Key: thumbKey,
+              Body: thumbBytes,
+              ContentType: "image/webp",
+              ContentDisposition: "inline",
+              Metadata: { size: String(thumbBytes.length) },
+            });
+            const thumbPut = await s3.send(thumbCommand);
+            if (isFilebase) {
+              const tHeaders = thumbPut?.$metadata?.httpHeaders || {};
+              const thumbCid = tHeaders["x-amz-meta-cid"] || tHeaders["x-amz-meta-ipfs-hash"] || "";
+              await registerKvCid(thumbKey, thumbCid, thumbBytes.length, "image/webp", thumbKey, "", thumbBlob, 0, null);
+            }
+            console.log(`🎬 動画サムネイル自動アップロード完了: ${thumbKey} (${thumbBytes.length} bytes)`);
+          }
+        } catch (thumbErr) {
+          console.warn("Auto video thumbnail upload failed:", thumbErr);
+        }
+      })();
     }
 
     // 🧬 アップロードされたファイルのワークフロー有無をローカルストレージに記録
@@ -5031,13 +5255,17 @@ async function fetchAndRenderR2Files() {
           </div>
         `;
 
+        const r2CardDomainSelect = createCardDomainSelectHtml(publicUrl, "r2-file-domain-select");
         actionButtonsHtml = `
+          ${r2CardDomainSelect}
           <button type="button" class="ghost-button copy-r2-url-btn" data-url="${escapeHtml(publicUrl)}">${escapeHtml(dict.copyUrl)}</button>
           ${!hasPassword ? `<button type="button" class="ghost-button civitai-r2-post-btn" data-url="${escapeHtml(publicUrl)}" data-name="${escapeHtml(item.Key)}" style="color: #38bdf8; border-color: rgba(56, 189, 248, 0.4);" title="Civitai の投稿画面を開く">🎨 Civitai</button>` : ""}
           <button type="button" class="ghost-button danger-button delete-r2-file-btn" data-key="${escapeHtml(item.Key)}" data-s3key="${escapeHtml(item.s3Key || item.Key)}" data-cid="${escapeHtml(itemCid || "")}" data-origin="${isFromS3 ? '1' : '0'}" title="ファイルを削除し、KVマッピング・ストレージ実体を抹消します（自宅Kuboも自動回収・GC）">削除</button>
         `;
       } else {
+        const r2CardDomainSelect = createCardDomainSelectHtml(publicUrl, "r2-file-domain-select");
         actionButtonsHtml = `
+          ${r2CardDomainSelect}
           <button type="button" class="ghost-button copy-r2-url-btn" data-url="${escapeHtml(publicUrl)}">${escapeHtml(dict.copyUrl)}</button>
           ${!hasPassword ? `<button type="button" class="ghost-button civitai-r2-post-btn" data-url="${escapeHtml(publicUrl)}" data-name="${escapeHtml(item.Key)}" style="color: #38bdf8; border-color: rgba(56, 189, 248, 0.4);" title="Civitai の投稿画面を開く">🎨 Civitai</button>` : ""}
           ${devUrl ? `<button type="button" class="ghost-button copy-r2-dev-url-btn" data-url="${escapeHtml(devUrl)}">${escapeHtml(dict.devCopyUrl)}</button>` : ""}

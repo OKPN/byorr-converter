@@ -247,6 +247,66 @@ function renderPasswordForm(filename, errorMsg = "") {
 </html>`;
 }
 
+// 🤖 SNSクローラー（Misskey / SummalyBot, Twitter, Discord, Slack 等）の判定
+function isSocialCrawler(userAgent = "") {
+  const ua = userAgent.toLowerCase();
+  return (
+    ua.includes("summalybot") ||
+    ua.includes("misskey") ||
+    ua.includes("twitterbot") ||
+    ua.includes("discordbot") ||
+    ua.includes("telegrambot") ||
+    ua.includes("facebookexternalhit") ||
+    ua.includes("slackbot") ||
+    ua.includes("bluesky") ||
+    ua.includes("mastodon")
+  );
+}
+
+// 🖼️ SNSクローラー向け軽量 OGP HTML レスポンス生成（大容量バイナリ取得によるプレビュー失敗を完全防止）
+function renderOgpHtml(filename, rawUrl, ext, isVideo, origin) {
+  const title = `${filename}`;
+  const siteName = "Cividge Media";
+  // 動画の場合は同名先頭フレームサムネイル（.thumb.webp）を最優先指定
+  const videoThumbUrl = `${origin}/${filename}.thumb.webp`;
+  const mediaUrl = rawUrl;
+  const thumbUrl = isVideo ? videoThumbUrl : mediaUrl;
+
+  return `<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>${title}</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta property="og:title" content="${title}">
+  <meta property="og:site_name" content="${siteName}">
+  <meta property="og:url" content="${mediaUrl}">
+  <meta property="og:image" content="${thumbUrl}">
+  <meta property="og:image:secure_url" content="${thumbUrl}">
+  ${isVideo ? `
+  <meta property="og:type" content="video.other">
+  <meta property="og:video" content="${mediaUrl}">
+  <meta property="og:video:secure_url" content="${mediaUrl}">
+  <meta property="og:video:type" content="video/${ext === "webm" ? "webm" : "mp4"}">
+  <meta name="twitter:card" content="player">
+  <meta name="twitter:image" content="${thumbUrl}">
+  <meta name="twitter:player" content="${mediaUrl}">
+  ` : `
+  <meta property="og:type" content="article">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:image" content="${thumbUrl}">
+  `}
+</head>
+<body style="margin:0;background:#0f172a;display:flex;align-items:center;justify-content:center;min-height:100vh;">
+  ${isVideo ? `
+  <video src="${mediaUrl}" poster="${thumbUrl}" controls autoplay playsinline style="max-width:100%;max-height:100vh;"></video>
+  ` : `
+  <img src="${mediaUrl}" alt="${title}" style="max-width:100%;max-height:100vh;object-fit:contain;">
+  `}
+</body>
+</html>`;
+}
+
 function renderNotFoundResponse(request, cdnCacheSeconds = 300) {
   const accept = request.headers.get("accept") || "";
   const headers = {
@@ -293,9 +353,9 @@ export async function onRequest(context) {
   const url = new URL(request.url);
   const pathname = url.pathname;
 
-  // 🛡️ content-relay および content-cache ドメインはファイル配信専用エッジ
+  // 🛡️ content-relay, content-cache, blobs-cache, misskey-media ドメインはファイル配信専用エッジ
   // トップページ（/）や管理画面・非メディアURLへのアクセスは、フロントエンドアプリ画面を出さず即座に404返却（1日CDNキャッシュでFunctions完全防衛）
-  const isDeliveryEdge = url.hostname.includes("content-relay") || url.hostname.includes("content-cache");
+  const isDeliveryEdge = url.hostname.includes("content-relay") || url.hostname.includes("content-cache") || url.hostname.includes("blobs-cache") || url.hostname.includes("misskey-media");
 
   const rawFilename = pathname.replace(/^\/+/, "");
   if (rawFilename.startsWith("i/") || rawFilename.startsWith("api/") || rawFilename.startsWith("404-character.")) {
@@ -309,8 +369,8 @@ export async function onRequest(context) {
     filename = rawFilename;
   }
 
-  const extMatch = pathname.match(/\.(webp|png|jpe?g|gif|jxl|avif|mp4|webm|zip)$/i) ||
-                   filename.match(/\.(webp|png|jpe?g|gif|jxl|avif|mp4|webm|zip)$/i);
+  const extMatch = pathname.match(/\.(webp|png|jpe?g|gif|jxl|avif|bmp|ico|mp4|webm|mov|m4v|avi|ogv|mp3|wav|ogg|m4a|flac|aac|pdf|txt|md|json|csv)$/i) ||
+                   filename.match(/\.(webp|png|jpe?g|gif|jxl|avif|bmp|ico|mp4|webm|mov|m4v|avi|ogv|mp3|wav|ogg|m4a|flac|aac|pdf|txt|md|json|csv)$/i);
   if (!extMatch && isDeliveryEdge) {
     return renderNotFoundResponse(request, 86400); // 1日エッジキャッシュ
   }
@@ -411,6 +471,24 @@ export async function onRequest(context) {
     }
   }
 
+  // 🤖 SNSクローラー（Misskey Summaly, Twitter, Discord等）への OGP HTML 即時応答
+  // OGP HTML を即座に返すことで、Misskey/SummalyBot がメタデータとサムネイル画像を確実に取得・カード展開できるようにする
+  const userAgent = request.headers.get("user-agent") || "";
+  const crawlerExt = extMatch[1].toLowerCase();
+  const isCrawlerVideo = (crawlerExt === "mp4" || crawlerExt === "webm");
+  if (!hasPassword && isSocialCrawler(userAgent)) {
+    const ogpHtml = renderOgpHtml(filename, request.url, crawlerExt, isCrawlerVideo, url.origin);
+    return new Response(ogpHtml, {
+      status: 200,
+      headers: {
+        "Content-Type": "text/html; charset=utf-8",
+        "Cache-Control": "public, max-age=86400",
+        "Cloudflare-CDN-Cache-Control": "public, max-age=86400",
+        "Access-Control-Allow-Origin": "*",
+      },
+    });
+  }
+
   // 3. KV に実データ（blobKey または blob_<filename>）が直接格納されている場合は即時配信
   if (env && env.IPFS_KV) {
     try {
@@ -425,8 +503,9 @@ export async function onRequest(context) {
         headers.set("X-Content-Type-Options", "nosniff");
         headers.set("Accept-Ranges", "bytes");
         const extLower = extMatch[1].toLowerCase();
-        const isVideo = (extLower === "mp4" || extLower === "webm");
-        const CACHE_SECONDS = isVideo ? 14400 : 3600; // 動画4時間 / 画像1時間
+        const isVideo = ["mp4", "webm", "mov", "m4v", "avi", "ogv"].includes(extLower);
+        const isAudio = ["mp3", "wav", "ogg", "m4a", "flac", "aac"].includes(extLower);
+        const CACHE_SECONDS = (isVideo || isAudio) ? 14400 : 3600; // 動画・音声4時間 / その他1時間
         if (hasPassword) {
           headers.set("Cache-Control", `private, max-age=${CACHE_SECONDS}`);
           headers.set("Cloudflare-CDN-Cache-Control", "private, no-store");
@@ -439,8 +518,11 @@ export async function onRequest(context) {
         headers.set("Content-Length", String(directData.byteLength));
         const mimeMap = {
           webp: "image/webp", png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg",
-          gif: "image/gif", jxl: "image/jxl", avif: "image/avif", mp4: "video/mp4",
-          webm: "video/webm", zip: "application/zip",
+          gif: "image/gif", jxl: "image/jxl", avif: "image/avif", bmp: "image/bmp", ico: "image/x-icon",
+          mp4: "video/mp4", webm: "video/webm", mov: "video/quicktime", m4v: "video/mp4", avi: "video/x-msvideo", ogv: "video/ogg",
+          mp3: "audio/mpeg", wav: "audio/wav", ogg: "audio/ogg", m4a: "audio/mp4", flac: "audio/flac", aac: "audio/aac",
+          pdf: "application/pdf", txt: "text/plain; charset=utf-8", md: "text/markdown; charset=utf-8",
+          json: "application/json; charset=utf-8", csv: "text/csv; charset=utf-8",
         };
         const ext = extMatch[1].toLowerCase();
         headers.set("Content-Type", meta.mime || mimeMap[ext] || "application/octet-stream");
@@ -485,6 +567,7 @@ export async function onRequest(context) {
       try {
         upstreamResponse = await fetch(`${gw}/${candidate}`, {
           method: isHead ? "HEAD" : "GET",
+          signal: AbortSignal.timeout(4000),
           headers: {
             "User-Agent": "Cividge-KV-Relay/1.0",
             ...(request.headers.get("Range") ? { "Range": request.headers.get("Range") } : {}),
@@ -502,7 +585,7 @@ export async function onRequest(context) {
           break;
         }
       } catch (err) {
-        console.warn(`Upstream fetch attempt failed for ${gw}/${candidate}:`, err);
+        console.warn(`Upstream fetch attempt failed for ${gw}/${candidate}:`, err.name === "TimeoutError" ? "Timeout (4s)" : err.message || err);
       }
     }
     if (upstreamResponse && upstreamResponse.ok) {
@@ -523,10 +606,11 @@ export async function onRequest(context) {
   headers.set("X-Content-Type-Options", "nosniff");
   headers.set("Accept-Ranges", "bytes");  // 常に宣言（iOS Safari等がシーク非対応と誤判定するのを防止）
 
-  // 3層キャッシュ戦略: ブラウザ=CDNレスポンス(画像1時間/動画4時間、アンピン漂流中は7日間) / 上流フェッチ(通常1年/アンピン7日)
-  const isVideo = (extMatch[1].toLowerCase() === "mp4" || extMatch[1].toLowerCase() === "webm");
+  // 3層キャッシュ戦略: ブラウザ=CDNレスポンス(画像1時間/動画・音声4時間、アンピン漂流中は7日間) / 上流フェッチ(通常1年/アンピン7日)
+  const isVideo = ["mp4", "webm", "mov", "m4v", "avi", "ogv"].includes(extMatch[1].toLowerCase());
+  const isAudio = ["mp3", "wav", "ogg", "m4a", "flac", "aac"].includes(extMatch[1].toLowerCase());
   // 🌊 アンピン（IPFS漂流中）ファイルは、7日間に1回アクセスがあれば上流をつついて延命し、アクセスが無ければ自然消滅するよう7日間に設定
-  const CACHE_SECONDS = isUnpinned ? (7 * 86400) : (isVideo ? 14400 : 3600);
+  const CACHE_SECONDS = isUnpinned ? (7 * 86400) : ((isVideo || isAudio) ? 14400 : 3600);
   if (hasPassword) {
     headers.set("Cache-Control", `private, max-age=${CACHE_SECONDS}`);
     headers.set("Cloudflare-CDN-Cache-Control", "private, no-store");
@@ -541,7 +625,7 @@ export async function onRequest(context) {
   if (contentLength) {
     headers.set("Content-Length", contentLength);
   }
-  // 206 Partial Content 対応: 動画シーク再生に必須
+  // 206 Partial Content 対応: 動画・音声シーク再生に必須
   const contentRange = upstreamResponse.headers.get("content-range");
   if (contentRange) {
     headers.set("Content-Range", contentRange);
@@ -555,9 +639,25 @@ export async function onRequest(context) {
     gif: "image/gif",
     jxl: "image/jxl",
     avif: "image/avif",
+    bmp: "image/bmp",
+    ico: "image/x-icon",
     mp4: "video/mp4",
     webm: "video/webm",
-    zip: "application/zip",
+    mov: "video/quicktime",
+    m4v: "video/mp4",
+    avi: "video/x-msvideo",
+    ogv: "video/ogg",
+    mp3: "audio/mpeg",
+    wav: "audio/wav",
+    ogg: "audio/ogg",
+    m4a: "audio/mp4",
+    flac: "audio/flac",
+    aac: "audio/aac",
+    pdf: "application/pdf",
+    txt: "text/plain; charset=utf-8",
+    md: "text/markdown; charset=utf-8",
+    json: "application/json; charset=utf-8",
+    csv: "text/csv; charset=utf-8",
   };
   const ext = extMatch[1].toLowerCase();
   headers.set("Content-Type", mimeMap[ext] || upstreamResponse.headers.get("content-type") || "application/octet-stream");

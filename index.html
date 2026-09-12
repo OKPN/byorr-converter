@@ -69,7 +69,7 @@
               </div>
             </div>
             <label class="dropzone" id="dropzone">
-              <input id="fileInput" type="file" accept="image/*,audio/*,video/*,.zip,.7z,.rar,.tar,.gz,.pdf,.txt,.md,.json,.csv" multiple>
+              <input id="fileInput" type="file" accept="image/*,audio/*,video/*,.pdf,.txt,.md,.json,.csv" multiple>
               <input id="folderInput" type="file" webkitdirectory directory multiple style="display: none;">
               <span class="drop-icon">+</span>
               <strong data-i18n="dropText">画像やフォルダをここにドロップ</strong>
@@ -186,6 +186,15 @@
                 <div style="display: flex; gap: 8px; width: 100%;">
                   <button class="primary-button upload-primary-cta" id="convertUploadR2Button" type="button" disabled data-i18n="btnUploadR2" style="flex: 1; margin: 0; background: linear-gradient(135deg, #ea580c, #c2410c); border-color: #f97316;" title="変換した画像をCloudflare R2へ一括保存">⚡ R2へ保存</button>
                   <button class="primary-button upload-primary-cta" id="convertUploadFilebaseButton" type="button" disabled data-i18n="btnUploadFilebase" style="flex: 1; margin: 0; background: linear-gradient(135deg, #0284c7, #0369a1); border-color: #38bdf8;" title="変換した画像をFilebase (IPFS)へ一括保存">🪐 Filebaseへ保存</button>
+                </div>
+                <!-- 🌐 アップロード直前クイック配信ドメイン切替 -->
+                <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 8px; padding: 6px 10px; background: rgba(0, 0, 0, 0.25); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 6px;">
+                  <span style="font-size: 11px; color: var(--muted); display: flex; align-items: center; gap: 4px; white-space: nowrap;">
+                    <span>🌐 配信ドメイン:</span>
+                  </span>
+                  <select id="quickDomainSelect" style="flex: 1; min-width: 0; height: 28px; font-size: 11.5px; background-color: #121316; color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.3); border-radius: 4px; padding: 0 6px; outline: none; cursor: pointer;">
+                    <option value="">-- ドメインを選択 --</option>
+                  </select>
                 </div>
               </div>
             </div>

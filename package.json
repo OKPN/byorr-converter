@@ -1,7 +1,7 @@
 {
-  "name": "byorr-converter",
+  "name": "cividge",
   "version": "1.0.0",
-  "description": "BYORR static frontend for local image conversion and direct Cloudflare R2 S3 storage",
+  "description": "Cividge - Local-first privacy media converter & decentralized direct storage uploader (R2 & IPFS) with edge caching",
   "private": false,
   "type": "module",
   "scripts": {
