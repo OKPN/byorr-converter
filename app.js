@@ -726,7 +726,11 @@ function getKvApiEndpoint() {
   if (customUrl) {
     return customUrl.endsWith("/api/ipfs-kv") ? customUrl : `${customUrl}/api/ipfs-kv`;
   }
-  return ""; // カスタムWorkerが未指定の場合は空（中央KVへの依存を排除）
+  // 未設定時は自ホストの /api/ipfs-kv を使用（Pages Functions 等で直接動作可能）
+  if (typeof window !== "undefined" && window.location && window.location.origin) {
+    return `${window.location.origin}/api/ipfs-kv`;
+  }
+  return "/api/ipfs-kv";
 }
 
 function getKvDeliveryBaseDomain() {
@@ -748,11 +752,14 @@ function getAdminApiToken() {
 }
 
 function hasAdminAccess() {
-  // 各自の cividge-kv-worker URL が設定されている場合のみ KV 台帳モード（短縮URL配信）として動作
-  return Boolean(getCustomKvWorkerUrl());
+  // 各自の cividge-kv-worker URL がある場合、または自ホスト/ローカル環境でAPIエンドポイントが存在する場合はKV台帳モードとして動作
+  const custom = getCustomKvWorkerUrl();
+  if (custom) return true;
+  // 自ホスト(/api/ipfs-kv) が利用可能な環境なら有効
+  return Boolean(getKvApiEndpoint());
 }
 
-async function registerKvCid(key, cid = "", size = 0, mime = "", s3Key = "", password = "", blobOrBytes = null, ttl = 0, expiresAt = null, unpinned = false, kuboStatus = null, allowedHost = null) {
+async function registerKvCid(key, cid = "", size = 0, mime = "", s3Key = "", password = "", blobOrBytes = null, ttl = 0, expiresAt = null, unpinned = false, kuboStatus = null, allowedHost = null, overwriteAllowedHost = false) {
   if (!key) return;
   const token = getAdminApiToken();
   const endpoint = getKvApiEndpoint();
@@ -775,6 +782,7 @@ async function registerKvCid(key, cid = "", size = 0, mime = "", s3Key = "", pas
       // 🌐 配信ドメイン制限（特定のドメインのみで配信し、他ドメインでのアクセスを404遮断）
       const cleanHost = String(allowedHost).trim().toLowerCase().replace(/^https?:\/\//, "").split('/')[0].split(':')[0];
       if (cleanHost) payload.allowedHost = cleanHost;
+      if (overwriteAllowedHost) payload.overwriteAllowedHost = true;
     }
     if (ttl !== null && ttl !== undefined) {
       if (ttl > 0) {
@@ -1084,7 +1092,6 @@ function switchUrlDomain(originalUrl, targetDomain) {
 // 🌐 各ファイルカード用のドメイン着せ替えセレクトボックスHTML生成
 function createCardDomainSelectHtml(currentUrl, extraClass = "") {
   const list = getR2DomainList();
-  if (list.length <= 1) return "";
 
   let currentDomain = "";
   try {
@@ -1094,15 +1101,19 @@ function createCardDomainSelectHtml(currentUrl, extraClass = "") {
   }
 
   let optionsHtml = "";
-  list.forEach(domain => {
-    let icon = "🌐 ";
-    if (domain.includes(".pages.dev")) icon = "⚡ ";
-    else if (domain.includes(".r2.dev")) icon = "📦 ";
-    let clean = domain.replace(/^https?:\/\//, "").replace(/\/$/, "");
-    if (clean.length > 20) clean = clean.slice(0, 18) + "..";
-    const isSelected = domain.toLowerCase() === currentDomain.toLowerCase() ? "selected" : "";
-    optionsHtml += `<option value="${escapeHtml(domain)}" ${isSelected}>${icon}${escapeHtml(clean)}</option>`;
-  });
+  if (list.length === 0) {
+    optionsHtml = `<option value="">🌐 ドメイン未登録</option>`;
+  } else {
+    list.forEach(domain => {
+      let icon = "🌐 ";
+      if (domain.includes(".pages.dev")) icon = "⚡ ";
+      else if (domain.includes(".r2.dev")) icon = "📦 ";
+      let clean = domain.replace(/^https?:\/\//, "").replace(/\/$/, "");
+      if (clean.length > 20) clean = clean.slice(0, 18) + "..";
+      const isSelected = domain.toLowerCase() === currentDomain.toLowerCase() ? "selected" : "";
+      optionsHtml += `<option value="${escapeHtml(domain)}" ${isSelected}>${icon}${escapeHtml(clean)}</option>`;
+    });
+  }
 
   return `
     <div class="card-domain-select-wrapper" style="display: inline-flex; align-items: center; gap: 4px;">
@@ -4277,7 +4288,8 @@ r2FileList?.addEventListener("change", (e) => {
           existingExpiresAt,
           false,
           null,
-          newDomain
+          newDomain,
+          true // overwriteAllowedHost: 選択されたドメインを単一で設定
         ).catch(err => console.warn("Failed to update allowedHost for " + key + ":", err));
       }
 
@@ -5856,10 +5868,19 @@ r2FileList?.addEventListener("click", async (e) => {
       return;
     }
 
-    const domainList = getR2DomainList();
-    if (domainList.length <= 1) {
-      await showCustomAlert("⚠️ 配信ドメインが1つしか登録されていません。\n設定画面から別の配信ドメイン（Pages等）を追加してください。", "エイリアス作成");
-      return;
+    let domainList = getR2DomainList();
+    if (domainList.length === 0) {
+      const inputDomain = prompt("追加先の配信ドメイン（URL）を入力してください (例: https://sample.pages.dev):");
+      if (!inputDomain || !inputDomain.trim()) return;
+      const clean = inputDomain.trim().replace(/\/$/, "");
+      const formatted = /^https?:\/\//i.test(clean) ? clean : `https://${clean}`;
+      domainList = [formatted];
+      const all = getR2DomainList();
+      if (!all.includes(formatted)) {
+        all.push(formatted);
+        saveR2DomainList(all);
+        renderR2DomainSelect();
+      }
     }
 
     // ダイアログを表示して対象ドメインとファイル名を取得
