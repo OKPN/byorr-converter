@@ -5272,6 +5272,7 @@ reloadR2FilesButton?.addEventListener("click", () => {
 function renderStorageOnboardingCard() {
   if (!r2FileList) return;
 
+  const isFb = activeStorageTab === "filebase";
   const currentDomain = getSelectedR2Domain() || (typeof window !== "undefined" ? window.location.origin : "");
   const fbBucketVal = (localStorage.getItem("filebaseBucket") || filebaseBucket?.value || "").trim();
   const fbKeyVal = (localStorage.getItem("filebaseApiKey") || filebaseApiKey?.value || "").trim();
@@ -5289,71 +5290,16 @@ function renderStorageOnboardingCard() {
     <div class="storage-onboarding-card">
       <div class="onboarding-header">
         <div>
-          <h3 class="onboarding-title">✨ クラウドストレージへ接続して開始しましょう</h3>
-          <p class="onboarding-desc">認証情報が未入力のためファイル一覧は空です。ここに必要な情報を入力して接続すると、自動的にファイル一覧が同期され、上部の詳細設定にも保存されます。</p>
+          <h3 class="onboarding-title">✨ ${isFb ? "🪐 Filebase (IPFS)" : "⚡ Cloudflare R2"} へ接続して開始しましょう</h3>
+          <p class="onboarding-desc">${isFb ? "Filebase (IPFS)" : "Cloudflare R2"} の認証情報が未入力のためファイル一覧は空です。ここに必要な情報を入力して接続すると、自動的にファイル一覧が同期され、上部の詳細設定にも保存されます。</p>
         </div>
       </div>
 
       <!-- ステップガイド＆入力フォーム -->
       <div class="onboarding-step-grid">
-        <!-- STEP 1: ストレージ選択 & 認証情報 (Filebase / R2) -->
+        <!-- STEP 1: cividge-kv-worker デプロイ & 連携案内 -->
         <div class="onboarding-step-box">
-          <div style="display: flex; align-items: center; justify-content: space-between;">
-            <span class="onboarding-step-badge" style="background: rgba(56, 189, 248, 0.2); color: #38bdf8;">STEP 1: S3 / IPFS ストレージ</span>
-            <div style="display: flex; gap: 4px;">
-              <button type="button" class="ghost-button" id="obTabFbBtn" style="font-size: 11px; padding: 2px 8px; height: 24px; ${activeStorageTab === 'filebase' ? 'background: #0284c7; color: #fff;' : ''}">🪐 Filebase</button>
-              <button type="button" class="ghost-button" id="obTabR2Btn" style="font-size: 11px; padding: 2px 8px; height: 24px; ${activeStorageTab === 'r2' ? 'background: #ea580c; color: #fff;' : ''}">⚡ R2</button>
-            </div>
-          </div>
-
-          <!-- Filebase フォーム -->
-          <div id="obFbFields" style="display: ${activeStorageTab === 'filebase' ? 'flex' : 'none'}; flex-direction: column; gap: 8px;">
-            <div class="onboarding-input-field">
-              <label>公開・配信ドメイン (必須)</label>
-              <input type="text" id="obDomainInput" placeholder="例: https://sample-cdn.pages.dev" value="${escapeHtml(currentDomain)}">
-            </div>
-            <div class="onboarding-input-field">
-              <label>Filebase バケット名</label>
-              <input type="text" id="obFbBucket" placeholder="例: my-ipfs-bucket" value="${escapeHtml(fbBucketVal)}">
-            </div>
-            <div class="onboarding-input-field">
-              <label>Filebase API Key (Access Key)</label>
-              <input type="text" id="obFbKey" placeholder="例: E39D98762..." value="${escapeHtml(fbKeyVal)}">
-            </div>
-            <div class="onboarding-input-field">
-              <label>Filebase Secret Key</label>
-              <input type="password" id="obFbSecret" placeholder="例: WkH18302..." value="${escapeHtml(fbSecretVal)}">
-            </div>
-          </div>
-
-          <!-- R2 フォーム -->
-          <div id="obR2Fields" style="display: ${activeStorageTab === 'r2' ? 'flex' : 'none'}; flex-direction: column; gap: 8px;">
-            <div class="onboarding-input-field">
-              <label>公開・配信ドメイン (必須)</label>
-              <input type="text" id="obR2DomainInput" placeholder="例: https://sample-cdn.pages.dev" value="${escapeHtml(currentDomain)}">
-            </div>
-            <div class="onboarding-input-field">
-              <label>Cloudflare Account ID</label>
-              <input type="text" id="obR2Account" placeholder="例: 0123456789abcdef..." value="${escapeHtml(r2AccountVal)}">
-            </div>
-            <div class="onboarding-input-field">
-              <label>R2 バケット名</label>
-              <input type="text" id="obR2Bucket" placeholder="例: my-bucket" value="${escapeHtml(r2BucketVal)}">
-            </div>
-            <div class="onboarding-input-field">
-              <label>Access Key ID</label>
-              <input type="text" id="obR2Key" placeholder="例: c8a1928374..." value="${escapeHtml(r2KeyVal)}">
-            </div>
-            <div class="onboarding-input-field">
-              <label>Secret Access Key</label>
-              <input type="password" id="obR2Secret" placeholder="例: 99f87654..." value="${escapeHtml(r2SecretVal)}">
-            </div>
-          </div>
-        </div>
-
-        <!-- STEP 2: cividge-kv-worker デプロイ & 連携案内 -->
-        <div class="onboarding-step-box">
-          <span class="onboarding-step-badge" style="background: rgba(245, 158, 11, 0.2); color: #f59e0b;">STEP 2: KV 台帳 Worker 連携 (高速短縮URL・時限削除)</span>
+          <span class="onboarding-step-badge" style="background: rgba(245, 158, 11, 0.2); color: #f59e0b;">STEP 1: KV 台帳 Worker 連携 (高速短縮URL・時限削除)</span>
           <div style="font-size: 11.5px; color: var(--muted); line-height: 1.5;">
             短縮URLや時限削除・パスワード保護を使用する場合は、各自の Cloudflare に <code>kv-worker</code> をデプロイします。
             <div style="margin: 8px 0; padding: 8px; background: rgba(0,0,0,0.4); border-radius: 6px; font-family: monospace; font-size: 11px; color: #cbd5e1;">
@@ -5372,45 +5318,73 @@ function renderStorageOnboardingCard() {
             <input type="password" id="obAdminToken" placeholder="例: your-secret-token" value="${escapeHtml(adminTokenVal)}">
           </div>
         </div>
+
+        <!-- STEP 2: ストレージ認証情報 (R2またはFilebase個別画面) -->
+        <div class="onboarding-step-box">
+          <span class="onboarding-step-badge" style="background: ${isFb ? 'rgba(56, 189, 248, 0.2); color: #38bdf8;' : 'rgba(249, 115, 22, 0.2); color: #fb923c;'}">
+            STEP 2: ${isFb ? "🪐 Filebase (IPFS) 設定" : "⚡ Cloudflare R2 設定"}
+          </span>
+
+          ${isFb ? `
+          <!-- Filebase 専用設定フォーム -->
+          <div id="obFbFields" style="display: flex; flex-direction: column; gap: 8px;">
+            <div class="onboarding-input-field">
+              <label>公開・配信ドメイン (必須)</label>
+              <input type="text" id="obDomainInput" placeholder="例: https://content-cache.pages.dev" value="${escapeHtml(currentDomain)}">
+            </div>
+            <div class="onboarding-input-field">
+              <label>Filebase バケット名</label>
+              <input type="text" id="obFbBucket" placeholder="例: my-ipfs-bucket" value="${escapeHtml(fbBucketVal)}">
+            </div>
+            <div class="onboarding-input-field">
+              <label>Filebase API Key (Access Key)</label>
+              <input type="text" id="obFbKey" placeholder="例: E39D98762..." value="${escapeHtml(fbKeyVal)}">
+            </div>
+            <div class="onboarding-input-field">
+              <label>Filebase Secret Key</label>
+              <input type="password" id="obFbSecret" placeholder="例: WkH18302..." value="${escapeHtml(fbSecretVal)}">
+            </div>
+          </div>
+          ` : `
+          <!-- R2 専用設定フォーム -->
+          <div id="obR2Fields" style="display: flex; flex-direction: column; gap: 8px;">
+            <div class="onboarding-input-field">
+              <label>公開・配信ドメイン (必須)</label>
+              <input type="text" id="obR2DomainInput" placeholder="例: https://content-cache.pages.dev" value="${escapeHtml(currentDomain)}">
+            </div>
+            <div class="onboarding-input-field">
+              <label>Cloudflare Account ID</label>
+              <input type="text" id="obR2Account" placeholder="例: 0123456789abcdef..." value="${escapeHtml(r2AccountVal)}">
+            </div>
+            <div class="onboarding-input-field">
+              <label>R2 バケット名</label>
+              <input type="text" id="obR2Bucket" placeholder="例: my-bucket" value="${escapeHtml(r2BucketVal)}">
+            </div>
+            <div class="onboarding-input-field">
+              <label>Access Key ID</label>
+              <input type="text" id="obR2Key" placeholder="例: c8a1928374..." value="${escapeHtml(r2KeyVal)}">
+            </div>
+            <div class="onboarding-input-field">
+              <label>Secret Access Key</label>
+              <input type="password" id="obR2Secret" placeholder="例: 99f87654..." value="${escapeHtml(r2SecretVal)}">
+            </div>
+          </div>
+          `}
+        </div>
       </div>
 
       <!-- アクションボタン -->
       <div class="onboarding-action-row">
         <span id="obStatusNotice" style="font-size: 12px; color: #fcd34d; margin-right: auto;"></span>
-        <button type="button" class="primary-button" id="obConnectBtn" style="padding: 8px 20px; font-size: 13px; font-weight: bold;">🚀 接続してファイル一覧を読み込む</button>
+        <button type="button" class="primary-button" id="obConnectBtn" style="padding: 8px 20px; font-size: 13px; font-weight: bold;">
+          🚀 ${isFb ? "Filebase に接続してファイル一覧を読み込む" : "R2 に接続してファイル一覧を読み込む"}
+        </button>
       </div>
     </div>
   `;
 
-  // イベントリスナー設定
-  const obTabFbBtn = document.querySelector("#obTabFbBtn");
-  const obTabR2Btn = document.querySelector("#obTabR2Btn");
-  const obFbFields = document.querySelector("#obFbFields");
-  const obR2Fields = document.querySelector("#obR2Fields");
-
-  obTabFbBtn?.addEventListener("click", () => {
-    activeStorageTab = "filebase";
-    localStorage.setItem("activeStorageTab", "filebase");
-    updateStorageTabsUi();
-    if (obFbFields) obFbFields.style.display = "flex";
-    if (obR2Fields) obR2Fields.style.display = "none";
-    if (obTabFbBtn) { obTabFbBtn.style.background = "#0284c7"; obTabFbBtn.style.color = "#fff"; }
-    if (obTabR2Btn) { obTabR2Btn.style.background = ""; obTabR2Btn.style.color = ""; }
-  });
-
-  obTabR2Btn?.addEventListener("click", () => {
-    activeStorageTab = "r2";
-    localStorage.setItem("activeStorageTab", "r2");
-    updateStorageTabsUi();
-    if (obFbFields) obFbFields.style.display = "none";
-    if (obR2Fields) obR2Fields.style.display = "flex";
-    if (obTabR2Btn) { obTabR2Btn.style.background = "#ea580c"; obTabR2Btn.style.color = "#fff"; }
-    if (obTabFbBtn) { obTabFbBtn.style.background = ""; obTabFbBtn.style.color = ""; }
-  });
-
   // オンボーディング内の入力変更をリアルタイムで通常入力欄 & localStorage に同期
   const syncOnboardingInputs = () => {
-    const isFb = activeStorageTab === "filebase";
     const domainInput = isFb ? document.querySelector("#obDomainInput") : document.querySelector("#obR2DomainInput");
     const domainVal = domainInput?.value?.trim() || "";
 
@@ -5464,7 +5438,6 @@ function renderStorageOnboardingCard() {
 
   obConnectBtn?.addEventListener("click", async () => {
     syncOnboardingInputs();
-    const isFb = activeStorageTab === "filebase";
     const configured = isFb ? isFilebaseConfigured() : isR2Configured();
 
     if (!configured) {
