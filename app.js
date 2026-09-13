@@ -2126,9 +2126,8 @@ function checkAndApplyHashSync() {
 checkAndApplyHashSync();
 loadSettings();
 setAppLanguage(getAppLanguage());
-if (updateR2Status()) {
-  fetchAndRenderR2Files();
-}
+updateR2Status();
+fetchAndRenderR2Files();
 fetchAndRenderCivitaiGallery();
 
 // --- イベントリスナー: R2 設定自動保存 ---
