@@ -4138,12 +4138,12 @@ fileList?.addEventListener("click", async (event) => {
   const card = target.closest(".unified-file-card");
   if (!card) return;
 
-  const index = Number(target.dataset.index);
+  const index = Number(target.dataset.index ?? card.dataset.index);
 
   // 0. プロンプト個別コピーボタン
   const promptBtn = target.closest(".copy-prompt-btn");
   if (promptBtn) {
-    const idx = Number(promptBtn.dataset.index);
+    const idx = Number(promptBtn.dataset.index ?? card.dataset.index);
     const f = state.files[idx];
     const p = f?.metaStatus?.promptDetails;
     if (p && p.prompt) {
@@ -4344,25 +4344,24 @@ fileList?.addEventListener("click", async (event) => {
   }
 
   // 4. URL コピー
-  if (target.classList.contains("copy-button")) {
-    const result = state.results[index];
+  const copyBtn = target.closest(".copy-button");
+  if (copyBtn) {
     const inputEl = card.querySelector(".url-output");
-    let urlToCopy = result?.proxyUrl || inputEl?.value || "";
+    const result = state.results[index];
+    let urlToCopy = inputEl?.value?.trim() || result?.proxyUrl || "";
 
     // Filebase IPFS モードで URL に /i/ が抜けている場合は強制的に完全な直リンを再構築
     const provider = getStorageProvider();
     if (provider === "filebase" && result?.ipfsCid && !urlToCopy.includes("/i/")) {
       const baseDomain = (getSelectedR2Domain() || (typeof window !== "undefined" ? window.location.origin : "")).replace(/\/$/, "");
       urlToCopy = `${baseDomain}/i/${result.ipfsCid}/${encodeURIComponent(result.name)}`;
-      if (inputEl) inputEl.value = urlToCopy;
-      if (result) result.proxyUrl = urlToCopy;
     }
 
     if (inputEl) {
       inputEl.value = urlToCopy;
       inputEl.select();
     }
-    await copyToClipboard(urlToCopy, target);
+    await copyToClipboard(urlToCopy, copyBtn);
     return;
   }
 });
