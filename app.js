@@ -1139,6 +1139,48 @@ function switchUrlDomain(originalUrl, targetDomain) {
   }
 }
 
+// 🌐 各ファイルカード専用の固定配信ドメイン管理（プルダウン変更で釣られないように完全分離）
+function getFileStoredDomain(itemKey, itemDisplayName, rawAllowedHost) {
+  // 1. rawKey に host:filename があればそのホストを優先
+  if (itemKey && itemKey.indexOf(":") > 0 && !itemKey.startsWith("tombstone_") && !itemKey.startsWith("blob_")) {
+    const host = itemKey.split(":")[0].trim();
+    if (host) return host.startsWith("http") ? host : `https://${host}`;
+  }
+  // 2. メタデータの allowedHost / d があれば優先
+  if (rawAllowedHost) {
+    const host = rawAllowedHost.split(",")[0].trim();
+    if (host) return host.startsWith("http") ? host : `https://${host}`;
+  }
+  // 3. ローカルに保存されている各ファイルの固定ドメイン
+  try {
+    const map = JSON.parse(localStorage.getItem("fileDomainMap") || "{}");
+    if (map[itemKey]) return map[itemKey];
+    if (map[itemDisplayName]) return map[itemDisplayName];
+  } catch (e) {}
+
+  // 4. 初回登録: 現在の選択ドメインをこのファイル専用に固定記録
+  const current = getSelectedR2Domain();
+  if (current) {
+    try {
+      const map = JSON.parse(localStorage.getItem("fileDomainMap") || "{}");
+      map[itemKey] = current;
+      if (itemDisplayName) map[itemDisplayName] = current;
+      localStorage.setItem("fileDomainMap", JSON.stringify(map));
+    } catch (e) {}
+    return current;
+  }
+  return typeof window !== "undefined" ? window.location.origin : "";
+}
+
+function setFileStoredDomain(key, domain) {
+  if (!key || !domain) return;
+  try {
+    const map = JSON.parse(localStorage.getItem("fileDomainMap") || "{}");
+    map[key] = domain;
+    localStorage.setItem("fileDomainMap", JSON.stringify(map));
+  } catch (e) {}
+}
+
 // 🌐 各ファイルカード用の固定配信ドメインバッジ ＋ 別ドメイン追加（＋）ボタンHTML生成
 function createCardDomainBadgeHtml(currentUrl, extraClass = "") {
   let currentDomain = "";
@@ -4978,14 +5020,16 @@ async function uploadImage(result, targetProvider = "r2", customPassword = null)
           fetch(result.proxyUrl, { method: "GET", mode: "no-cors" }).catch(() => {});
         }, 300);
       }
+      setFileStoredDomain(result.name, baseDomain);
     } else {
       // ⚡ Cloudflare R2: パスワードまたは時限付きの場合は KV に保護メタデータ＆実体を登録
       if (password || ttlSeconds > 0) {
         await registerKvCid(result.name, "", uploadBytes.length, contentType, result.name, password, uploadBlob || uploadBytes, ttlSeconds, expiresAt, false, null, baseDomain, true);
         result.proxyUrl = `${baseDomain}/${encodeURIComponent(result.name)}`;
       } else {
-        result.proxyUrl = getPublicUrl(result.name);
+        result.proxyUrl = `${baseDomain}/${encodeURIComponent(result.name)}`;
       }
+      setFileStoredDomain(result.name, baseDomain);
     }
 
     // 🎬 動画の場合は先頭フレームサムネイル（.thumb.webp）を裏で自動生成・保存
@@ -5732,10 +5776,16 @@ async function fetchAndRenderR2Files() {
 
     // （※ 自宅 Kubo 遅延マイグレーションは一覧描画後に実行します）
 
-    paletteFiles = contents.map(item => ({
-      key: item.Key,
-      url: isFilebase ? `${baseDomain}/${encodeURIComponent(item.Key)}` : getPublicUrl(item.Key),
-    }));
+    paletteFiles = contents.map(item => {
+      const itemKey = item.rawKey || item.Key || "";
+      const itemDisplayName = item.Key || "";
+      const rawAllowedHost = item.metadata?.allowedHost || item.metadata?.d || "";
+      const fileDomain = getFileStoredDomain(itemKey, itemDisplayName, rawAllowedHost).replace(/\/$/, "");
+      return {
+        key: item.Key,
+        url: `${fileDomain}/${encodeURIComponent(item.Key)}`,
+      };
+    });
     renderUrlPalette();
 
     r2FileList.innerHTML = "";
@@ -5862,19 +5912,23 @@ function renderCurrentStoragePage() {
     article.dataset.expiresat = item.expiresAt ? String(item.expiresAt) : "0";
     article.dataset.allowedhost = (item.metadata?.allowedHost || item.metadata?.d || "") || "";
 
-    // 🌐 このファイルに保存されている配信ドメイン (allowedHost / d) があればそれを初期ドメインとして優先適用
+    // 🌐 このファイルカード専用の固定配信ドメイン（プルダウン切り替えで絶対に釣られない）
     const rawAllowedHost = item.metadata?.allowedHost || item.metadata?.d || "";
-    const firstAllowedHost = rawAllowedHost ? rawAllowedHost.split(",")[0].trim() : "";
-    article.dataset.allowedhost = firstAllowedHost;
-    const fileInitialDomain = firstAllowedHost
-      ? (firstAllowedHost.startsWith("http") ? firstAllowedHost : `https://${firstAllowedHost}`)
-      : (isFilebase ? (hasAdminAccess() ? getKvDeliveryBaseDomain() : baseDomain) : null);
+    const fileDomain = getFileStoredDomain(itemKey, itemDisplayName, rawAllowedHost).replace(/\/$/, "");
+    article.dataset.allowedhost = fileDomain;
 
-    let publicUrl = isFilebase
-      ? (hasAdminAccess()
-          ? `${fileInitialDomain || getKvDeliveryBaseDomain()}/${encodeURIComponent(item.Key)}`
-          : (itemCid ? `${fileInitialDomain || baseDomain}/i/${itemCid}/${encodeURIComponent(item.Key)}` : `${fileInitialDomain || baseDomain}/${encodeURIComponent(item.Key)}`))
-      : (firstAllowedHost ? `${fileInitialDomain}/${encodeURIComponent(item.Key)}` : getPublicUrl(item.Key));
+    let publicUrl = "";
+    if (isFilebase) {
+      if (hasAdminAccess()) {
+        publicUrl = `${fileDomain}/${encodeURIComponent(item.Key)}`;
+      } else if (itemCid) {
+        publicUrl = `${fileDomain}/i/${itemCid}/${encodeURIComponent(item.Key)}`;
+      } else {
+        publicUrl = `${fileDomain}/${encodeURIComponent(item.Key)}`;
+      }
+    } else {
+      publicUrl = `${fileDomain}/${encodeURIComponent(item.Key)}`;
+    }
     const devUrl = isFilebase ? null : getDevUrl(item.Key);
 
     const hasPassword = Boolean(item.password || item.metadata?.passwordHash || item.metadata?.password);
@@ -6511,6 +6565,7 @@ r2FileList?.addEventListener("click", async (e) => {
         if (cid) {
           storeIpfsCid(newDomainKey, cid);
         }
+        setFileStoredDomain(newDomainKey, targetDomainUrl);
 
         // 新URLのウォームアップ
         const newUrl = `${targetDomainUrl.replace(/\/$/, "")}/${encodeURIComponent(displayName)}`;

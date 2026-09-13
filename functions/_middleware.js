@@ -393,6 +393,7 @@ export async function onRequest(context) {
   let targetCid = null;
   let meta = {};
   let debugKvInfo = "none";
+  let isDomainSpecific = false;
   if (env && env.IPFS_KV) {
     try {
       const currentHost = url.hostname.toLowerCase();
@@ -407,8 +408,9 @@ export async function onRequest(context) {
           debugKvInfo = `hit_current_raw:${currentHost}:${rawFilename}`;
         }
       }
+      isDomainSpecific = Boolean(kvRes && kvRes.value);
       // 2. 見つからなければ従来のファイル名単体キーで照会
-      if (!kvRes || !kvRes.value) {
+      if (!isDomainSpecific) {
         let singleRes = await env.IPFS_KV.getWithMetadata(filename);
         if (singleRes && singleRes.value) {
           kvRes = singleRes;
@@ -430,7 +432,6 @@ export async function onRequest(context) {
       }
     } catch (kvErr) {
       console.warn("IPFS_KV get error:", kvErr);
-      debugKvInfo = `err:${kvErr.message || kvErr}`;
     }
   }
 
@@ -440,9 +441,9 @@ export async function onRequest(context) {
     return renderNotFoundResponse(request, 60, "expired");
   }
 
-  // 🌐 配信ドメイン制限チェック（設定されたドメイン以外からのアクセスは即座に404で遮断）
+  // 🌐 配信ドメイン制限チェック（各ドメイン完全独立：個別ドメインキーでない場合に限り、設定ドメイン外を404遮断）
   const allowedDomain = meta.d || meta.allowedHost;
-  if (allowedDomain && typeof allowedDomain === "string" && allowedDomain.trim()) {
+  if (!isDomainSpecific && allowedDomain && typeof allowedDomain === "string" && allowedDomain.trim()) {
     const allowedHostnames = allowedDomain.split(",").map(h => h.trim().toLowerCase().replace(/^https?:\/\//, "").split('/')[0].split(':')[0]).filter(Boolean);
     const currentHostname = url.hostname.toLowerCase();
 
