@@ -88,11 +88,12 @@ const i18nDict = {
     tempPasswordPlaceholder: "合言葉を設定",
     optionalText: "(任意)",
     quickUploadHeading: "🚀 外部投稿 / Windows「送る」連携",
+    uploadReturnDomainLabel: "🌐 返却配信用アドレス (用途別に選択):",
     uploadApiUrl: "投稿API エンドポイント URL",
     btnCopyUrl: "📋 URLをコピー",
     btnCopyCurl: "💻 curl例をコピー",
     btnDownloadSendTo: "📥 Windows「送る」登録バッチ",
-    uploadApiNote: "※ 本APIで投稿されたファイルは Filebase(IPFS) または R2 に保存され、短縮URLが発行されます。",
+    uploadApiNote: "※ 本APIで投稿されたファイルは Filebase(IPFS) または R2 に保存され、選択した配信用ドメインの短縮URLが発行されます。",
     sendToUninstallNote: "※「送る」から解除・削除したい場合: <code>Win + R</code> ➜ <code>shell:sendto</code> で開くフォルダからバッチを削除してください。",
     passwordBadge: "🔒 パスワード保護",
     qrModalTitle: "📱 スマホ/別端末でスキャン",
@@ -256,11 +257,12 @@ const i18nDict = {
     tempPasswordPlaceholder: "Set password phrase",
     optionalText: "(Optional)",
     quickUploadHeading: "🚀 Quick Upload / Windows 'Send To'",
+    uploadReturnDomainLabel: "🌐 Return Delivery Address (Select per purpose):",
     uploadApiUrl: "Upload API Endpoint URL",
     btnCopyUrl: "📋 Copy URL",
     btnCopyCurl: "💻 Copy curl",
     btnDownloadSendTo: "📥 Windows 'Send To' Batch",
-    uploadApiNote: "※ Files uploaded via this API are stored in Filebase (IPFS) or R2 with a short URL.",
+    uploadApiNote: "※ Files uploaded via this API are stored in Filebase (IPFS) or R2 with a short URL for the selected domain.",
     sendToUninstallNote: "※ To remove from 'Send To': Press <code>Win + R</code> ➜ type <code>shell:sendto</code> and delete the batch file.",
     passwordBadge: "🔒 Password Protected",
     qrModalTitle: "📱 Scan with Mobile / Other Device",
@@ -7639,23 +7641,57 @@ civitaiGalleryList?.addEventListener("click", async (event) => {
 });
 
 // --- 🚀 外部投稿 / Windows「送る」連携ロジック ---
+// --- 🚀 外部投稿 / Windows「送る」連携ロジック ---
+const uploadReturnDomainSelect = document.querySelector("#uploadReturnDomainSelect");
 const dedicatedUploadApiUrlInput = document.querySelector("#dedicatedUploadApiUrl");
+const uploadTokenNotice = document.querySelector("#uploadTokenNotice");
 const copyUploadApiUrlBtn = document.querySelector("#copyUploadApiUrlBtn");
 const copyCurlCmdBtn = document.querySelector("#copyCurlCmdBtn");
 const downloadSendToBatBtn = document.querySelector("#downloadSendToBatBtn");
 
+// 投げる API エンドポイント（Workers アドレス固定）
 function getDedicatedUploadEndpoint() {
   const customWorkerUrl = getCustomKvWorkerUrl();
-  const baseDomain = (customWorkerUrl || (typeof window !== "undefined" ? window.location.origin : "")).replace(/\/$/, "");
+  const baseDomain = (customWorkerUrl || "https://cividge-kv-worker.okpn.workers.dev").replace(/\/$/, "");
   return `${baseDomain}/api/upload`;
 }
 
+// 外部投稿用プルダウンの選択肢を更新
+function populateUploadReturnDomainSelect() {
+  if (!uploadReturnDomainSelect) return;
+  const currentVal = uploadReturnDomainSelect.value;
+  const domains = getR2DomainList(); // 登録済みドメイン一覧
+
+  uploadReturnDomainSelect.innerHTML = "";
+  domains.forEach(d => {
+    const opt = document.createElement("option");
+    opt.value = d;
+    opt.textContent = d;
+    uploadReturnDomainSelect.appendChild(opt);
+  });
+
+  if (currentVal && domains.includes(currentVal)) {
+    uploadReturnDomainSelect.value = currentVal;
+  } else if (uploadReturnDomainSelect.options.length > 0) {
+    uploadReturnDomainSelect.selectedIndex = 0;
+  }
+}
+
+// 選択された返却配信ドメインを取得
+function getSelectedUploadReturnDomain() {
+  if (uploadReturnDomainSelect && uploadReturnDomainSelect.value) {
+    return uploadReturnDomainSelect.value.trim().replace(/\/$/, "");
+  }
+  return (getSelectedR2Domain() || "").replace(/\/$/, "");
+}
+
+// 外部投稿用のフルURL構築（?domain=... & ?token=...）
 function getDedicatedUploadFullUrl() {
   const endpoint = getDedicatedUploadEndpoint();
-  const selectedDomain = (getSelectedR2Domain() || "").replace(/\/$/, "");
+  const selectedDomain = getSelectedUploadReturnDomain();
   const token = getAdminApiToken();
 
-  const url = new URL(endpoint, typeof window !== "undefined" ? window.location.origin : "http://localhost");
+  const url = new URL(endpoint);
   if (selectedDomain) {
     url.searchParams.set("domain", selectedDomain);
   }
@@ -7665,52 +7701,95 @@ function getDedicatedUploadFullUrl() {
   return url.toString();
 }
 
+// UIの同期・トークン未設定ガード
 function updateDedicatedUploadApiUI() {
   if (!dedicatedUploadApiUrlInput) return;
+  const token = getAdminApiToken();
+  const hasToken = Boolean(token);
+
   dedicatedUploadApiUrlInput.value = getDedicatedUploadFullUrl();
+
+  if (uploadTokenNotice) {
+    uploadTokenNotice.style.display = hasToken ? "none" : "block";
+  }
+
+  // トークン未設定時はボタンを非活性化
+  if (copyUploadApiUrlBtn) copyUploadApiUrlBtn.disabled = !hasToken;
+  if (copyCurlCmdBtn) copyCurlCmdBtn.disabled = !hasToken;
+  if (downloadSendToBatBtn) downloadSendToBatBtn.disabled = !hasToken;
 }
 
-r2DomainSelect?.addEventListener("change", updateDedicatedUploadApiUI);
+uploadReturnDomainSelect?.addEventListener("change", updateDedicatedUploadApiUI);
+r2DomainSelect?.addEventListener("change", () => {
+  populateUploadReturnDomainSelect();
+  updateDedicatedUploadApiUI();
+});
 adminApiToken?.addEventListener("input", updateDedicatedUploadApiUI);
 kvWorkerUrl?.addEventListener("input", updateDedicatedUploadApiUI);
-setTimeout(updateDedicatedUploadApiUI, 200);
+
+setTimeout(() => {
+  populateUploadReturnDomainSelect();
+  updateDedicatedUploadApiUI();
+}, 250);
 
 copyUploadApiUrlBtn?.addEventListener("click", async () => {
+  const token = getAdminApiToken();
+  if (!token) {
+    alert("⚠️ 管理APIトークンが設定されていません。上の「⚡ バックエンド設定」でトークンを入力してください。");
+    return;
+  }
   const fullUrl = getDedicatedUploadFullUrl();
   await copyToClipboard(fullUrl, copyUploadApiUrlBtn, "📋 コピー完了!");
 });
 
 copyCurlCmdBtn?.addEventListener("click", async () => {
-  const endpoint = getDedicatedUploadEndpoint();
-  const selectedDomain = (getSelectedR2Domain() || "").replace(/\/$/, "");
   const token = getAdminApiToken();
+  if (!token) {
+    alert("⚠️ 管理APIトークンが設定されていません。上の「⚡ バックエンド設定」でトークンを入力してください。");
+    return;
+  }
+  const endpoint = getDedicatedUploadEndpoint();
+  const selectedDomain = getSelectedUploadReturnDomain();
 
-  const url = new URL(endpoint, typeof window !== "undefined" ? window.location.origin : "http://localhost");
+  const url = new URL(endpoint);
   if (selectedDomain) {
     url.searchParams.set("domain", selectedDomain);
   }
 
   let curlCmd = `curl -X POST "${url.toString()}"`;
-  if (token) {
-    curlCmd += ` \\\n  -H "Authorization: Bearer ${token}"`;
-  }
+  curlCmd += ` \\\n  -H "Authorization: Bearer ${token}"`;
   curlCmd += ` \\\n  -F "file=@/path/to/image.webp"`;
 
   await copyToClipboard(curlCmd, copyCurlCmdBtn, "💻 コピー完了!");
 });
 
 downloadSendToBatBtn?.addEventListener("click", () => {
-  const endpoint = getDedicatedUploadEndpoint();
-  const selectedDomain = (getSelectedR2Domain() || "").replace(/\/$/, "");
   const token = getAdminApiToken();
+  if (!token) {
+    alert("⚠️ 管理APIトークンが設定されていません。上の「⚡ バックエンド設定」でトークンを入力してください。");
+    return;
+  }
 
-  const url = new URL(endpoint, typeof window !== "undefined" ? window.location.origin : "http://localhost");
+  const endpoint = getDedicatedUploadEndpoint();
+  const selectedDomain = getSelectedUploadReturnDomain();
+
+  const url = new URL(endpoint);
   if (selectedDomain) {
     url.searchParams.set("domain", selectedDomain);
   }
 
   const endpointUrlStr = url.toString();
   const escapedToken = token.replace(/"/g, '`"');
+
+  // ファイル名を用途（ドメイン名）ごとに識別しやすく命名
+  let domainTag = "";
+  try {
+    const parsed = new URL(selectedDomain.startsWith("http") ? selectedDomain : `https://${selectedDomain}`);
+    domainTag = `[${parsed.hostname}]`;
+  } catch (e) {
+    domainTag = selectedDomain ? `[${selectedDomain}]` : "";
+  }
+  const batFileName = `Cividgeへアップロード${domainTag}.bat`;
 
   const batContent = `<# :
 @echo off
@@ -7738,11 +7817,11 @@ Add-Type -AssemblyName System.Drawing
 # 1. 引数なし（ダブルクリック時）: SendTo フォルダへ自動登録
 if (-not $rawArgs) {
     $sendtoDir = [Environment]::GetFolderPath([Environment+SpecialFolder]::SendTo)
-    $dest = Join-Path $sendtoDir "Cividgeへアップロード.bat"
+    $dest = Join-Path $sendtoDir "${batFileName}"
     
     try {
         Copy-Item -Path $batPath -Destination $dest -Force
-        [System.Windows.Forms.MessageBox]::Show("【Cividge 登録完了】\`n\`n✅ Windows の「送る」メニューに「Cividgeへアップロード」を登録しました！\`n\`nエクスプローラーで画像や動画を右クリック ➜「送る」➜「Cividgeへアップロード」でご利用いただけます。\`n\`n※解除・削除したい場合: Win+R ➜ shell:sendto から本ファイルを削除してください。", "登録完了 - Cividge", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information)
+        [System.Windows.Forms.MessageBox]::Show("【Cividge 登録完了】\`n\`n✅ Windows の「送る」メニューに「${batFileName}」を登録しました！\`n\`n返却配信アドレス: ${selectedDomain}\`n\`nエクスプローラーで画像や動画を右クリック ➜「送る」➜「${batFileName}」で即座に投稿・短縮URLコピーが可能です。\`n\`n※解除・削除したい場合: Win+R ➜ shell:sendto から本ファイルを削除してください。", "登録完了 - Cividge", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information)
     } catch {
         [System.Windows.Forms.MessageBox]::Show("⚠️ 登録に失敗しました: " + $_.Exception.Message, "エラー", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
     }
@@ -7783,7 +7862,7 @@ if ($urls.Count -gt 0) {
     $notify = New-Object System.Windows.Forms.NotifyIcon
     $notify.Icon = [System.Drawing.SystemIcons]::Information
     $notify.Visible = $true
-    $msg = if ($urls.Count -eq 1) { "URLをクリップボードにコピーしました！" } else { "$($urls.Count)件のURLをクリップボードにコピーしました！" }
+    $msg = if ($urls.Count -eq 1) { "URL (${selectedDomain}) をコピーしました！" } else { "$($urls.Count)件のURL (${selectedDomain}) をコピーしました！" }
     $notify.ShowBalloonTip(4000, "Cividge アップロード完了", $msg, [System.Windows.Forms.ToolTipIcon]::Info)
     Start-Sleep -Seconds 2
     $notify.Dispose()
@@ -7800,13 +7879,14 @@ if ($errors.Count -gt 0) {
   const downloadUrl = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = downloadUrl;
-  a.download = "Cividgeへアップロード.bat";
+  a.download = batFileName;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
   URL.revokeObjectURL(downloadUrl);
 
-  alert("📥 設定済みの「Cividgeへアップロード.bat」をダウンロードしました！\n\n【登録手順】\nダウンロードしたバッチファイルをダブルクリックすると、自動でWindowsの「送る」メニューに登録されます。\n\n【使い方】\nエクスプローラーで画像や動画を右クリック ➜「送る」➜「Cividgeへアップロード」で投稿完了＆URLが自動コピーされます！\n\n【解除・削除方法】\nWin + R キーを押し「shell:sendto」と入力して開いたフォルダから、本ファイルを削除してください。");
+  alert(`📥 設定済みの「${batFileName}」をダウンロードしました！\n\n【返却配信アドレス】\n${selectedDomain}\n\n【登録手順】\nダウンロードしたバッチファイルをダブルクリックすると、自動でWindowsの「送る」メニューに登録されます。\n\n【使い方】\nエクスプローラーで画像や動画を右クリック ➜「送る」➜「${batFileName}」で投稿完了＆URLが自動コピーされます！\n\n【解除・削除方法】\nWin + R キーを押し「shell:sendto」と入力して開いたフォルダから、本ファイルを削除してください。`);
 });
+
 
 
