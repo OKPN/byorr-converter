@@ -7696,10 +7696,10 @@ function updateDedicatedUploadApiUI() {
     uploadTokenNotice.style.display = hasToken ? "none" : "block";
   }
 
-  // トークン未設定時はボタンを非活性化
-  if (copyUploadApiUrlBtn) copyUploadApiUrlBtn.disabled = !hasToken;
-  if (copyCurlCmdBtn) copyCurlCmdBtn.disabled = !hasToken;
-  if (downloadSendToBatBtn) downloadSendToBatBtn.disabled = !hasToken;
+  // ボタンの非活性化は行わず、未設定時はクリック時に分かりやすく案内
+  if (copyUploadApiUrlBtn) copyUploadApiUrlBtn.disabled = false;
+  if (copyCurlCmdBtn) copyCurlCmdBtn.disabled = false;
+  if (downloadSendToBatBtn) downloadSendToBatBtn.disabled = false;
 }
 
 uploadStorageSelect?.addEventListener("change", updateDedicatedUploadApiUI);
@@ -7719,7 +7719,7 @@ setTimeout(() => {
 copyUploadApiUrlBtn?.addEventListener("click", async () => {
   const token = getAdminApiToken();
   if (!token) {
-    alert("⚠️ 管理APIトークンが設定されていません。上の「⚡ バックエンド設定」でトークンを入力してください。");
+    alert("⚠️ 管理APIトークンが未入力です。\n「☁️ クラウドストレージ接続設定」内の「KV API トークン」を入力してください。");
     return;
   }
   const fullUrl = getDedicatedUploadFullUrl();
@@ -7729,7 +7729,7 @@ copyUploadApiUrlBtn?.addEventListener("click", async () => {
 copyCurlCmdBtn?.addEventListener("click", async () => {
   const token = getAdminApiToken();
   if (!token) {
-    alert("⚠️ 管理APIトークンが設定されていません。上の「⚡ バックエンド設定」でトークンを入力してください。");
+    alert("⚠️ 管理APIトークンが未入力です。\n「☁️ クラウドストレージ接続設定」内の「KV API トークン」を入力してください。");
     return;
   }
   const endpoint = getDedicatedUploadEndpoint();
@@ -7754,7 +7754,7 @@ copyCurlCmdBtn?.addEventListener("click", async () => {
 downloadSendToBatBtn?.addEventListener("click", () => {
   const token = getAdminApiToken();
   if (!token) {
-    alert("⚠️ 管理APIトークンが設定されていません。上の「⚡ バックエンド設定」でトークンを入力してください。");
+    alert("⚠️ 管理APIトークンが未入力です。\n\nバッチファイルにトークンを埋め込む必要があるため、「☁️ クラウドストレージ接続設定」内の「KV API トークン」を入力してから再度お試しください。");
     return;
   }
 
@@ -7868,7 +7868,7 @@ if ($errors.Count -gt 0) {
 `;
 
   const crlfContent = "\uFEFF" + batContent.replace(/\r?\n/g, "\r\n");
-  const blob = new Blob([crlfContent], { type: "text/plain;charset=utf-8" });
+  const blob = new Blob([crlfContent], { type: "application/bat;charset=utf-8" });
   const downloadUrl = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = downloadUrl;
@@ -7876,10 +7876,5 @@ if ($errors.Count -gt 0) {
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
-  URL.revokeObjectURL(downloadUrl);
-
-  alert(`📥 設定済みの「${batFileName}」をダウンロードしました！\n\n【返却配信アドレス】\n${selectedDomain}\n\n【登録手順】\nダウンロードしたバッチファイルをダブルクリックすると、自動でWindowsの「送る」メニューに登録されます。\n\n【使い方】\nエクスプローラーで画像や動画を右クリック ➜「送る」➜「${batFileName}」で投稿完了＆URLが自動コピーされます！\n\n【解除・削除方法】\nWin + R キーを押し「shell:sendto」と入力して開いたフォルダから、本ファイルを削除してください。`);
+  setTimeout(() => URL.revokeObjectURL(downloadUrl), 10000);
 });
-
-
-
