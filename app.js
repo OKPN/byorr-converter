@@ -7781,15 +7781,15 @@ downloadSendToBatBtn?.addEventListener("click", () => {
   const endpointUrlStr = url.toString();
   const escapedToken = token.replace(/"/g, '`"');
 
-  // ファイル名を用途（ドメイン名）ごとに識別しやすく命名
-  let domainTag = "";
+  // ファイル名を「(選んだアドレス)にアップロード.bat」に命名
+  let domainHost = "";
   try {
     const parsed = new URL(selectedDomain.startsWith("http") ? selectedDomain : `https://${selectedDomain}`);
-    domainTag = `[${parsed.hostname}]`;
+    domainHost = parsed.hostname || selectedDomain;
   } catch (e) {
-    domainTag = selectedDomain ? `[${selectedDomain}]` : "";
+    domainHost = selectedDomain || "Cividge";
   }
-  const batFileName = `Cividgeへアップロード${domainTag}.bat`;
+  const batFileName = `${domainHost}にアップロード.bat`;
 
   const batContent = `<# :
 @echo off
@@ -7821,7 +7821,7 @@ if (-not $rawArgs) {
     
     try {
         Copy-Item -Path $batPath -Destination $dest -Force
-        [System.Windows.Forms.MessageBox]::Show("【Cividge 登録完了】\`n\`n✅ Windows の「送る」メニューに「${batFileName}」を登録しました！\`n\`n返却配信アドレス: ${selectedDomain}\`n\`nエクスプローラーで画像や動画を右クリック ➜「送る」➜「${batFileName}」で即座に投稿・短縮URLコピーが可能です。\`n\`n※解除・削除したい場合: Win+R ➜ shell:sendto から本ファイルを削除してください。", "登録完了 - Cividge", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information)
+        [System.Windows.Forms.MessageBox]::Show("【登録完了】\`n\`n✅ Windows の「送る」メニューに「${batFileName}」を登録しました！\`n\`n返却配信アドレス: ${selectedDomain}\`n\`nエクスプローラーで画像や動画を右クリック ➜「送る」➜「${batFileName}」で即座に投稿・短縮URLコピーが可能です。\`n\`n※解除・削除したい場合: Win+R ➜ shell:sendto から本ファイルを削除してください。", "登録完了 - ${batFileName}", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information)
     } catch {
         [System.Windows.Forms.MessageBox]::Show("⚠️ 登録に失敗しました: " + $_.Exception.Message, "エラー", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
     }
