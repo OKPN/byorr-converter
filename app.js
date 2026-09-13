@@ -7752,10 +7752,15 @@ copyCurlCmdBtn?.addEventListener("click", async () => {
 });
 
 downloadSendToBatBtn?.addEventListener("click", () => {
-  const token = getAdminApiToken();
+  let token = getAdminApiToken();
   if (!token) {
-    alert("⚠️ 管理APIトークンが未入力です。\n\nバッチファイルにトークンを埋め込む必要があるため、「☁️ クラウドストレージ接続設定」内の「KV API トークン」を入力してから再度お試しください。");
-    return;
+    const input = prompt("管理APIトークンが未設定です。トークンを入力してください（未入力のままダウンロードも可能です）:");
+    if (input !== null && input.trim()) {
+      token = input.trim();
+      localStorage.setItem("adminApiToken", token);
+      if (adminApiToken) adminApiToken.value = token;
+      updateDedicatedUploadApiUI();
+    }
   }
 
   const endpoint = getDedicatedUploadEndpoint();
