@@ -238,7 +238,7 @@
                   </div>
 
                   <!-- STEP 2: ストレージ認証情報 (R2 & Filebase 併用入力) -->
-                  <div id="r2KeysStepContainer" class="setup-step-box" style="padding: 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel-strong); opacity: 0.5; pointer-events: none; transition: opacity 0.2s ease; display: flex; flex-direction: column; gap: 14px;">
+                  <div id="r2KeysStepContainer" class="setup-step-box" style="padding: 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel-strong); display: flex; flex-direction: column; gap: 14px;">
                     
                     <!-- ⚡ Cloudflare R2 セクション -->
                     <div style="border-bottom: 1px solid var(--border); padding-bottom: 12px;">
@@ -249,20 +249,20 @@
                       <div style="display: flex; flex-direction: column; gap: 8px;">
                         <label class="field">
                           <span><span data-i18n="r2AccountLabel">Account ID</span></span>
-                          <input id="r2AccountId" type="text" placeholder="例: 0123456789abcdef... または S3 API URL" spellcheck="false" autocomplete="off" disabled>
+                          <input id="r2AccountId" type="text" placeholder="例: 0123456789abcdef... または S3 API URL" spellcheck="false" autocomplete="off">
                           <span style="font-size: 11px; color: var(--muted);" data-i18n="r2AccountSub">Cloudflare アカウント ID</span>
                         </label>
                         <label class="field">
                           <span><span data-i18n="r2BucketLabel">R2 バケット名</span></span>
-                          <input id="r2BucketName" type="text" placeholder="例: my-bucket" spellcheck="false" autocomplete="off" disabled>
+                          <input id="r2BucketName" type="text" placeholder="例: my-bucket" spellcheck="false" autocomplete="off">
                         </label>
                         <label class="field">
                           <span><span data-i18n="r2AccessKeyLabel">Access Key ID</span></span>
-                          <input id="r2AccessKeyId" type="text" placeholder="例: c8a1928374..." spellcheck="false" autocomplete="off" disabled>
+                          <input id="r2AccessKeyId" type="text" placeholder="例: c8a1928374..." spellcheck="false" autocomplete="off">
                         </label>
                         <label class="field">
                           <span><span data-i18n="r2SecretKeyLabel">Secret Access Key</span></span>
-                          <input id="r2SecretAccessKey" type="text" style="-webkit-text-security: disc;" placeholder="例: 99f87654..." spellcheck="false" autocomplete="off" disabled>
+                          <input id="r2SecretAccessKey" type="text" style="-webkit-text-security: disc;" placeholder="例: 99f87654..." spellcheck="false" autocomplete="off">
                         </label>
                       </div>
                     </div>
@@ -279,15 +279,15 @@
                       <div style="display: flex; flex-direction: column; gap: 8px;">
                         <label class="field">
                           <span><span>Filebase バケット名 (IPFS Bucket)</span></span>
-                          <input id="filebaseBucket" type="text" placeholder="例: my-ipfs-bucket" spellcheck="false" autocomplete="off" disabled>
+                          <input id="filebaseBucket" type="text" placeholder="例: my-ipfs-bucket" spellcheck="false" autocomplete="off">
                         </label>
                         <label class="field">
                           <span><span>Filebase Key (Access Key)</span></span>
-                          <input id="filebaseApiKey" type="text" placeholder="例: E39D98762..." spellcheck="false" autocomplete="off" disabled>
+                          <input id="filebaseApiKey" type="text" placeholder="例: E39D98762..." spellcheck="false" autocomplete="off">
                         </label>
                         <label class="field">
                           <span><span>Filebase Secret Key</span></span>
-                          <input id="filebaseSecretKey" type="text" style="-webkit-text-security: disc;" placeholder="例: WkH18302..." spellcheck="false" autocomplete="off" disabled>
+                          <input id="filebaseSecretKey" type="text" style="-webkit-text-security: disc;" placeholder="例: WkH18302..." spellcheck="false" autocomplete="off">
                         </label>
                       </div>
                     </div>
@@ -307,7 +307,7 @@
                             <span>Kubo RPC エンドポイント URL</span>
                             <span id="kuboStatusIndicator" style="font-size: 11px; color: var(--muted);">⚪ 未確認</span>
                           </span>
-                          <input id="kuboRpcUrl" type="text" placeholder="例: http://127.0.0.1:5001 または Tailscale URL" spellcheck="false" autocomplete="off" disabled>
+                          <input id="kuboRpcUrl" type="text" placeholder="例: http://127.0.0.1:5001 または Tailscale URL" spellcheck="false" autocomplete="off">
                           <span style="font-size: 10.5px; color: var(--muted); margin-top: 2px;">
                             ※ 自宅PCでは <code>http://127.0.0.1:5001</code>、外部/HTTPS時は Tailscale 等のエンドポイントを指定
                           </span>
@@ -331,14 +331,14 @@
                       <div style="display: flex; flex-direction: column; gap: 8px;">
                         <label class="field">
                           <span><span>KV 台帳 API エンドポイント URL</span></span>
-                          <input id="kvWorkerUrl" type="text" placeholder="空欄時: 自サイト(/api/ipfs-kv) または 自身のWorker URL" spellcheck="false" autocomplete="off" disabled>
+                          <input id="kvWorkerUrl" type="text" placeholder="空欄時: 自サイト(/api/ipfs-kv) または 自身のWorker URL" spellcheck="false" autocomplete="off">
                           <span style="font-size: 10.5px; color: var(--muted); margin-top: 2px;">
                             ※ 各自の Cloudflare Worker を指定可能。未入力時は自サイトの <code>/api/ipfs-kv</code> を試行します。
                           </span>
                         </label>
                         <label class="field">
                           <span><span>KV API トークン (API Token)</span></span>
-                          <input id="adminApiToken" type="password" placeholder="未入力かつ自ホスト未認証の場合はCID直接リンクで動作" spellcheck="false" autocomplete="off" disabled>
+                          <input id="adminApiToken" type="password" placeholder="未入力かつ自ホスト未認証の場合はCID直接リンクで動作" spellcheck="false" autocomplete="off">
                           <span style="font-size: 10.5px; color: var(--muted); margin-top: 2px;">
                             ※ トークン未設定時は中央KVを汚さず、安全な IPFS CID 直リン（/i/CID/name）として動作します。
                           </span>
@@ -374,6 +374,13 @@
               <details class="settings-accordion cf-settings-accordion" id="quickUploadAccordion" style="margin-top: 6px;">
                 <summary data-i18n="quickUploadHeading">🚀 外部投稿 / Windows「送る」連携</summary>
                 <div class="settings-content" style="padding: 12px 0 4px; display: flex; flex-direction: column; gap: 10px;">
+                  <label class="field" style="margin: 0;">
+                    <span style="font-size: 11px; color: var(--muted);">📦 投稿先クラウドストレージ:</span>
+                    <select id="uploadStorageSelect" style="font-size: 11.5px; height: 32px; background: rgba(56, 189, 248, 0.08); border: 1px solid rgba(56, 189, 248, 0.4); color: #38bdf8; border-radius: 6px; padding: 0 8px; outline: none; cursor: pointer;">
+                      <option value="filebase" selected>🪐 Filebase (IPFS分散 / 容量ゼロ)</option>
+                      <option value="r2">⚡ Cloudflare R2 (超高速S3ストレージ)</option>
+                    </select>
+                  </label>
                   <label class="field" style="margin: 0;">
                     <span style="font-size: 11px; color: var(--muted);" data-i18n="uploadReturnDomainLabel">🌐 返却配信用アドレス (用途別に選択):</span>
                     <select id="uploadReturnDomainSelect" style="font-size: 11px; height: 32px; background: rgba(56, 189, 248, 0.08); border: 1px solid rgba(56, 189, 248, 0.4); color: #38bdf8; border-radius: 6px; padding: 0 8px; outline: none; cursor: pointer;">

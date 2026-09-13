@@ -1282,35 +1282,8 @@ function renderR2DomainSelect() {
   }
 }
 
-// --- R2 / Filebase 設定状態の更新 (STEP 1のURL必須ルールを堅持) ---
+// --- R2 / Filebase 設定状態の更新 ---
 function updateR2Status() {
-  // 🔒 STEP 1: 配信ドメインが1件以上存在し、有効に選択されていること
-  const selectedDomain = getSelectedR2Domain();
-  const isStep1Ok = Boolean(selectedDomain && selectedDomain.trim());
-
-  // 🔒 STEP 2 のロック制御 (STEP 1 未設定時は完全ブロック)
-  const step2Box = document.querySelector("#r2KeysStepContainer");
-  const step2Notice = document.querySelector("#step2Notice");
-  const step2Inputs = [
-    r2AccountId, r2BucketName, r2AccessKeyId, r2SecretAccessKey,
-    filebaseBucket, filebaseApiKey, filebaseSecretKey,
-    kuboRpcUrl, kuboAutoPinCheck, kvWorkerUrl, adminApiToken
-  ];
-
-  if (step2Box) {
-    step2Box.style.opacity = isStep1Ok ? "1" : "0.5";
-    step2Box.style.pointerEvents = isStep1Ok ? "auto" : "none";
-  }
-  if (step2Notice) {
-    step2Notice.style.display = isStep1Ok ? "none" : "inline";
-    if (!isStep1Ok) {
-      step2Notice.textContent = "⚠️ 上の公開・配信URLを『＋』から登録・選択してください";
-    }
-  }
-  step2Inputs.forEach(input => {
-    if (input) input.disabled = !isStep1Ok;
-  });
-
   const r2Ok = isR2Configured();
   const fbOk = isFilebaseConfigured();
 
@@ -7642,6 +7615,7 @@ civitaiGalleryList?.addEventListener("click", async (event) => {
 
 // --- 🚀 外部投稿 / Windows「送る」連携ロジック ---
 // --- 🚀 外部投稿 / Windows「送る」連携ロジック ---
+const uploadStorageSelect = document.querySelector("#uploadStorageSelect");
 const uploadReturnDomainSelect = document.querySelector("#uploadReturnDomainSelect");
 const dedicatedUploadApiUrlInput = document.querySelector("#dedicatedUploadApiUrl");
 const uploadTokenNotice = document.querySelector("#uploadTokenNotice");
@@ -7654,6 +7628,11 @@ function getDedicatedUploadEndpoint() {
   const customWorkerUrl = getCustomKvWorkerUrl();
   const baseDomain = (customWorkerUrl || "https://cividge-kv-worker.okpn.workers.dev").replace(/\/$/, "");
   return `${baseDomain}/api/upload`;
+}
+
+// 選択中の投稿先ストレージ種別を取得 ("filebase" | "r2")
+function getSelectedUploadStorage() {
+  return uploadStorageSelect?.value || "filebase";
 }
 
 // 外部投稿用プルダウンの選択肢を更新
@@ -7685,13 +7664,17 @@ function getSelectedUploadReturnDomain() {
   return (getSelectedR2Domain() || "").replace(/\/$/, "");
 }
 
-// 外部投稿用のフルURL構築（?domain=... & ?token=...）
+// 外部投稿用のフルURL構築（?storage=... & ?domain=... & ?token=...）
 function getDedicatedUploadFullUrl() {
   const endpoint = getDedicatedUploadEndpoint();
   const selectedDomain = getSelectedUploadReturnDomain();
+  const selectedStorage = getSelectedUploadStorage();
   const token = getAdminApiToken();
 
   const url = new URL(endpoint);
+  if (selectedStorage) {
+    url.searchParams.set("storage", selectedStorage);
+  }
   if (selectedDomain) {
     url.searchParams.set("domain", selectedDomain);
   }
@@ -7719,6 +7702,7 @@ function updateDedicatedUploadApiUI() {
   if (downloadSendToBatBtn) downloadSendToBatBtn.disabled = !hasToken;
 }
 
+uploadStorageSelect?.addEventListener("change", updateDedicatedUploadApiUI);
 uploadReturnDomainSelect?.addEventListener("change", updateDedicatedUploadApiUI);
 r2DomainSelect?.addEventListener("change", () => {
   populateUploadReturnDomainSelect();
@@ -7750,8 +7734,12 @@ copyCurlCmdBtn?.addEventListener("click", async () => {
   }
   const endpoint = getDedicatedUploadEndpoint();
   const selectedDomain = getSelectedUploadReturnDomain();
+  const selectedStorage = getSelectedUploadStorage();
 
   const url = new URL(endpoint);
+  if (selectedStorage) {
+    url.searchParams.set("storage", selectedStorage);
+  }
   if (selectedDomain) {
     url.searchParams.set("domain", selectedDomain);
   }
@@ -7772,8 +7760,12 @@ downloadSendToBatBtn?.addEventListener("click", () => {
 
   const endpoint = getDedicatedUploadEndpoint();
   const selectedDomain = getSelectedUploadReturnDomain();
+  const selectedStorage = getSelectedUploadStorage();
 
   const url = new URL(endpoint);
+  if (selectedStorage) {
+    url.searchParams.set("storage", selectedStorage);
+  }
   if (selectedDomain) {
     url.searchParams.set("domain", selectedDomain);
   }
@@ -7789,7 +7781,8 @@ downloadSendToBatBtn?.addEventListener("click", () => {
   } catch (e) {
     domainHost = selectedDomain || "Cividge";
   }
-  const batFileName = `${domainHost}にアップロード.bat`;
+  const storagePrefix = selectedStorage === "r2" ? "R2_" : "IPFS_";
+  const batFileName = `${storagePrefix}${domainHost}にアップロード.bat`;
 
   const batContent = `<# :
 @echo off
@@ -7821,7 +7814,7 @@ if (-not $rawArgs) {
     
     try {
         Copy-Item -Path $batPath -Destination $dest -Force
-        [System.Windows.Forms.MessageBox]::Show("【登録完了】\`n\`n✅ Windows の「送る」メニューに「${batFileName}」を登録しました！\`n\`n返却配信アドレス: ${selectedDomain}\`n\`nエクスプローラーで画像や動画を右クリック ➜「送る」➜「${batFileName}」で即座に投稿・短縮URLコピーが可能です。\`n\`n※解除・削除したい場合: Win+R ➜ shell:sendto から本ファイルを削除してください。", "登録完了 - ${batFileName}", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information)
+        [System.Windows.Forms.MessageBox]::Show("【登録完了】\`n\`n✅ Windows の「送る」メニューに「${batFileName}」を登録しました！\`n\`n投稿先ストレージ: ${selectedStorage.ToUpper()}\`n返却配信アドレス: ${selectedDomain}\`n\`nエクスプローラーで画像や動画を右クリック ➜「送る」➜「${batFileName}」で即座に投稿・短縮URLコピーが可能です。\`n\`n※解除・削除したい場合: Win+R ➜ shell:sendto から本ファイルを削除してください。", "登録完了 - ${batFileName}", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information)
     } catch {
         [System.Windows.Forms.MessageBox]::Show("⚠️ 登録に失敗しました: " + $_.Exception.Message, "エラー", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
     }
